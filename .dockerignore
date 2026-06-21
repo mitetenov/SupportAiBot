@@ -1,0 +1,17 @@
+target/
+*.class
+*.jar
+*.war
+.idea/
+*.iml
+.vscode/
+.DS_Store
+*.log
+.env
+.env.example
+DataExport_*/
+.git/
+.gitignore
+run.sh
+docker-compose.yml
+README.md
