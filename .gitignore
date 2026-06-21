@@ -17,3 +17,4 @@ data/
 .DS_Store
 *.log
 DataExport_*/
+api-1.json
