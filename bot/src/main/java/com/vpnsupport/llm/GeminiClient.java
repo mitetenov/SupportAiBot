@@ -409,15 +409,34 @@ public class GeminiClient implements LlmClient {
                 return;
             }
             JsonNode value = schema.get(field);
-            if ("properties".equals(field) && value != null && value.isObject()) {
+            if ("const".equals(field)) {
+                ArrayNode enumValues = cleaned.putArray("enum");
+                enumValues.add(value);
+                return;
+            }
+            if ("any_of".equals(field)) {
+                ArrayNode anyOf = cleaned.putArray("anyOf");
+                if (value.isArray()) {
+                    for (JsonNode item : value) {
+                        anyOf.add(sanitizeSchemaParams(item));
+                    }
+                }
+                return;
+            }
+            if ("properties".equals(field) && value.isObject()) {
                 ObjectNode cleanedProps = objectMapper.createObjectNode();
-                value.fieldNames().forEachRemaining(propName -> {
-                    cleanedProps.set(propName, sanitizeSchemaParams(value.get(propName)));
-                });
+                value.fieldNames().forEachRemaining(propName ->
+                        cleanedProps.set(propName, sanitizeSchemaParams(value.get(propName))));
                 cleaned.set("properties", cleanedProps);
-            } else if (("items".equals(field) || "additionalProperties_replacement".equals(field))
-                    && value != null && value.isObject()) {
+            } else if (("items".equals(field) || "anyOf".equals(field))
+                    && value.isObject()) {
                 cleaned.set(field, sanitizeSchemaParams(value));
+            } else if (("anyOf".equals(field) || "oneOf".equals(field) || "allOf".equals(field))
+                    && value.isArray()) {
+                ArrayNode arr = cleaned.putArray(field);
+                for (JsonNode item : value) {
+                    arr.add(sanitizeSchemaParams(item));
+                }
             } else {
                 cleaned.set(field, value);
             }
