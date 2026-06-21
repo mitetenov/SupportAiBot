@@ -96,7 +96,7 @@ public class McpClient {
             try {
                 String line;
                 while ((line = stderr.readLine()) != null) {
-                    log.debug("MCP stderr: {}", line);
+                    log.warn("MCP stderr: {}", line);
                 }
             } catch (IOException e) {
                 log.trace("MCP stderr reader ended", e);

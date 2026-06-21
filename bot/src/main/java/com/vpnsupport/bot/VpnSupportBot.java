@@ -180,7 +180,12 @@ public class VpnSupportBot {
         }
 
         try {
-            String response = llmClient.chat(text, user.id());
+            String rawResponse = llmClient.chat(text, user.id());
+            String response = stripEscalateMarker(rawResponse);
+            if (response.isEmpty()) {
+                response = "Передаю ваш запрос оператору. Ожидайте ответа в этом чате.";
+            }
+
             messageSender.send(chatId, response);
 
             if (!isErrorResponse(response) && FaqImagePolicy.shouldAttachImages(response)) {
@@ -190,7 +195,9 @@ public class VpnSupportBot {
                 }
             }
 
-            boolean escalation = needsEscalation(text, response);
+            boolean escalation = llmRequestedEscalation(rawResponse)
+                    || isErrorResponse(response)
+                    || userRequestsHuman(text);
             forwarder.forwardToSupport(chatId, message.messageId(), user, text, response, escalation);
         } catch (Exception e) {
             log.error("Error processing message from user {}", chatId, e);
@@ -246,18 +253,26 @@ public class VpnSupportBot {
                     ? "Посмотри на скриншот. Опиши, что на нём отображается, и помоги решить проблему."
                     : caption;
 
-            String response = llmClient.chatWithImage(userPrompt, user.id(), base64Image, mimeType);
+            String rawResponse = llmClient.chatWithImage(userPrompt, user.id(), base64Image, mimeType);
+            String response = stripEscalateMarker(rawResponse);
+            if (response.isEmpty()) {
+                response = "Передаю ваш запрос оператору. Ожидайте ответа в этом чате.";
+            }
 
             messageSender.send(chatId, response);
 
             String forwardText = caption.isEmpty() ? "[Скриншот]" : "[Скриншот] " + caption;
-            boolean escalation = needsEscalation(caption, response);
+            boolean escalation = llmRequestedEscalation(rawResponse)
+                    || isErrorResponse(response)
+                    || userRequestsHuman(caption);
             forwarder.forwardToSupport(chatId, message.messageId(), user, forwardText, response, escalation);
         } catch (Exception e) {
             log.error("Error processing photo from user {}", chatId, e);
             messageSender.send(chatId, "Произошла ошибка при обработке изображения. Попробуйте позже.");
         }
     }
+
+    private static final String ESCALATE_MARKER = "[ESCALATE]";
 
     private boolean isErrorResponse(String response) {
         return response.startsWith("Превышено")
@@ -266,25 +281,25 @@ public class VpnSupportBot {
                 || response.startsWith("Модель не вернула");
     }
 
-    private boolean needsEscalation(String userMessage, String botResponse) {
-        String lowerMsg = userMessage.toLowerCase();
-        String lowerResp = botResponse.toLowerCase();
-
-        if (lowerMsg.contains("отмен") || lowerMsg.contains("подписк")
-                || lowerMsg.contains("верни") || lowerMsg.contains("возврат")
-                || lowerMsg.contains("рефанд") || lowerMsg.contains("refund")
-                || lowerMsg.contains("жалоб") || lowerMsg.contains("оператор")
-                || lowerMsg.contains("человек") || lowerMsg.contains("жив")) {
-            return true;
+    private String stripEscalateMarker(String rawResponse) {
+        if (rawResponse == null) {
+            return null;
         }
+        return rawResponse.replace(ESCALATE_MARKER, "").trim();
+    }
 
-        if (lowerResp.contains("не удалось") || lowerResp.contains("ошибк")
-                || lowerResp.contains("не найден") || lowerResp.contains("попробуйте позже")
-                || lowerResp.contains("обратитесь")) {
-            return true;
+    private boolean llmRequestedEscalation(String rawResponse) {
+        return rawResponse != null && rawResponse.contains(ESCALATE_MARKER);
+    }
+
+    private boolean userRequestsHuman(String userMessage) {
+        if (userMessage == null || userMessage.isBlank()) {
+            return false;
         }
-
-        return false;
+        String lower = userMessage.toLowerCase();
+        return lower.contains("оператор")
+                || lower.contains("человек")
+                || lower.contains("жив");
     }
 
     private String detectMimeType(String filePath) {

@@ -20,10 +20,20 @@ Telegram-бот техподдержки VPN-сервиса. Принимает 
 ## Быстрый старт
 
 ```bash
+git clone https://github.com/mitetenov/SupportAiBot.git && cd SupportAiBot
 cp .env.example .env   # заполнить переменные
-docker compose up -d --build
+./run.sh               # загрузка образа и запуск
 docker compose exec bot curl -f http://localhost:8080/actuator/health
 ```
+
+Или вручную без скрипта:
+```bash
+cp .env.example .env   # заполнить переменные
+docker compose pull
+docker compose up -d
+```
+
+Образ: [`mitetenov/supportbot`](https://hub.docker.com/r/mitetenov/supportbot) — включает JRE, MCP-сервер и FAQ-базу. Не требует Java/Maven/Node.js на хосте.
 
 **Важно**: перед запуском отключите privacy mode бота в BotFather (`/setprivacy` → Disable), иначе бот не будет видеть сообщения в группе.
 
@@ -44,6 +54,7 @@ docker compose exec bot curl -f http://localhost:8080/actuator/health
 | `REMNAWAVE_READONLY` | — | `true` | `false` — разрешить удаление HWID-устройств |
 | `PG_USER` | — | `bot` | Пользователь PostgreSQL |
 | `PG_PASSWORD` | да | — | Пароль PostgreSQL |
+| `BOT_TAG` | — | `latest` | Тег образа mitetenov/supportbot |
 
 При запуске валидируются только переменные выбранного провайдера (ключа и модели). Переменные неактивного провайдера можно не заполнять.
 
@@ -64,12 +75,12 @@ docker compose exec bot curl -f http://localhost:8080/actuator/health
 
 ## RAG / База знаний
 
-FAQ хранится в `bot/src/main/resources/faq/faq.json`. При старте бот индексирует вопросы через Gemini embeddings (`gemini-embedding-001`, 3072 измерения) в PGVector. При каждом запросе пользователя релевантные FAQ-ответы добавляются в контекст LLM.
+FAQ хранится в `bot/src/main/resources/faq/faq.json` и вшит в JAR при сборке. При старте бот индексирует вопросы через Gemini embeddings (`gemini-embedding-001`, 2000 измерений) в PGVector.
 
-Для обновления FAQ без пересборки всего образа (кэшируются слои Maven):
+При использовании готового образа `mitetenov/supportbot` FAQ уже внутри. Для обновления FAQ:
 
 ```bash
-docker compose build bot
+docker build -t mitetenov/supportbot:latest .
 docker compose up -d --force-recreate bot
 ```
 
@@ -77,13 +88,7 @@ docker compose up -d --force-recreate bot
 
 При провайдере `gemini` бот умеет обрабатывать скриншоты: фото скачивается, конвертируется в base64 и отправляется в Gemini вместе с текстовым вопросом.
 
-## Сборка с фиксированной версией MCP
-
-```bash
-docker build --build-arg MCP_REF=<commit-or-tag> -t vpn-support-bot .
-```
-
-## Локальный запуск
+## Локальная разработка
 
 ```bash
 export $(grep -v '^#' .env | xargs)

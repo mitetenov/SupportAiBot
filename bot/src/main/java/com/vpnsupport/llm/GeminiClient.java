@@ -144,6 +144,9 @@ public class GeminiClient implements LlmClient {
                     log.info("Executing tool: {} with args: {}", functionName, arguments);
 
                     String toolResult = mcpClient.callTool(functionName, arguments);
+                    log.info("Tool {} result: {}",
+                            functionName,
+                            toolResult.length() > 300 ? toolResult.substring(0, 300) + "..." : toolResult);
 
                     Map<String, Object> functionResponse = Map.of(
                             "role", "function",
@@ -155,6 +158,27 @@ public class GeminiClient implements LlmClient {
                             ))
                     );
                     contents.add(functionResponse);
+                }
+
+                if (iteration == 0) {
+                    List<String> toolResults = contents.stream()
+                            .filter(m -> "function".equals(m.get("role")))
+                            .map(m -> {
+                                @SuppressWarnings("unchecked")
+                                var funcParts = (List<Map<String, Object>>) m.get("parts");
+                                @SuppressWarnings("unchecked")
+                                var fr = (Map<String, Object>) funcParts.get(0).get("functionResponse");
+                                return String.valueOf(fr.get("response"));
+                            })
+                            .toList();
+                    String refreshedFaq = faqEmbeddingService.buildRefinedFaqContext(
+                            userMessage, toolResults);
+                    if (!refreshedFaq.isEmpty()) {
+                        contents.add(Map.of("role", "user", "parts", List.of(
+                                Map.of("text",
+                                        "[Система] Результат диагностики получен. Актуальный FAQ:\n\n"
+                                                + refreshedFaq))));
+                    }
                 }
 
                 return continueChat(contents, iteration + 1);
@@ -235,7 +259,12 @@ public class GeminiClient implements LlmClient {
                             ? objectMapper.convertValue(argsNode, Map.class)
                             : Map.of();
 
+                    log.info("Executing tool: {} with args: {}", functionName, arguments);
+
                     String toolResult = mcpClient.callTool(functionName, arguments);
+                    log.info("Tool {} result: {}",
+                            functionName,
+                            toolResult.length() > 300 ? toolResult.substring(0, 300) + "..." : toolResult);
 
                     Map<String, Object> functionResponse = Map.of(
                             "role", "function",
