@@ -1,0 +1,49 @@
+spring:
+  application:
+    name: vpn-support-bot
+  datasource:
+    url: jdbc:postgresql://postgres:5432/vpnsupport
+    driver-class-name: org.postgresql.Driver
+    username: ${PG_USER:bot}
+    password: ${PG_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  codec:
+    max-in-memory-size: 10MB
+
+llm:
+  provider: ${LLM_PROVIDER:deepseek}
+
+telegram:
+  bot-token: ${TELEGRAM_BOT_TOKEN}
+  support-group-chat-id: ${TELEGRAM_SUPPORT_GROUP_CHAT_ID}
+  support-admin-username: ${TELEGRAM_SUPPORT_ADMIN_USERNAME}
+
+deepseek:
+  api-key: ${DEEPSEEK_API_KEY}
+  base-url: https://api.deepseek.com/v1
+  model: ${DEEPSEEK_MODEL}
+
+gemini:
+  api-key: ${GEMINI_API_KEY}
+  base-url: https://generativelanguage.googleapis.com/v1beta
+  model: ${GEMINI_MODEL}
+
+remnawave:
+  mcp:
+    command: node
+    script-path: /mcp-remnawave/dist/index.js
+    base-url: ${REMNAWAVE_BASE_URL}
+    api-token: ${REMNAWAVE_API_TOKEN}
+    readonly: ${REMNAWAVE_READONLY:true}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
