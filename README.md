@@ -45,6 +45,7 @@ docker compose up -d
 | `TELEGRAM_BOT_TOKEN` | да | — | Токен бота от @BotFather |
 | `TELEGRAM_SUPPORT_GROUP_CHAT_ID` | да | — | ID форум-группы (отрицательный, напр. `-1001234567890`) |
 | `TELEGRAM_SUPPORT_ADMIN_USERNAME` | — | — | Username админа без `@` для эскалации |
+| `TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS` | — | — | Telegram ID админов через запятую для `/stats` |
 | `DEEPSEEK_API_KEY` | при deepseek | — | API-ключ DeepSeek |
 | `DEEPSEEK_MODEL` | при deepseek | — | Модель DeepSeek |
 | `GEMINI_API_KEY` | при gemini | — | OAuth-токен Google Gemini |
@@ -62,6 +63,9 @@ docker compose up -d
 
 - `/start` — приветствие, сброс истории диалога
 - `/operator` — эскалация: запрос живого оператора, в группу приходит тег админа
+- `/stats` — **только для админов**: топ-10 пользователей по токенам LLM
+- `/stats N` — топ-N (N от 1 до 100)
+- `/stats TELEGRAM_ID` — статистика конкретного пользователя (prompt/completion/total токены, количество запросов)
 
 ## Автоэскалация
 

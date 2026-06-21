@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.vpnsupport.bot.ChatHistoryService;
+import com.vpnsupport.bot.LlmTokenUsage;
+import com.vpnsupport.bot.LlmTokenUsageRepository;
 import com.vpnsupport.config.DeepSeekProperties;
 import com.vpnsupport.rag.FaqEmbeddingService;
 import org.slf4j.Logger;
@@ -30,15 +32,18 @@ public class DeepSeekClient implements LlmClient {
     private final McpClient mcpClient;
     private final ChatHistoryService chatHistoryService;
     private final FaqEmbeddingService faqEmbeddingService;
+    private final LlmTokenUsageRepository tokenUsageRepository;
     private final String model;
 
     public DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper,
                           McpClient mcpClient, ChatHistoryService chatHistoryService,
-                          FaqEmbeddingService faqEmbeddingService) {
+                          FaqEmbeddingService faqEmbeddingService,
+                          LlmTokenUsageRepository tokenUsageRepository) {
         this.objectMapper = objectMapper;
         this.mcpClient = mcpClient;
         this.chatHistoryService = chatHistoryService;
         this.faqEmbeddingService = faqEmbeddingService;
+        this.tokenUsageRepository = tokenUsageRepository;
         this.model = properties.getModel();
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getBaseUrl())
@@ -57,7 +62,7 @@ public class DeepSeekClient implements LlmClient {
         messages.addAll(chatHistoryService.getHistory(telegramUserId));
         messages.add(Map.of("role", "user", "content", userMessage));
 
-        String response = processChat(messages, 0, userMessage);
+        String response = processChat(messages, 0, userMessage, telegramUserId);
         if (!isErrorResponse(response)) {
             chatHistoryService.addUserMessage(telegramUserId, userMessage);
             chatHistoryService.addAssistantMessage(telegramUserId, response);
@@ -72,7 +77,7 @@ public class DeepSeekClient implements LlmClient {
     }
 
     private String processChat(List<Map<String, Object>> messages, int iteration,
-                                 String originalUserMessage) {
+                                 String originalUserMessage, long telegramUserId) {
         if (iteration >= MAX_TOOL_ITERATIONS) {
             return "Превышено количество попыток обработки запроса. Пожалуйста, попробуйте ещё раз.";
         }
@@ -96,6 +101,7 @@ public class DeepSeekClient implements LlmClient {
                     .block();
 
             JsonNode jsonResponse = objectMapper.readTree(response);
+            saveUsage(jsonResponse, telegramUserId);
             JsonNode choices = jsonResponse.get("choices");
             if (choices == null || !choices.isArray() || choices.isEmpty()) {
                 log.error("Empty choices in DeepSeek response: {}", response);
@@ -151,7 +157,7 @@ public class DeepSeekClient implements LlmClient {
                     }
                 }
 
-                return processChat(messages, iteration + 1, originalUserMessage);
+                return processChat(messages, iteration + 1, originalUserMessage, telegramUserId);
             }
 
             if (content != null && !content.isEmpty()) {
@@ -215,5 +221,20 @@ public class DeepSeekClient implements LlmClient {
         body.put("temperature", 0.3);
 
         return body;
+    }
+
+    private void saveUsage(JsonNode jsonResponse, long telegramUserId) {
+        try {
+            JsonNode usage = jsonResponse.get("usage");
+            if (usage != null) {
+                long promptTokens = usage.get("prompt_tokens").asLong();
+                long completionTokens = usage.get("completion_tokens").asLong();
+                long totalTokens = usage.get("total_tokens").asLong();
+                tokenUsageRepository.save(new LlmTokenUsage(
+                        telegramUserId, promptTokens, completionTokens, totalTokens));
+            }
+        } catch (Exception e) {
+            log.warn("Failed to save token usage: {}", e.getMessage());
+        }
     }
 }

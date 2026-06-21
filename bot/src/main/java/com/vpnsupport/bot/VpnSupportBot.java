@@ -24,6 +24,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.Base64;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -43,6 +44,8 @@ public class VpnSupportBot {
     private final ChatHistoryService chatHistoryService;
     private final WebClient webClient;
     private final long supportGroupChatId;
+    private final LlmTokenUsageRepository tokenUsageRepository;
+    private final Set<Long> adminTelegramIds;
 
     private ExecutorService updateExecutor;
 
@@ -54,7 +57,8 @@ public class VpnSupportBot {
                           UserRateLimiter rateLimiter,
                           ChatHistoryService chatHistoryService,
                           WebClient webClient,
-                          TelegramProperties telegramProperties) {
+                          TelegramProperties telegramProperties,
+                          LlmTokenUsageRepository tokenUsageRepository) {
         this.telegramBot = telegramBot;
         this.llmClient = llmClient;
         this.faqEmbeddingService = faqEmbeddingService;
@@ -65,6 +69,8 @@ public class VpnSupportBot {
         this.chatHistoryService = chatHistoryService;
         this.webClient = webClient;
         this.supportGroupChatId = telegramProperties.getSupportGroupChatId();
+        this.tokenUsageRepository = tokenUsageRepository;
+        this.adminTelegramIds = telegramProperties.getSupportAdminTelegramIds();
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -170,7 +176,15 @@ public class VpnSupportBot {
             return;
         }
 
-        if (text.startsWith("/")) {
+        if (text.startsWith("/stats") && adminTelegramIds.contains(user.id())) {
+            handleStats(chatId, text);
+            return;
+        }
+
+        if (text.startsWith("/stats") || text.startsWith("/")) {
+            if (text.startsWith("/stats")) {
+                return; // silently ignore for non-admins
+            }
             messageSender.send(chatId, "Неизвестная команда. Напишите вопрос или /operator для связи с оператором.");
             return;
         }
@@ -274,6 +288,63 @@ public class VpnSupportBot {
     }
 
     private static final String ESCALATE_MARKER = "[ESCALATE]";
+
+    private void handleStats(long chatId, String command) {
+        String[] parts = command.split("\\s+");
+        if (parts.length == 2) {
+            try {
+                long num = Long.parseLong(parts[1]);
+                if (num <= 100) {
+                    showTopStats(chatId, (int) Math.clamp(num, 1, 100));
+                } else {
+                    showUserStats(chatId, num);
+                }
+                return;
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        showTopStats(chatId, 10);
+    }
+
+    private void showTopStats(long chatId, int limit) {
+        List<Object[]> top = tokenUsageRepository.findTopByTokens(
+                org.springframework.data.domain.PageRequest.of(0, limit));
+        if (top.isEmpty()) {
+            messageSender.send(chatId, "Статистика пока пуста.");
+            return;
+        }
+        StringBuilder sb = new StringBuilder("Топ-").append(limit)
+                .append(" пользователей по токенам LLM:\n");
+        int rank = 1;
+        for (Object[] row : top) {
+            sb.append(rank++).append(". Telegram ID: ").append(row[0])
+                    .append(" — ").append(formatNumber((Long) row[1]))
+                    .append(" токенов (").append(row[4]).append(" запросов)\n");
+        }
+        messageSender.send(chatId, sb.toString());
+    }
+
+    private void showUserStats(long chatId, long telegramId) {
+        List<Object[]> stats = tokenUsageRepository.getStatsByTelegramId(telegramId);
+        if (stats.isEmpty() || stats.get(0)[0] == null) {
+            messageSender.send(chatId, "Нет данных по Telegram ID " + telegramId + ".");
+            return;
+        }
+        Object[] row = stats.get(0);
+        messageSender.send(chatId,
+                "Статистика Telegram ID " + telegramId + ":\n"
+                        + "Запросов: " + row[3] + "\n"
+                        + "Prompt-токенов: " + formatNumber((Long) row[1]) + "\n"
+                        + "Completion-токенов: " + formatNumber((Long) row[2]) + "\n"
+                        + "Всего токенов: " + formatNumber((Long) row[0]));
+    }
+
+    private static String formatNumber(long n) {
+        if (n < 1_000) return String.valueOf(n);
+        if (n < 1_000_000) return String.format("%.1fK", n / 1_000.0);
+        if (n < 1_000_000_000) return String.format("%.1fM", n / 1_000_000.0);
+        return String.format("%.1fB", n / 1_000_000_000.0);
+    }
 
     private boolean isErrorResponse(String response) {
         return response.startsWith("Превышено")

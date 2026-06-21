@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.vpnsupport.bot.ChatHistoryService;
+import com.vpnsupport.bot.LlmTokenUsage;
+import com.vpnsupport.bot.LlmTokenUsageRepository;
 import com.vpnsupport.config.GeminiProperties;
 import com.vpnsupport.rag.FaqEmbeddingService;
 import org.slf4j.Logger;
@@ -30,15 +32,18 @@ public class GeminiClient implements LlmClient {
     private final McpClient mcpClient;
     private final ChatHistoryService chatHistoryService;
     private final FaqEmbeddingService faqEmbeddingService;
+    private final LlmTokenUsageRepository tokenUsageRepository;
     private final String model;
 
     public GeminiClient(GeminiProperties properties, ObjectMapper objectMapper,
                         McpClient mcpClient, ChatHistoryService chatHistoryService,
-                        FaqEmbeddingService faqEmbeddingService) {
+                        FaqEmbeddingService faqEmbeddingService,
+                        LlmTokenUsageRepository tokenUsageRepository) {
         this.objectMapper = objectMapper;
         this.mcpClient = mcpClient;
         this.chatHistoryService = chatHistoryService;
         this.faqEmbeddingService = faqEmbeddingService;
+        this.tokenUsageRepository = tokenUsageRepository;
         this.model = properties.getModel();
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getBaseUrl())
@@ -90,6 +95,7 @@ public class GeminiClient implements LlmClient {
             String response = executeGenerateContent(requestBody);
 
             JsonNode jsonResponse = objectMapper.readTree(response);
+            saveUsage(jsonResponse, telegramUserId);
             JsonNode candidates = jsonResponse.get("candidates");
             if (candidates == null || !candidates.isArray() || candidates.isEmpty()) {
                 String blockReason = jsonResponse.has("promptFeedback")
@@ -181,7 +187,7 @@ public class GeminiClient implements LlmClient {
                     }
                 }
 
-                return continueChat(contents, iteration + 1);
+                return continueChat(contents, iteration + 1, telegramUserId);
             }
 
             if (!textResponse.isEmpty()) {
@@ -196,7 +202,8 @@ public class GeminiClient implements LlmClient {
         }
     }
 
-    private String continueChat(List<Map<String, Object>> contents, int iteration) {
+    private String continueChat(List<Map<String, Object>> contents, int iteration,
+                                  long telegramUserId) {
         if (iteration >= MAX_TOOL_ITERATIONS) {
             return "Превышено количество попыток обработки запроса.";
         }
@@ -219,6 +226,7 @@ public class GeminiClient implements LlmClient {
             String response = executeGenerateContent(requestBody);
 
             JsonNode jsonResponse = objectMapper.readTree(response);
+            saveUsage(jsonResponse, telegramUserId);
             JsonNode candidates = jsonResponse.get("candidates");
             if (candidates == null || !candidates.isArray() || candidates.isEmpty()) {
                 return "Не удалось получить ответ.";
@@ -278,7 +286,7 @@ public class GeminiClient implements LlmClient {
                     contents.add(functionResponse);
                 }
 
-                return continueChat(contents, iteration + 1);
+                return continueChat(contents, iteration + 1, telegramUserId);
             }
 
             if (!textResponse.isEmpty()) {
@@ -433,5 +441,20 @@ public class GeminiClient implements LlmClient {
                 || response.startsWith("Модель не вернула")
                 || response.startsWith("Пустой ответ")
                 || response.startsWith("Ошибка при обработке");
+    }
+
+    private void saveUsage(JsonNode jsonResponse, long telegramUserId) {
+        try {
+            JsonNode usage = jsonResponse.get("usageMetadata");
+            if (usage != null) {
+                long promptTokens = usage.get("promptTokenCount").asLong();
+                long completionTokens = usage.get("candidatesTokenCount").asLong();
+                long totalTokens = usage.get("totalTokenCount").asLong();
+                tokenUsageRepository.save(new LlmTokenUsage(
+                        telegramUserId, promptTokens, completionTokens, totalTokens));
+            }
+        } catch (Exception e) {
+            log.warn("Failed to save token usage: {}", e.getMessage());
+        }
     }
 }

@@ -20,6 +20,7 @@ telegram:
   bot-token: ${TELEGRAM_BOT_TOKEN}
   support-group-chat-id: ${TELEGRAM_SUPPORT_GROUP_CHAT_ID}
   support-admin-username: ${TELEGRAM_SUPPORT_ADMIN_USERNAME}
+  support-admin-telegram-ids: ${TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS:}
 
 deepseek:
   api-key: ${DEEPSEEK_API_KEY}
