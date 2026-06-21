@@ -8,8 +8,9 @@ RUN --mount=type=cache,target=/root/.m2 mvn package -pl bot -DskipTests -B
 
 FROM node:22-slim AS mcp-build
 ARG MCP_REF=main
+ARG MCP_REPO=https://github.com/mitetenov/mcp-remnawave.git
 RUN apt-get update && apt-get install -y git \
-    && git clone --depth 1 --branch ${MCP_REF} https://github.com/TrackLine/mcp-remnawave.git /mcp-remnawave \
+    && git clone --depth 1 --branch ${MCP_REF} ${MCP_REPO} /mcp-remnawave \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /mcp-remnawave
 RUN --mount=type=cache,target=/root/.npm npm install \
