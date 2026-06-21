@@ -153,39 +153,15 @@ public class McpClient {
             return "{\"error\": \"MCP client not initialized\"}";
         }
         try {
-            Map<String, Object> normalizedArgs = normalizeArguments(toolName, arguments);
             JsonNode response = sendRequest("tools/call", Map.of(
                     "name", toolName,
-                    "arguments", normalizedArgs
+                    "arguments", arguments
             ));
             return objectMapper.writeValueAsString(response);
         } catch (Exception e) {
             log.error("Failed to call tool: {}", toolName, e);
             return "{\"error\": \"" + e.getMessage() + "\"}";
         }
-    }
-
-    private Map<String, Object> normalizeArguments(String toolName, Map<String, Object> arguments) {
-        if (!"hwid_device_delete".equals(toolName) || !arguments.containsKey("deviceUuid")) {
-            return arguments;
-        }
-        Object value = arguments.get("deviceUuid");
-        if (!(value instanceof String raw)) {
-            return arguments;
-        }
-        if (raw.contains("-")) {
-            return arguments;
-        }
-        if (raw.length() == 16 && raw.matches("[0-9a-fA-F]+")) {
-            String formatted = raw.substring(0, 8) + "-"
-                    + raw.substring(8, 12) + "-"
-                    + raw.substring(12, 16) + "-0000-000000000000";
-            log.info("Formatted hwid {} to UUID {}", raw, formatted);
-            Map<String, Object> updated = new java.util.LinkedHashMap<>(arguments);
-            updated.put("deviceUuid", formatted);
-            return updated;
-        }
-        return arguments;
     }
 
     private JsonNode sendRequest(String method, Map<String, Object> params) throws Exception {
