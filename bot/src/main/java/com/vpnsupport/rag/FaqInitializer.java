@@ -32,6 +32,7 @@ public class FaqInitializer implements ApplicationRunner {
         ClassPathResource resource = new ClassPathResource(FAQ_CLASSPATH);
         if (!resource.exists()) {
             log.warn("FAQ file not found at classpath:{}", FAQ_CLASSPATH);
+            embeddingService.markReady();
             return;
         }
 
@@ -61,6 +62,7 @@ public class FaqInitializer implements ApplicationRunner {
         } catch (Exception e) {
             log.error("Failed to load FAQ file", e);
         }
+        embeddingService.markReady();
     }
 
     @SuppressWarnings("unchecked")

@@ -28,6 +28,7 @@ public class FaqEmbeddingService {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final String geminiApiKey;
+    private volatile boolean ready = false;
 
     public FaqEmbeddingService(JdbcTemplate jdbcTemplate,
                                 ObjectMapper objectMapper, GeminiProperties geminiProperties) {
@@ -78,11 +79,17 @@ public class FaqEmbeddingService {
     }
 
     public void clearFaq() {
+        ready = false;
         jdbcTemplate.execute("DELETE FROM faq");
     }
 
+    public void markReady() {
+        ready = true;
+        log.info("FAQ ready for search");
+    }
+
     public List<FaqResult> search(String query) {
-        if (geminiApiKey == null || geminiApiKey.isBlank()) {
+        if (!ready || geminiApiKey == null || geminiApiKey.isBlank()) {
             return List.of();
         }
 

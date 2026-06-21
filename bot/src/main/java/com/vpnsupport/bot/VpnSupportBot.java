@@ -14,10 +14,11 @@ import com.vpnsupport.config.TelegramProperties;
 import com.vpnsupport.llm.LlmClient;
 import com.vpnsupport.rag.FaqEmbeddingService;
 import com.vpnsupport.support.SupportGroupForwarder;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
@@ -66,7 +67,7 @@ public class VpnSupportBot {
         this.supportGroupChatId = telegramProperties.getSupportGroupChatId();
     }
 
-    @PostConstruct
+    @EventListener(ApplicationReadyEvent.class)
     public void start() {
         updateExecutor = Executors.newFixedThreadPool(4);
         telegramBot.setUpdatesListener(updates -> {
