@@ -3,6 +3,7 @@ package com.vpnsupport.llm;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.vpnsupport.config.RemnawaveMcpProperties;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -38,10 +39,19 @@ public class McpClient {
     private volatile boolean initialized = false;
 
     private List<McpTool> cachedTools = Collections.emptyList();
+    private final Map<Long, String> telegramToUserUuid = new ConcurrentHashMap<>();
+    private String remnawaveBaseUrl;
+    private String remnawaveApiToken;
 
     public McpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper) {
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.remnawaveBaseUrl = properties.getBaseUrl();
+        this.remnawaveApiToken = properties.getApiToken();
+    }
+
+    public void cacheUserUuid(long telegramId, String userUuid) {
+        telegramToUserUuid.put(telegramId, userUuid);
     }
 
     @PostConstruct
@@ -153,14 +163,80 @@ public class McpClient {
             return "{\"error\": \"MCP client not initialized\"}";
         }
         try {
+            if ("hwid_device_delete".equals(toolName)) {
+                return callHwidDeviceDelete(arguments);
+            }
             JsonNode response = sendRequest("tools/call", Map.of(
                     "name", toolName,
                     "arguments", arguments
             ));
+            if ("users_get_by_telegram_id".equals(toolName)) {
+                cacheUserUuidFromResponse(response, arguments);
+            }
             return objectMapper.writeValueAsString(response);
         } catch (Exception e) {
             log.error("Failed to call tool: {}", toolName, e);
             return "{\"error\": \"" + e.getMessage() + "\"}";
+        }
+    }
+
+    private void cacheUserUuidFromResponse(JsonNode response, Map<String, Object> arguments) {
+        try {
+            Object telegramIdObj = arguments.get("telegramId");
+            if (telegramIdObj == null) return;
+            long telegramId = telegramIdObj instanceof Number n ? n.longValue() : Long.parseLong(telegramIdObj.toString());
+            JsonNode content = response.get("content");
+            if (content != null && content.isArray() && content.size() > 0) {
+                String text = content.get(0).get("text").asText();
+                JsonNode parsed = objectMapper.readTree(text);
+                JsonNode resp = parsed.get("response");
+                if (resp != null && resp.isArray() && resp.size() > 0) {
+                    String uuid = resp.get(0).get("uuid").asText();
+                    telegramToUserUuid.put(telegramId, uuid);
+                    log.info("Cached user UUID for telegram {}: {}", telegramId, uuid);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to cache user UUID from response: {}", e.getMessage());
+        }
+    }
+
+    private String callHwidDeviceDelete(Map<String, Object> arguments) {
+        String hwid = (String) arguments.get("deviceUuid");
+        if (hwid == null || hwid.isBlank()) {
+            return "{\"error\": \"deviceUuid is required\"}";
+        }
+        String userUuid = null;
+        for (String uuid : telegramToUserUuid.values()) {
+            userUuid = uuid;
+            break;
+        }
+        if (userUuid == null) {
+            return "{\"content\":[{\"type\":\"text\",\"text\":\"Error: не удалось определить пользователя. Повторите запрос.\"}],\"isError\":true}";
+        }
+        try {
+            java.net.http.HttpClient httpClient = java.net.http.HttpClient.newHttpClient();
+            ObjectNode body = objectMapper.createObjectNode();
+            body.put("userUuid", userUuid);
+            body.put("hwid", hwid);
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(remnawaveBaseUrl + "/api/hwid/devices/delete"))
+                    .header("Authorization", "Bearer " + remnawaveApiToken)
+                    .header("Content-Type", "application/json")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
+                            objectMapper.writeValueAsString(body)))
+                    .build();
+            java.net.http.HttpResponse<String> response = httpClient.send(request,
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 400) {
+                return "{\"content\":[{\"type\":\"text\",\"text\":\"Error: Remnawave API error: HTTP "
+                        + response.statusCode() + " - " + response.body() + "\"}],\"isError\":true}";
+            }
+            return "{\"content\":[{\"type\":\"text\",\"text\":\"" +
+                    objectMapper.writeValueAsString(objectMapper.readTree(response.body())) + "\"}]}";
+        } catch (Exception e) {
+            log.error("Direct hwid_device_delete API call failed", e);
+            return "{\"content\":[{\"type\":\"text\",\"text\":\"Error: " + e.getMessage() + "\"}],\"isError\":true}";
         }
     }
 
