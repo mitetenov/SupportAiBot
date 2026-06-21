@@ -134,7 +134,7 @@ public class DeepSeekClient implements LlmClient {
                     String toolResult = mcpClient.callTool(functionName, arguments);
                     log.info("Tool {} result: {}",
                             functionName,
-                            toolResult.length() > 300 ? toolResult.substring(0, 300) + "..." : toolResult);
+                            toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
 
                     messages.add(Map.of(
                             "role", "tool",

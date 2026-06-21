@@ -152,7 +152,7 @@ public class GeminiClient implements LlmClient {
                     String toolResult = mcpClient.callTool(functionName, arguments);
                     log.info("Tool {} result: {}",
                             functionName,
-                            toolResult.length() > 300 ? toolResult.substring(0, 300) + "..." : toolResult);
+                            toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
 
                     Map<String, Object> functionResponse = Map.of(
                             "role", "function",
@@ -272,7 +272,7 @@ public class GeminiClient implements LlmClient {
                     String toolResult = mcpClient.callTool(functionName, arguments);
                     log.info("Tool {} result: {}",
                             functionName,
-                            toolResult.length() > 300 ? toolResult.substring(0, 300) + "..." : toolResult);
+                            toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
 
                     Map<String, Object> functionResponse = Map.of(
                             "role", "function",
