@@ -4,8 +4,8 @@ spring:
   datasource:
     url: jdbc:postgresql://postgres:5432/vpnsupport
     driver-class-name: org.postgresql.Driver
-    username: ${PG_USER:bot}
-    password: ${PG_PASSWORD}
+    username: ${POSTGRES_USER:bot}
+    password: ${POSTGRES_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: update

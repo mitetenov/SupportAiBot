@@ -3,21 +3,7 @@ services:
     image: mitetenov/supportbot:${BOT_TAG:-latest}
     container_name: vpn-support-bot
     restart: unless-stopped
-    environment:
-      - LLM_PROVIDER=${LLM_PROVIDER:-deepseek}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_SUPPORT_GROUP_CHAT_ID=${TELEGRAM_SUPPORT_GROUP_CHAT_ID}
-      - TELEGRAM_SUPPORT_ADMIN_USERNAME=${TELEGRAM_SUPPORT_ADMIN_USERNAME}
-      - TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS=${TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS:-}
-      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GEMINI_MODEL=${GEMINI_MODEL}
-      - REMNAWAVE_BASE_URL=${REMNAWAVE_BASE_URL}
-      - REMNAWAVE_API_TOKEN=${REMNAWAVE_API_TOKEN}
-      - REMNAWAVE_READONLY=${REMNAWAVE_READONLY:-true}
-      - PG_USER=${PG_USER:-bot}
-      - PG_PASSWORD=${PG_PASSWORD}
+    env_file: .env
     depends_on:
       postgres:
         condition: service_healthy
@@ -32,14 +18,11 @@ services:
     image: pgvector/pgvector:pg17
     container_name: vpn-support-pg
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: vpnsupport
-      POSTGRES_USER: ${PG_USER:-bot}
-      POSTGRES_PASSWORD: ${PG_PASSWORD}
+    env_file: .env
     volumes:
       - pg-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-bot} -d vpnsupport"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bot} -d ${POSTGRES_DB:-vpnsupport}"]
       interval: 10s
       timeout: 5s
       retries: 5
