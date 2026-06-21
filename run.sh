@@ -41,8 +41,9 @@ if [ ${#MISSING[@]} -gt 0 ]; then
     exit 1
 fi
 
-echo -e "${GREEN}Сборка и запуск...${NC}"
-docker compose up -d --build
+echo -e "${GREEN}Загрузка образа и запуск...${NC}"
+docker compose pull
+docker compose up -d
 
 echo ""
 echo -e "${GREEN}Проверка состояния...${NC}"
