@@ -18,7 +18,7 @@ import java.util.UUID;
 public class FaqEmbeddingService {
 
     private static final Logger log = LoggerFactory.getLogger(FaqEmbeddingService.class);
-    private static final int EMBEDDING_DIMENSION = 3072;
+    private static final int EMBEDDING_DIMENSION = 2000;
     private static final String EMBEDDING_MODEL = "gemini-embedding-001";
     private static final int SEARCH_LIMIT = 3;
     private static final double MIN_SIMILARITY = 0.5;
@@ -54,7 +54,7 @@ public class FaqEmbeddingService {
         try {
             jdbcTemplate.execute("""
                     CREATE INDEX IF NOT EXISTS faq_embedding_idx
-                    ON faq USING ivfflat (embedding vector_cosine_ops)
+                    ON faq USING hnsw (embedding vector_cosine_ops)
                     """);
         } catch (Exception e) {
             log.warn("Could not create FAQ index: {}", e.getMessage());
@@ -161,6 +161,17 @@ public class FaqEmbeddingService {
                 || lower.contains("обрыв");
     }
 
+    public String buildRefinedFaqContext(String originalQuery, List<String> mcpResults) {
+        StringBuilder enrichedQuery = new StringBuilder(originalQuery);
+        for (String result : mcpResults) {
+            if (result != null && !result.isBlank()) {
+                String truncated = result.length() > 500 ? result.substring(0, 500) : result;
+                enrichedQuery.append(" ").append(truncated);
+            }
+        }
+        return buildFaqContext(enrichedQuery.toString());
+    }
+
     public List<String> getMatchedImages(String userQuery) {
         List<FaqResult> results = search(userQuery);
         if (results.isEmpty() && looksLikeConnectionIssue(userQuery)) {
@@ -181,6 +192,7 @@ public class FaqEmbeddingService {
             ObjectNode content = requestBody.putObject("content");
             ArrayNode parts = content.putArray("parts");
             parts.addObject().put("text", text);
+            requestBody.put("outputDimensionality", EMBEDDING_DIMENSION);
 
             String response = java.net.http.HttpClient.newHttpClient()
                     .send(java.net.http.HttpRequest.newBuilder()

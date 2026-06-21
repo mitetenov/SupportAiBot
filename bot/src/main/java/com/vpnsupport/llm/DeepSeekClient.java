@@ -57,7 +57,7 @@ public class DeepSeekClient implements LlmClient {
         messages.addAll(chatHistoryService.getHistory(telegramUserId));
         messages.add(Map.of("role", "user", "content", userMessage));
 
-        String response = processChat(messages, 0);
+        String response = processChat(messages, 0, userMessage);
         if (!isErrorResponse(response)) {
             chatHistoryService.addUserMessage(telegramUserId, userMessage);
             chatHistoryService.addAssistantMessage(telegramUserId, response);
@@ -71,7 +71,8 @@ public class DeepSeekClient implements LlmClient {
                 + "Переключите провайдера на Gemini (LLM_PROVIDER=gemini) или опишите проблему текстом.";
     }
 
-    private String processChat(List<Map<String, Object>> messages, int iteration) {
+    private String processChat(List<Map<String, Object>> messages, int iteration,
+                                 String originalUserMessage) {
         if (iteration >= MAX_TOOL_ITERATIONS) {
             return "Превышено количество попыток обработки запроса. Пожалуйста, попробуйте ещё раз.";
         }
@@ -125,6 +126,9 @@ public class DeepSeekClient implements LlmClient {
                     log.info("Executing tool: {} with args: {}", functionName, arguments);
 
                     String toolResult = mcpClient.callTool(functionName, arguments);
+                    log.info("Tool {} result: {}",
+                            functionName,
+                            toolResult.length() > 300 ? toolResult.substring(0, 300) + "..." : toolResult);
 
                     messages.add(Map.of(
                             "role", "tool",
@@ -133,7 +137,21 @@ public class DeepSeekClient implements LlmClient {
                     ));
                 }
 
-                return processChat(messages, iteration + 1);
+                if (iteration == 0) {
+                    List<String> toolResults = messages.stream()
+                            .filter(m -> "tool".equals(m.get("role")))
+                            .map(m -> (String) m.get("content"))
+                            .toList();
+                    String refreshedFaq = faqEmbeddingService.buildRefinedFaqContext(
+                            originalUserMessage, toolResults);
+                    if (!refreshedFaq.isEmpty()) {
+                        messages.add(Map.of("role", "user", "content",
+                                "[Система] Результат диагностики получен. Актуальный FAQ:\n\n"
+                                        + refreshedFaq));
+                    }
+                }
+
+                return processChat(messages, iteration + 1, originalUserMessage);
             }
 
             if (content != null && !content.isEmpty()) {
