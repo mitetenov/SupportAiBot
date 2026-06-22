@@ -8,7 +8,7 @@ services:
       pgvector:
         condition: service_healthy
     networks:
-      - internal
+      - remnawave-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 30s
@@ -22,7 +22,7 @@ services:
     restart: unless-stopped
     env_file: .env
     networks:
-      - internal
+      - remnawave-network
     volumes:
       - pgvector-data:/var/lib/postgresql/data
     healthcheck:
@@ -32,7 +32,7 @@ services:
       retries: 5
 
 networks:
-  internal:
+  remnawave-network:
     driver: bridge
 
 volumes:
