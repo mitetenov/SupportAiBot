@@ -22,13 +22,16 @@ services:
     container_name: vpn-support-pg
     restart: unless-stopped
     profiles: [local-db]
-    env_file: .env
+    environment:
+      POSTGRES_USER: ${PGVECTOR_USER:-bot}
+      POSTGRES_PASSWORD: ${PGVECTOR_PASSWORD}
+      POSTGRES_DB: ${PGVECTOR_DB:-vpnsupport}
     networks:
       - remnawave-network
     volumes:
       - pgvector-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bot} -d ${POSTGRES_DB:-vpnsupport}"]
+      test: ["CMD-SHELL", "pg_isready -U ${PGVECTOR_USER:-bot} -d ${PGVECTOR_DB:-vpnsupport}"]
       interval: 10s
       timeout: 5s
       retries: 5
