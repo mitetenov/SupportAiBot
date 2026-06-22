@@ -7,6 +7,8 @@ services:
     depends_on:
       pgvector:
         condition: service_healthy
+    networks:
+      - internal
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 30s
@@ -19,13 +21,19 @@ services:
     container_name: vpn-support-pg
     restart: unless-stopped
     env_file: .env
+    networks:
+      - internal
     volumes:
-      - pg-data:/var/lib/postgresql/data
+      - pgvector-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bot} -d ${POSTGRES_DB:-vpnsupport}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+networks:
+  internal:
+    driver: bridge
+
 volumes:
-  pg-data:
+  pgvector-data:
