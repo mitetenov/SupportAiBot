@@ -2,10 +2,10 @@ spring:
   application:
     name: vpn-support-bot
   datasource:
-    url: jdbc:postgresql://${POSTGRES_HOST:pgvector}:${POSTGRES_PORT:5432}/${POSTGRES_DB:vpnsupport}
+    url: jdbc:postgresql://${PGVECTOR_HOST:pgvector}:${PGVECTOR_PORT:5432}/${PGVECTOR_DB:vpnsupport}
     driver-class-name: org.postgresql.Driver
-    username: ${POSTGRES_USER:bot}
-    password: ${POSTGRES_PASSWORD}
+    username: ${PGVECTOR_USER:bot}
+    password: ${PGVECTOR_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: update

@@ -53,11 +53,11 @@ docker compose up -d
 | `REMNAWAVE_BASE_URL` | да | — | URL панели Remnawave |
 | `REMNAWAVE_API_TOKEN` | да | — | JWT API-токен Remnawave |
 | `REMNAWAVE_READONLY` | — | `true` | `false` — разрешить удаление HWID-устройств |
-| `POSTGRES_HOST` | — | `pgvector` | Хост PostgreSQL |
-| `POSTGRES_PORT` | — | `5432` | Порт PostgreSQL |
-| `POSTGRES_USER` | — | `bot` | Пользователь PostgreSQL |
-| `POSTGRES_PASSWORD` | да | — | Пароль PostgreSQL |
-| `POSTGRES_DB` | — | `vpnsupport` | Название БД |
+| `PGVECTOR_HOST` | — | `pgvector` | Хост pgvector |
+| `PGVECTOR_PORT` | — | `5432` | Порт pgvector |
+| `PGVECTOR_USER` | — | `bot` | Пользователь pgvector |
+| `PGVECTOR_PASSWORD` | да | — | Пароль pgvector |
+| `PGVECTOR_DB` | — | `vpnsupport` | Название БД |
 | `BOT_TAG` | — | `latest` | Тег образа mitetenov/supportbot |
 
 При запуске валидируются только переменные выбранного провайдера (ключа и модели). Переменные неактивного провайдера можно не заполнять.
