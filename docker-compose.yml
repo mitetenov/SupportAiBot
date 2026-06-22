@@ -7,6 +7,7 @@ services:
     depends_on:
       pgvector:
         condition: service_healthy
+        required: false
     networks:
       - remnawave-network
     healthcheck:
@@ -20,6 +21,7 @@ services:
     image: pgvector/pgvector:pg17
     container_name: vpn-support-pg
     restart: unless-stopped
+    profiles: [local-db]
     env_file: .env
     networks:
       - remnawave-network
