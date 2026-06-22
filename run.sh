@@ -51,4 +51,4 @@ sleep 5
 docker compose ps
 
 echo ""
-echo -e "${GREEN}Готово. Логи: docker compose logs -f bot${NC}"
+echo -e "${GREEN}Готово. Логи: docker compose logs -f support-bot${NC}"

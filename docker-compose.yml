@@ -1,5 +1,5 @@
 services:
-  bot:
+  support-bot:
     image: mitetenov/supportbot:${BOT_TAG:-latest}
     container_name: vpn-support-bot
     restart: unless-stopped
