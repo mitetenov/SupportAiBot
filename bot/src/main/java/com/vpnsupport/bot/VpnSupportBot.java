@@ -385,22 +385,11 @@ public class VpnSupportBot {
     private String resolveUserName(Long telegramId) {
         try {
             List<java.util.Map<String, Object>> rows = jdbcTemplate.queryForList(
-                    "SELECT username, first_name, last_name FROM user_names WHERE telegram_id = ?",
-                    telegramId);
+                    "SELECT username FROM user_names WHERE telegram_id = ?", telegramId);
             if (!rows.isEmpty()) {
-                var row = rows.get(0);
-                String username = (String) row.get("username");
+                String username = (String) rows.get(0).get("username");
                 if (username != null && !username.isBlank()) {
                     return "@" + username + " (" + telegramId + ")";
-                }
-                String firstName = (String) row.get("first_name");
-                String lastName = (String) row.get("last_name");
-                if (firstName != null && !firstName.isBlank()) {
-                    String name = firstName;
-                    if (lastName != null && !lastName.isBlank()) {
-                        name += " " + lastName;
-                    }
-                    return name + " (" + telegramId + ")";
                 }
             }
         } catch (Exception e) {
