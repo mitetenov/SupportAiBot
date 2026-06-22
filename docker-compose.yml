@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     env_file: .env
     depends_on:
-      postgres:
+      pgvector:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
@@ -14,7 +14,7 @@ services:
       retries: 3
       start_period: 120s
 
-  postgres:
+  pgvector:
     image: pgvector/pgvector:pg17
     container_name: vpn-support-pg
     restart: unless-stopped

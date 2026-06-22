@@ -2,7 +2,7 @@ spring:
   application:
     name: vpn-support-bot
   datasource:
-    url: jdbc:postgresql://postgres:5432/vpnsupport
+    url: jdbc:postgresql://pgvector:5432/vpnsupport
     driver-class-name: org.postgresql.Driver
     username: ${POSTGRES_USER:bot}
     password: ${POSTGRES_PASSWORD}
