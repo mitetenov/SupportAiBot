@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.Base64;
@@ -46,6 +47,7 @@ public class VpnSupportBot {
     private final long supportGroupChatId;
     private final LlmTokenUsageRepository tokenUsageRepository;
     private final Set<Long> adminTelegramIds;
+    private final JdbcTemplate jdbcTemplate;
 
     private ExecutorService updateExecutor;
 
@@ -58,7 +60,8 @@ public class VpnSupportBot {
                           ChatHistoryService chatHistoryService,
                           WebClient webClient,
                           TelegramProperties telegramProperties,
-                          LlmTokenUsageRepository tokenUsageRepository) {
+                          LlmTokenUsageRepository tokenUsageRepository,
+                          JdbcTemplate jdbcTemplate) {
         this.telegramBot = telegramBot;
         this.llmClient = llmClient;
         this.faqEmbeddingService = faqEmbeddingService;
@@ -71,6 +74,7 @@ public class VpnSupportBot {
         this.supportGroupChatId = telegramProperties.getSupportGroupChatId();
         this.tokenUsageRepository = tokenUsageRepository;
         this.adminTelegramIds = telegramProperties.getSupportAdminTelegramIds();
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -158,6 +162,8 @@ public class VpnSupportBot {
         long chatId = message.chat().id();
         User user = message.from();
         String text = message.text().trim();
+
+        ensureUserInfo(user);
 
         if (text.equals("/start")) {
             chatHistoryService.clear(user.id());
@@ -321,7 +327,8 @@ public class VpnSupportBot {
                 .append(" пользователей по токенам LLM:\n");
         int rank = 1;
         for (Object[] row : top) {
-            sb.append(rank++).append(". Telegram ID: ").append(row[0])
+            Long tgId = (Long) row[0];
+            sb.append(rank++).append(". ").append(resolveUserName(tgId))
                     .append(" — ").append(formatNumber((Long) row[1]))
                     .append(" токенов (").append(row[4]).append(" запросов)\n");
         }
@@ -331,12 +338,12 @@ public class VpnSupportBot {
     private void showUserStats(long chatId, long telegramId) {
         List<Object[]> stats = tokenUsageRepository.getStatsByTelegramId(telegramId);
         if (stats.isEmpty() || stats.get(0)[0] == null) {
-            messageSender.send(chatId, "Нет данных по Telegram ID " + telegramId + ".");
+            messageSender.send(chatId, "Нет данных по " + resolveUserName(telegramId) + ".");
             return;
         }
         Object[] row = stats.get(0);
         messageSender.send(chatId,
-                "Статистика Telegram ID " + telegramId + ":\n"
+                "Статистика " + resolveUserName(telegramId) + ":\n"
                         + "Запросов: " + row[3] + "\n"
                         + "Prompt-токенов: " + formatNumber((Long) row[1]) + "\n"
                         + "Completion-токенов: " + formatNumber((Long) row[2]) + "\n"
@@ -348,6 +355,58 @@ public class VpnSupportBot {
         if (n < 1_000_000) return String.format("%.1fK", n / 1_000.0);
         if (n < 1_000_000_000) return String.format("%.1fM", n / 1_000_000.0);
         return String.format("%.1fB", n / 1_000_000_000.0);
+    }
+
+    private void ensureUserInfo(User user) {
+        try {
+            jdbcTemplate.execute("""
+                    CREATE TABLE IF NOT EXISTS user_names (
+                        telegram_id BIGINT PRIMARY KEY,
+                        username VARCHAR(255),
+                        first_name VARCHAR(255),
+                        last_name VARCHAR(255),
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+            jdbcTemplate.update(
+                    "INSERT INTO user_names (telegram_id, username, first_name, last_name, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) "
+                            + "ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username, "
+                            + "first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, "
+                            + "updated_at = CURRENT_TIMESTAMP",
+                    user.id(),
+                    user.username(),
+                    user.firstName(),
+                    user.lastName());
+        } catch (Exception e) {
+            log.warn("Failed to save user info: {}", e.getMessage());
+        }
+    }
+
+    private String resolveUserName(Long telegramId) {
+        try {
+            List<java.util.Map<String, Object>> rows = jdbcTemplate.queryForList(
+                    "SELECT username, first_name, last_name FROM user_names WHERE telegram_id = ?",
+                    telegramId);
+            if (!rows.isEmpty()) {
+                var row = rows.get(0);
+                String username = (String) row.get("username");
+                if (username != null && !username.isBlank()) {
+                    return "@" + username + " (" + telegramId + ")";
+                }
+                String firstName = (String) row.get("first_name");
+                String lastName = (String) row.get("last_name");
+                if (firstName != null && !firstName.isBlank()) {
+                    String name = firstName;
+                    if (lastName != null && !lastName.isBlank()) {
+                        name += " " + lastName;
+                    }
+                    return name + " (" + telegramId + ")";
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to resolve user name: {}", e.getMessage());
+        }
+        return String.valueOf(telegramId);
     }
 
     private boolean isErrorResponse(String response) {
