@@ -7,9 +7,8 @@ services:
     depends_on:
       pgvector:
         condition: service_healthy
-        required: false
     networks:
-      - remnawave-network
+      - internal
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 30s
@@ -21,13 +20,12 @@ services:
     image: pgvector/pgvector:pg17
     container_name: vpn-support-pg
     restart: unless-stopped
-    profiles: [local-db]
     environment:
       POSTGRES_USER: ${PGVECTOR_USER:-bot}
       POSTGRES_PASSWORD: ${PGVECTOR_PASSWORD}
       POSTGRES_DB: ${PGVECTOR_DB:-vpnsupport}
     networks:
-      - remnawave-network
+      - internal
     volumes:
       - pgvector-data:/var/lib/postgresql/data
     healthcheck:
@@ -37,7 +35,7 @@ services:
       retries: 5
 
 networks:
-  remnawave-network:
+  internal:
     driver: bridge
 
 volumes:
