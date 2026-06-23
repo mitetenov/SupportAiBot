@@ -24,12 +24,27 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
+      # Cache Node.js dependencies for faster MCP source install inside
+      # the Docker build.  This complements the BuildKit mount cache.
+      - name: Cache npm dependencies (host-level fallback)
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache/npm
+          key: npm-${{ runner.os }}-${{ hashFiles('.github/workflows/docker-multiarch.yml') }}
+          restore-keys: |
+            npm-${{ runner.os }}-
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
+          # MCP source: upstream TrackLine/mcp-remnawave latest release
+          build-args: |
+            MCP_OWNER=TrackLine
+            MCP_REPO=mcp-remnawave
+            MCP_VERSION=latest
           tags: |
             mitetenov/supportbot:latest
             mitetenov/supportbot:${{ github.sha }}
