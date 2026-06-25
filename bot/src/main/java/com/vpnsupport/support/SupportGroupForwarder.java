@@ -106,7 +106,7 @@ public class SupportGroupForwarder {
         String userName = resolveUserName(user);
         Integer topicId = topicManager.resolveTopicId(user.id(), userName);
         if (topicId == null) {
-            log.warn("Cannot forward error to support group: no topic for user {}", userId);
+            log.warn("Cannot forward error to support group: no topic for user {}", user.id());
             return;
         }
 
