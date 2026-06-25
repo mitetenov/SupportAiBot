@@ -19,9 +19,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
-public class McpClient {
+public class StdioMcpClient implements McpClientInterface {
 
-    private static final Logger log = LoggerFactory.getLogger(McpClient.class);
+    private static final Logger log = LoggerFactory.getLogger(StdioMcpClient.class);
     private static final String PROTOCOL_VERSION = "2024-11-05";
     private static final long REQUEST_TIMEOUT_MS = 30_000;
 
@@ -39,7 +39,7 @@ public class McpClient {
 
     private List<McpTool> cachedTools = Collections.emptyList();
 
-    public McpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper) {
+    public StdioMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper) {
         this.properties = properties;
         this.objectMapper = objectMapper;
     }
@@ -144,10 +144,12 @@ public class McpClient {
         }
     }
 
+    @Override
     public List<McpTool> listTools() {
         return cachedTools;
     }
 
+    @Override
     public String callTool(String toolName, Map<String, Object> arguments) {
         if (!initialized) {
             return "{\"error\": \"MCP client not initialized\"}";

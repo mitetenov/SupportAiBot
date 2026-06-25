@@ -40,6 +40,11 @@ remnawave:
     api-token: ${REMNAWAVE_API_TOKEN}
     readonly: ${REMNAWAVE_READONLY:true}
 
+happ:
+  mcp:
+    url: https://www.happ.su/main/~gitbook/mcp
+    enabled: true
+
 management:
   endpoints:
     web:
