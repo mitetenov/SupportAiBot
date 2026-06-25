@@ -405,7 +405,7 @@ public class GeminiClient implements LlmClient {
     private ObjectNode sanitizeSchemaParams(JsonNode schema) {
         ObjectNode cleaned = objectMapper.createObjectNode();
         schema.fieldNames().forEachRemaining(field -> {
-            if ("$schema".equals(field) || "additionalProperties".equals(field)) {
+            if ("$schema".equals(field) || "additionalProperties".equals(field) || "propertyNames".equals(field)) {
                 return;
             }
             JsonNode value = schema.get(field);
