@@ -21,7 +21,7 @@ RUN apk add --no-cache curl unzip
 
 ARG MCP_OWNER=mitetenov
 ARG MCP_REPO=mcp-remnawave
-ARG MCP_VERSION=v1.2.1
+ARG MCP_VERSION=v1.2.2
 
 WORKDIR /mcp-remnawave
 

@@ -36,7 +36,7 @@ jobs:
           build-args: |
             MCP_OWNER=mitetenov
             MCP_REPO=mcp-remnawave
-            MCP_VERSION=v1.2.1
+            MCP_VERSION=v1.2.2
           tags: |
             mitetenov/supportbot:latest
             mitetenov/supportbot:${{ github.sha }}
