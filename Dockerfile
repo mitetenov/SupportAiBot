@@ -21,14 +21,15 @@ RUN apk add --no-cache curl unzip
 
 ARG MCP_OWNER=mitetenov
 ARG MCP_REPO=mcp-remnawave
+ARG MCP_VERSION=v1.2.1
 
 WORKDIR /mcp-remnawave
 
-# Download the latest pre-built MCP release.  GitHub's /latest/download/
-# redirects automatically to the newest release's asset.
+# Download the pre-built MCP release at the specified version.
 RUN set -eux; \
-    ASSET_URL="https://github.com/${MCP_OWNER}/${MCP_REPO}/releases/latest/download/mcp-release.zip"; \
-    echo "Downloading MCP pre-built from ${ASSET_URL}"; \
+    MCP_VERSION=${MCP_VERSION}; \
+    ASSET_URL="https://github.com/${MCP_OWNER}/${MCP_REPO}/releases/download/${MCP_VERSION}/mcp-release.zip"; \
+    echo "Downloading MCP ${MCP_VERSION} from ${ASSET_URL}"; \
     curl -fsSL "${ASSET_URL}" -o mcp-release.zip; \
     echo "Extracting..."; \
     unzip -q mcp-release.zip -d dist; \
