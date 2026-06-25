@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.vpnsupport.bot.AdminNotifier;
 import com.vpnsupport.bot.ChatHistoryService;
 import com.vpnsupport.bot.LlmTokenUsage;
 import com.vpnsupport.bot.LlmTokenUsageRepository;
@@ -33,17 +34,20 @@ public class DeepSeekClient implements LlmClient {
     private final ChatHistoryService chatHistoryService;
     private final FaqEmbeddingService faqEmbeddingService;
     private final LlmTokenUsageRepository tokenUsageRepository;
+    private final AdminNotifier adminNotifier;
     private final String model;
 
     public DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper,
                           McpRouter mcpRouter, ChatHistoryService chatHistoryService,
                           FaqEmbeddingService faqEmbeddingService,
-                          LlmTokenUsageRepository tokenUsageRepository) {
+                          LlmTokenUsageRepository tokenUsageRepository,
+                          AdminNotifier adminNotifier) {
         this.objectMapper = objectMapper;
         this.mcpRouter = mcpRouter;
         this.chatHistoryService = chatHistoryService;
         this.faqEmbeddingService = faqEmbeddingService;
         this.tokenUsageRepository = tokenUsageRepository;
+        this.adminNotifier = adminNotifier;
         this.model = properties.getModel();
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getBaseUrl())
@@ -168,6 +172,7 @@ public class DeepSeekClient implements LlmClient {
 
         } catch (Exception e) {
             log.error("DeepSeek request failed", e);
+            adminNotifier.notifyError("DeepSeek chat", telegramUserId, e);
             return "Произошла ошибка при обработке запроса. Попробуйте позже.";
         }
     }

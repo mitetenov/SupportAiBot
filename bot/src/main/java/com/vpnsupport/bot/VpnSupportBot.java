@@ -40,6 +40,7 @@ public class VpnSupportBot {
     private final LlmClient llmClient;
     private final FaqEmbeddingService faqEmbeddingService;
     private final SupportGroupForwarder forwarder;
+    private final AdminNotifier adminNotifier;
     private final TopicMappingRepository topicMappingRepository;
     private final TelegramMessageSender messageSender;
     private final UserRateLimiter rateLimiter;
@@ -55,6 +56,7 @@ public class VpnSupportBot {
     public VpnSupportBot(TelegramBot telegramBot, LlmClient llmClient,
                           FaqEmbeddingService faqEmbeddingService,
                           SupportGroupForwarder forwarder,
+                          AdminNotifier adminNotifier,
                           TopicMappingRepository topicMappingRepository,
                           TelegramMessageSender messageSender,
                           UserRateLimiter rateLimiter,
@@ -67,6 +69,7 @@ public class VpnSupportBot {
         this.llmClient = llmClient;
         this.faqEmbeddingService = faqEmbeddingService;
         this.forwarder = forwarder;
+        this.adminNotifier = adminNotifier;
         this.topicMappingRepository = topicMappingRepository;
         this.messageSender = messageSender;
         this.rateLimiter = rateLimiter;
@@ -227,6 +230,7 @@ public class VpnSupportBot {
             forwarder.forwardToSupport(chatId, message.messageId(), user, text, response, escalation);
         } catch (Exception e) {
             log.error("Error processing message from user {}", chatId, e);
+            adminNotifier.notifyError("Обработка текстового сообщения", user.id(), e);
             messageSender.send(chatId, "Произошла ошибка при обработке запроса. Попробуйте позже.");
         }
     }
@@ -295,6 +299,7 @@ public class VpnSupportBot {
             forwarder.forwardToSupport(chatId, message.messageId(), user, forwardText, response, escalation);
         } catch (Exception e) {
             log.error("Error processing photo from user {}", chatId, e);
+            adminNotifier.notifyError("Обработка фото", user.id(), e);
             messageSender.send(chatId, "Произошла ошибка при обработке изображения. Попробуйте позже.");
         }
     }
