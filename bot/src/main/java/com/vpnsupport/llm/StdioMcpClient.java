@@ -3,6 +3,7 @@ package com.vpnsupport.llm;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.vpnsupport.bot.AdminNotifier;
 import com.vpnsupport.config.RemnawaveMcpProperties;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -27,6 +28,7 @@ public class StdioMcpClient implements McpClientInterface {
 
     private final RemnawaveMcpProperties properties;
     private final ObjectMapper objectMapper;
+    private final AdminNotifier adminNotifier;
 
     private Process process;
     private BufferedWriter stdin;
@@ -39,9 +41,11 @@ public class StdioMcpClient implements McpClientInterface {
 
     private List<McpTool> cachedTools = Collections.emptyList();
 
-    public StdioMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper) {
+    public StdioMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper,
+                          AdminNotifier adminNotifier) {
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.adminNotifier = adminNotifier;
     }
 
     @PostConstruct
@@ -54,6 +58,7 @@ public class StdioMcpClient implements McpClientInterface {
             log.info("MCP client initialized with {} tools", cachedTools.size());
         } catch (Exception e) {
             log.error("Failed to initialize MCP client — bot will run without Remnawave tools", e);
+            adminNotifier.notifyError("MCP init failed", e);
         }
     }
 
@@ -161,6 +166,7 @@ public class StdioMcpClient implements McpClientInterface {
             return objectMapper.writeValueAsString(response);
         } catch (Exception e) {
             log.error("Failed to call tool: {}", toolName, e);
+            adminNotifier.notifyError("MCP tool call failed: " + toolName, e);
             return "{\"error\": \"" + e.getMessage() + "\"}";
         }
     }
@@ -241,6 +247,7 @@ public class StdioMcpClient implements McpClientInterface {
         } catch (IOException e) {
             if (running) {
                 log.error("MCP reader error", e);
+                adminNotifier.notifyError("MCP reader crashed", e);
             }
         }
     }
