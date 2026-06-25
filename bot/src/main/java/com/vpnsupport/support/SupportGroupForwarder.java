@@ -43,20 +43,37 @@ public class SupportGroupForwarder {
             return;
         }
 
-        forwardUserMessage(userChatId, userMessageId, topicId);
+        boolean ok = forwardUserMessage(userChatId, userMessageId, topicId);
+        if (!ok) {
+            log.warn("Failed to forward to topic {}, recreating for user {}", topicId, user.id());
+            topicId = topicManager.recreateStaleTopic(user.id(), userName, topicId);
+            if (topicId == null) {
+                log.error("Failed to recreate topic for user {}", user.id());
+                return;
+            }
+            ok = forwardUserMessage(userChatId, userMessageId, topicId);
+            if (!ok) {
+                log.error("Still failed to forward after topic recreation for user {}", user.id());
+                return;
+            }
+        }
+
         sendBotResponse(topicId, userName, botResponse, needsEscalation);
     }
 
-    private void forwardUserMessage(long userChatId, int userMessageId, Integer topicId) {
+    private boolean forwardUserMessage(long userChatId, int userMessageId, Integer topicId) {
         CopyMessage request = new CopyMessage(supportGroupChatId, userChatId, userMessageId);
         request.messageThreadId(topicId);
         try {
             MessageIdResponse response = telegramBot.execute(request);
             if (!response.isOk()) {
                 log.warn("Failed to copy user message to topic {}: {}", topicId, response.description());
+                return false;
             }
+            return true;
         } catch (Exception e) {
-            log.error("Error copying user message to topic {}", topicId, e);
+            log.warn("Error copying user message to topic {}: {}", topicId, e.getMessage());
+            return false;
         }
     }
 

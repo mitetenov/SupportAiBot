@@ -10,6 +10,7 @@ import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.request.GetFile;
 import com.pengrad.telegrambot.response.GetFileResponse;
 import com.pengrad.telegrambot.response.MessageIdResponse;
+import com.pengrad.telegrambot.request.SendChatAction;
 import com.vpnsupport.config.TelegramProperties;
 import com.vpnsupport.llm.LlmClient;
 import com.vpnsupport.rag.FaqEmbeddingService;
@@ -174,8 +175,7 @@ public class VpnSupportBot {
                     + "• Сброс подписки с выдачей новой ссылки\n"
                     + "• Проверка трафика и статистика\n"
                     + "• Ответы на частые вопросы\n\n"
-                    + "Просто напишите ваш вопрос.\n"
-                    + "Оператор: /operator");
+                    + "Просто напишите ваш вопрос.");
             return;
         }
 
@@ -205,6 +205,7 @@ public class VpnSupportBot {
         }
 
         try {
+            telegramBot.execute(new SendChatAction(chatId, "typing"));
             String rawResponse = llmClient.chat(text, user.id());
             String response = stripEscalateMarker(rawResponse);
             if (response.isEmpty()) {
@@ -278,6 +279,7 @@ public class VpnSupportBot {
                     ? "Посмотри на скриншот. Опиши, что на нём отображается, и помоги решить проблему."
                     : caption;
 
+            telegramBot.execute(new SendChatAction(chatId, "typing"));
             String rawResponse = llmClient.chatWithImage(userPrompt, user.id(), base64Image, mimeType);
             String response = stripEscalateMarker(rawResponse);
             if (response.isEmpty()) {

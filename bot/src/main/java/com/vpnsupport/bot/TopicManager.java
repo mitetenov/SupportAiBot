@@ -36,6 +36,18 @@ public class TopicManager {
         }
     }
 
+    public Integer recreateStaleTopic(Long userId, String userName, Integer staleTopicId) {
+        Object lock = userLocks.computeIfAbsent(userId, id -> new Object());
+        synchronized (lock) {
+            TopicMapping existing = repository.findById(userId).orElse(null);
+            if (existing != null && existing.getTopicId().equals(staleTopicId)) {
+                repository.deleteById(userId);
+                log.info("Deleted stale topic mapping {} for user {}", staleTopicId, userId);
+            }
+            return createTopic(userId, userName);
+        }
+    }
+
     private Integer createTopic(Long userId, String userName) {
         String topicName = buildTopicName(userId, userName);
         log.info("Creating forum topic for user {}: {}", userId, topicName);

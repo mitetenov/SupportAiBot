@@ -29,18 +29,18 @@ public class DeepSeekClient implements LlmClient {
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
-    private final McpClient mcpClient;
+    private final McpRouter mcpRouter;
     private final ChatHistoryService chatHistoryService;
     private final FaqEmbeddingService faqEmbeddingService;
     private final LlmTokenUsageRepository tokenUsageRepository;
     private final String model;
 
     public DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper,
-                          McpClient mcpClient, ChatHistoryService chatHistoryService,
+                          McpRouter mcpRouter, ChatHistoryService chatHistoryService,
                           FaqEmbeddingService faqEmbeddingService,
                           LlmTokenUsageRepository tokenUsageRepository) {
         this.objectMapper = objectMapper;
-        this.mcpClient = mcpClient;
+        this.mcpRouter = mcpRouter;
         this.chatHistoryService = chatHistoryService;
         this.faqEmbeddingService = faqEmbeddingService;
         this.tokenUsageRepository = tokenUsageRepository;
@@ -131,7 +131,7 @@ public class DeepSeekClient implements LlmClient {
 
                     log.info("Executing tool: {} with args: {}", functionName, arguments);
 
-                    String toolResult = mcpClient.callTool(functionName, arguments);
+                    String toolResult = mcpRouter.callTool(functionName, arguments);
                     log.info("Tool {} result: {}",
                             functionName,
                             toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
@@ -180,7 +180,7 @@ public class DeepSeekClient implements LlmClient {
     }
 
     private List<Map<String, Object>> buildFunctionDefinitions() {
-        List<McpTool> tools = mcpClient.listTools();
+        List<McpTool> tools = mcpRouter.listTools();
         List<Map<String, Object>> functions = new ArrayList<>();
 
         for (McpTool tool : tools) {

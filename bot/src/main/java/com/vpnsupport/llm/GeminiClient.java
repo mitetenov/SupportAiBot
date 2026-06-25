@@ -29,18 +29,18 @@ public class GeminiClient implements LlmClient {
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
-    private final McpClient mcpClient;
+    private final McpRouter mcpRouter;
     private final ChatHistoryService chatHistoryService;
     private final FaqEmbeddingService faqEmbeddingService;
     private final LlmTokenUsageRepository tokenUsageRepository;
     private final String model;
 
     public GeminiClient(GeminiProperties properties, ObjectMapper objectMapper,
-                        McpClient mcpClient, ChatHistoryService chatHistoryService,
+                        McpRouter mcpRouter, ChatHistoryService chatHistoryService,
                         FaqEmbeddingService faqEmbeddingService,
                         LlmTokenUsageRepository tokenUsageRepository) {
         this.objectMapper = objectMapper;
-        this.mcpClient = mcpClient;
+        this.mcpRouter = mcpRouter;
         this.chatHistoryService = chatHistoryService;
         this.faqEmbeddingService = faqEmbeddingService;
         this.tokenUsageRepository = tokenUsageRepository;
@@ -90,7 +90,7 @@ public class GeminiClient implements LlmClient {
                     base64Image, mimeType, faqContext);
 
             log.debug("Gemini request (iteration {}): {} tools available",
-                    iteration, mcpClient.listTools().size());
+                    iteration, mcpRouter.listTools().size());
 
             String response = executeGenerateContent(requestBody);
 
@@ -149,7 +149,7 @@ public class GeminiClient implements LlmClient {
 
                     log.info("Executing tool: {} with args: {}", functionName, arguments);
 
-                    String toolResult = mcpClient.callTool(functionName, arguments);
+                    String toolResult = mcpRouter.callTool(functionName, arguments);
                     log.info("Tool {} result: {}",
                             functionName,
                             toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
@@ -269,7 +269,7 @@ public class GeminiClient implements LlmClient {
 
                     log.info("Executing tool: {} with args: {}", functionName, arguments);
 
-                    String toolResult = mcpClient.callTool(functionName, arguments);
+                    String toolResult = mcpRouter.callTool(functionName, arguments);
                     log.info("Tool {} result: {}",
                             functionName,
                             toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
@@ -379,7 +379,7 @@ public class GeminiClient implements LlmClient {
     }
 
     private void addTools(ObjectNode body) {
-        List<McpTool> tools = mcpClient.listTools();
+        List<McpTool> tools = mcpRouter.listTools();
         if (tools.isEmpty()) {
             return;
         }
