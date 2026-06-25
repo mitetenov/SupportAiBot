@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.vpnsupport.bot.AdminNotifier;
 import com.vpnsupport.bot.ChatHistoryService;
 import com.vpnsupport.bot.LlmTokenUsage;
 import com.vpnsupport.bot.LlmTokenUsageRepository;
@@ -34,20 +33,18 @@ public class GeminiClient implements LlmClient {
     private final ChatHistoryService chatHistoryService;
     private final FaqEmbeddingService faqEmbeddingService;
     private final LlmTokenUsageRepository tokenUsageRepository;
-    private final AdminNotifier adminNotifier;
+    private final ThreadLocal<String> lastErrorThreadLocal = new ThreadLocal<>();
     private final String model;
 
     public GeminiClient(GeminiProperties properties, ObjectMapper objectMapper,
                         McpRouter mcpRouter, ChatHistoryService chatHistoryService,
                         FaqEmbeddingService faqEmbeddingService,
-                        LlmTokenUsageRepository tokenUsageRepository,
-                        AdminNotifier adminNotifier) {
+                        LlmTokenUsageRepository tokenUsageRepository) {
         this.objectMapper = objectMapper;
         this.mcpRouter = mcpRouter;
         this.chatHistoryService = chatHistoryService;
         this.faqEmbeddingService = faqEmbeddingService;
         this.tokenUsageRepository = tokenUsageRepository;
-        this.adminNotifier = adminNotifier;
         this.model = properties.getModel();
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getBaseUrl())
@@ -59,6 +56,15 @@ public class GeminiClient implements LlmClient {
     @Override
     public boolean supportsImages() {
         return true;
+    }
+
+    @Override
+    public String getLastError() {
+        try {
+            return lastErrorThreadLocal.get();
+        } finally {
+            lastErrorThreadLocal.remove();
+        }
     }
 
     @Override
@@ -202,7 +208,7 @@ public class GeminiClient implements LlmClient {
 
         } catch (Exception e) {
             log.error("Gemini request failed", e);
-            adminNotifier.notifyError("Gemini chat", telegramUserId, e);
+            lastErrorThreadLocal.set(extractErrorMessage(e));
             return "Произошла ошибка при обработке запроса. Попробуйте позже.";
         }
     }
@@ -302,7 +308,7 @@ public class GeminiClient implements LlmClient {
 
         } catch (Exception e) {
             log.error("Gemini continue chat failed", e);
-            adminNotifier.notifyError("Gemini continue chat", telegramUserId, e);
+            lastErrorThreadLocal.set(extractErrorMessage(e));
             return "Ошибка при обработке. Попробуйте позже.";
         }
     }
@@ -481,5 +487,13 @@ public class GeminiClient implements LlmClient {
         } catch (Exception e) {
             log.warn("Failed to save token usage: {}", e.getMessage());
         }
+    }
+
+    private String extractErrorMessage(Exception e) {
+        String msg = e.getMessage();
+        if (msg != null && msg.length() > 3000) {
+            msg = msg.substring(0, 3000) + "...";
+        }
+        return "Gemini: " + (msg != null ? msg : e.getClass().getSimpleName());
     }
 }

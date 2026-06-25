@@ -40,7 +40,6 @@ public class VpnSupportBot {
     private final LlmClient llmClient;
     private final FaqEmbeddingService faqEmbeddingService;
     private final SupportGroupForwarder forwarder;
-    private final AdminNotifier adminNotifier;
     private final TopicMappingRepository topicMappingRepository;
     private final TelegramMessageSender messageSender;
     private final UserRateLimiter rateLimiter;
@@ -56,7 +55,6 @@ public class VpnSupportBot {
     public VpnSupportBot(TelegramBot telegramBot, LlmClient llmClient,
                           FaqEmbeddingService faqEmbeddingService,
                           SupportGroupForwarder forwarder,
-                          AdminNotifier adminNotifier,
                           TopicMappingRepository topicMappingRepository,
                           TelegramMessageSender messageSender,
                           UserRateLimiter rateLimiter,
@@ -69,7 +67,6 @@ public class VpnSupportBot {
         this.llmClient = llmClient;
         this.faqEmbeddingService = faqEmbeddingService;
         this.forwarder = forwarder;
-        this.adminNotifier = adminNotifier;
         this.topicMappingRepository = topicMappingRepository;
         this.messageSender = messageSender;
         this.rateLimiter = rateLimiter;
@@ -217,21 +214,31 @@ public class VpnSupportBot {
 
             messageSender.send(chatId, response);
 
-            if (!isErrorResponse(response) && FaqImagePolicy.shouldAttachImages(response)) {
-                List<String> images = faqEmbeddingService.getMatchedImages(text);
-                for (String fileId : images) {
-                    messageSender.sendPhoto(chatId, fileId);
-                }
-            }
+            boolean errorResponse = isErrorResponse(response);
+            boolean llmEscalation = llmRequestedEscalation(rawResponse);
+            boolean humanRequest = userRequestsHuman(text);
 
-            boolean escalation = llmRequestedEscalation(rawResponse)
-                    || isErrorResponse(response)
-                    || userRequestsHuman(text);
-            forwarder.forwardToSupport(chatId, message.messageId(), user, text, response, escalation);
+            if (errorResponse) {
+                String errorDetails = llmClient.getLastError();
+                if (errorDetails == null) {
+                    errorDetails = "Unknown LLM error";
+                }
+                forwarder.forwardErrorToTopic(user, text, response, errorDetails);
+            } else {
+                if (FaqImagePolicy.shouldAttachImages(response)) {
+                    List<String> images = faqEmbeddingService.getMatchedImages(text);
+                    for (String fileId : images) {
+                        messageSender.sendPhoto(chatId, fileId);
+                    }
+                }
+                forwarder.forwardToSupport(chatId, message.messageId(), user, text, response,
+                        llmEscalation || humanRequest);
+            }
         } catch (Exception e) {
             log.error("Error processing message from user {}", chatId, e);
-            adminNotifier.notifyError("Обработка текстового сообщения", user.id(), e);
-            messageSender.send(chatId, "Произошла ошибка при обработке запроса. Попробуйте позже.");
+            String errorText = "Произошла ошибка при обработке запроса. Попробуйте позже.";
+            messageSender.send(chatId, errorText);
+            forwarder.forwardErrorToTopic(user, text, errorText, extractErrorMessage(e));
         }
     }
 
@@ -292,15 +299,28 @@ public class VpnSupportBot {
 
             messageSender.send(chatId, response);
 
+            boolean errorResponse = isErrorResponse(response);
+            boolean llmEscalation = llmRequestedEscalation(rawResponse);
+            boolean humanRequest = userRequestsHuman(caption);
+
             String forwardText = caption.isEmpty() ? "[Скриншот]" : "[Скриншот] " + caption;
-            boolean escalation = llmRequestedEscalation(rawResponse)
-                    || isErrorResponse(response)
-                    || userRequestsHuman(caption);
-            forwarder.forwardToSupport(chatId, message.messageId(), user, forwardText, response, escalation);
+
+            if (errorResponse) {
+                String errorDetails = llmClient.getLastError();
+                if (errorDetails == null) {
+                    errorDetails = "Unknown LLM error";
+                }
+                forwarder.forwardErrorToTopic(user, forwardText, response, errorDetails);
+            } else {
+                forwarder.forwardToSupport(chatId, message.messageId(), user, forwardText, response,
+                        llmEscalation || humanRequest);
+            }
         } catch (Exception e) {
             log.error("Error processing photo from user {}", chatId, e);
-            adminNotifier.notifyError("Обработка фото", user.id(), e);
-            messageSender.send(chatId, "Произошла ошибка при обработке изображения. Попробуйте позже.");
+            String errorText = "Произошла ошибка при обработке изображения. Попробуйте позже.";
+            messageSender.send(chatId, errorText);
+            String forwardText = caption.isEmpty() ? "[Скриншот]" : "[Скриншот] " + caption;
+            forwarder.forwardErrorToTopic(user, forwardText, errorText, extractErrorMessage(e));
         }
     }
 
@@ -442,5 +462,13 @@ public class VpnSupportBot {
         if (lower.endsWith(".webp")) return "image/webp";
         if (lower.endsWith(".gif")) return "image/gif";
         return "image/jpeg";
+    }
+
+    private String extractErrorMessage(Exception e) {
+        String msg = e.getMessage();
+        if (msg != null && msg.length() > 3000) {
+            msg = msg.substring(0, 3000) + "...";
+        }
+        return "Bot: " + (msg != null ? msg : e.getClass().getSimpleName());
     }
 }

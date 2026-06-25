@@ -9,4 +9,8 @@ public interface LlmClient {
     default boolean supportsImages() {
         return false;
     }
+
+    default String getLastError() {
+        return null;
+    }
 }

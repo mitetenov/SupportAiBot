@@ -101,4 +101,31 @@ public class SupportGroupForwarder {
         }
         return name != null && !name.isBlank() ? name : "User " + user.id();
     }
+
+    public void forwardErrorToTopic(User user, String userMessage, String userVisibleMessage, String errorDetails) {
+        String userName = resolveUserName(user);
+        Integer topicId = topicManager.resolveTopicId(user.id(), userName);
+        if (topicId == null) {
+            log.warn("Cannot forward error to support group: no topic for user {}", userId);
+            return;
+        }
+
+        String adminTag = adminUsername != null && !adminUsername.isBlank()
+                ? "@" + adminUsername + " "
+                : "";
+
+        String truncatedUserMsg = userMessage.length() > 300
+                ? userMessage.substring(0, 300) + "..."
+                : userMessage;
+
+        messageSender.sendToTopic(supportGroupChatId, topicId,
+                "[ОШИБКА БОТА] " + userName + ": " + truncatedUserMsg + "\n\nБот ответил:\n" + userVisibleMessage);
+
+        String truncated = errorDetails.length() > SUPPORT_PREVIEW_MAX_LENGTH
+                ? errorDetails.substring(0, SUPPORT_PREVIEW_MAX_LENGTH) + "..."
+                : errorDetails;
+
+        messageSender.sendToTopic(supportGroupChatId, topicId,
+                adminTag + "Детали ошибки:\n\n" + truncated);
+    }
 }
