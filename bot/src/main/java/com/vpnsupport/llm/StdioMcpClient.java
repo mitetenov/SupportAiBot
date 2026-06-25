@@ -53,8 +53,7 @@ public class StdioMcpClient implements McpClientInterface {
             initialized = true;
             log.info("MCP client initialized with {} tools", cachedTools.size());
         } catch (Exception e) {
-            log.error("Failed to initialize MCP client", e);
-            throw new IllegalStateException("Failed to initialize MCP client", e);
+            log.error("Failed to initialize MCP client — bot will run without Remnawave tools", e);
         }
     }
 
