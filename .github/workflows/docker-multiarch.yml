@@ -66,8 +66,6 @@ jobs:
             mitetenov/supportbot:latest
             mitetenov/supportbot:${{ steps.version.outputs.version }}
             mitetenov/supportbot:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Bump minor version
         if: github.event_name != 'pull_request'
