@@ -81,7 +81,7 @@ public class GeminiClient implements LlmClient {
 
         while (iteration < MAX_TOOL_ITERATIONS) {
             try {
-                ObjectNode requestBody = buildRequestBody(contents, faqContext);
+                ObjectNode requestBody = buildRequestBody(contents, faqContext, telegramUserId);
                 log.debug("Gemini request (iteration {}): {} tools available", iteration, mcpRouter.listTools().size());
 
                 String response = executeGenerateContent(requestBody);
@@ -205,12 +205,12 @@ public class GeminiClient implements LlmClient {
                 .block();
     }
 
-    private ObjectNode buildRequestBody(List<Map<String, Object>> contents, String faqContext) {
+    private ObjectNode buildRequestBody(List<Map<String, Object>> contents, String faqContext, long telegramUserId) {
         ObjectNode body = objectMapper.createObjectNode();
 
         ObjectNode systemInstruction = objectMapper.createObjectNode();
         ArrayNode systemParts = systemInstruction.putArray("parts");
-        systemParts.addObject().put("text", SupportPrompt.withFaqContext(faqContext, 0)); // passing 0 for user id as it's not strictly needed for context
+        systemParts.addObject().put("text", SupportPrompt.withFaqContext(faqContext, telegramUserId));
         body.set("system_instruction", systemInstruction);
 
         ArrayNode contentsArray = body.putArray("contents");
