@@ -60,15 +60,19 @@ class TelegramPropertiesTest {
     }
 
     @Test
-    void shouldThrowForNonNumericAdminId() {
-        assertThrows(NumberFormatException.class, () ->
-                properties.setSupportAdminTelegramIds("abc"));
+    void shouldSkipNonNumericAdminId() {
+        properties.setSupportAdminTelegramIds("abc");
+        Set<Long> ids = properties.getSupportAdminTelegramIds();
+        assertTrue(ids.isEmpty());
     }
 
     @Test
-    void shouldThrowForMixedValidAndInvalidAdminIds() {
-        assertThrows(NumberFormatException.class, () ->
-                properties.setSupportAdminTelegramIds("12345,abc,67890"));
+    void shouldSkipInvalidAndKeepValidAdminIds() {
+        properties.setSupportAdminTelegramIds("12345,abc,67890");
+        Set<Long> ids = properties.getSupportAdminTelegramIds();
+        assertEquals(2, ids.size());
+        assertTrue(ids.contains(12345L));
+        assertTrue(ids.contains(67890L));
     }
 
     @Test

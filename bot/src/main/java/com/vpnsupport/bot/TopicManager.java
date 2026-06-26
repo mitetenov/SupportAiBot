@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
@@ -40,7 +41,7 @@ public class TopicManager {
         Object lock = userLocks.computeIfAbsent(userId, id -> new Object());
         synchronized (lock) {
             TopicMapping existing = repository.findById(userId).orElse(null);
-            if (existing != null && existing.getTopicId().equals(staleTopicId)) {
+            if (existing != null && Objects.equals(existing.getTopicId(), staleTopicId)) {
                 repository.deleteById(userId);
                 log.info("Deleted stale topic mapping {} for user {}", staleTopicId, userId);
             }

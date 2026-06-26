@@ -378,7 +378,7 @@ public class VpnSupportBot {
 
     private String stripEscalateMarker(String rawResponse) {
         if (rawResponse == null) {
-            return null;
+            return "";
         }
         return rawResponse.replace(ESCALATE_MARKER, "").trim();
     }

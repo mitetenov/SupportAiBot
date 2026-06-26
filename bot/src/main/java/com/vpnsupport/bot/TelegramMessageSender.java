@@ -34,6 +34,9 @@ public class TelegramMessageSender {
     }
 
     private void send(long chatId, Integer topicId, String text) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
         for (String chunk : split(text)) {
             SendMessage request = new SendMessage(chatId, chunk);
             if (topicId != null) {

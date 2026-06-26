@@ -39,11 +39,13 @@ public class FaqInitializer implements ApplicationRunner {
         try {
             embeddingService.initSchema();
 
-            List<Map<String, Object>> entries = objectMapper.readValue(
-                    resource.getInputStream(),
-                    new TypeReference<List<Map<String, Object>>>() {
-                    }
-            );
+            List<Map<String, Object>> entries;
+            try (java.io.InputStream is = resource.getInputStream()) {
+                entries = objectMapper.readValue(is,
+                        new TypeReference<List<Map<String, Object>>>() {
+                        }
+                );
+            }
 
             log.info("Indexing {} FAQ entries", entries.size());
 

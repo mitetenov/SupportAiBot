@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,14 +28,17 @@ public class FaqEmbeddingService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
-    private final String geminiApiKey;
+    private final WebClient webClient;
     private volatile boolean ready = false;
 
     public FaqEmbeddingService(JdbcTemplate jdbcTemplate,
                                 ObjectMapper objectMapper, GeminiProperties geminiProperties) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
-        this.geminiApiKey = geminiProperties.getApiKey();
+        this.webClient = WebClient.builder()
+                .baseUrl(geminiProperties.getBaseUrl())
+                .defaultHeader("x-goog-api-key", geminiProperties.getApiKey())
+                .build();
     }
 
     public void initSchema() {
@@ -89,7 +93,7 @@ public class FaqEmbeddingService {
     }
 
     public List<FaqResult> search(String query) {
-        if (!ready || geminiApiKey == null || geminiApiKey.isBlank()) {
+        if (!ready) {
             return List.of();
         }
 
@@ -201,21 +205,21 @@ public class FaqEmbeddingService {
             parts.addObject().put("text", text);
             requestBody.put("outputDimensionality", EMBEDDING_DIMENSION);
 
-            String response = java.net.http.HttpClient.newHttpClient()
-                    .send(java.net.http.HttpRequest.newBuilder()
-                            .uri(java.net.URI.create(
-                                    "https://generativelanguage.googleapis.com/v1beta/models/"
-                                            + EMBEDDING_MODEL + ":embedContent?key="
-                                            + geminiApiKey))
-                            .header("Content-Type", "application/json")
-                            .POST(java.net.http.HttpRequest.BodyPublishers.ofString(
-                                    objectMapper.writeValueAsString(requestBody)))
-                            .build(),
-                            java.net.http.HttpResponse.BodyHandlers.ofString())
-                    .body();
+            String response = webClient.post()
+                    .uri("/models/{model}:embedContent", EMBEDDING_MODEL)
+                    .header("Content-Type", "application/json")
+                    .bodyValue(requestBody)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
 
             JsonNode jsonResponse = objectMapper.readTree(response);
-            JsonNode values = jsonResponse.get("embedding").get("values");
+            JsonNode embeddingNode = jsonResponse.get("embedding");
+            if (embeddingNode == null) {
+                log.error("No embedding in response: {}", response);
+                return null;
+            }
+            JsonNode values = embeddingNode.get("values");
             if (values == null || !values.isArray()) {
                 log.error("Unexpected embedding response: {}", response);
                 return null;
