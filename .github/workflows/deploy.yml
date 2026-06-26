@@ -22,7 +22,7 @@ jobs:
           script: |
             set -e
             echo "🚀 Deploying supportbot:${{ inputs.tag }}..."
-            cd /root/SupportAiBot
+            cd /root/supportBot
             export BOT_TAG=${{ inputs.tag }}
             docker compose pull
             docker compose up -d
