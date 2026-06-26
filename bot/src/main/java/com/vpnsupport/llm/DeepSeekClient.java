@@ -33,7 +33,6 @@ public class DeepSeekClient implements LlmClient {
     private final ChatHistoryService chatHistoryService;
     private final FaqEmbeddingService faqEmbeddingService;
     private final LlmTokenUsageRepository tokenUsageRepository;
-    private final ThreadLocal<String> lastErrorThreadLocal = new ThreadLocal<>();
     private final String model;
 
     public DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper,
@@ -63,131 +62,103 @@ public class DeepSeekClient implements LlmClient {
         messages.addAll(chatHistoryService.getHistory(telegramUserId));
         messages.add(Map.of("role", "user", "content", userMessage));
 
-        String response = processChat(messages, 0, userMessage, telegramUserId);
-        if (!isErrorResponse(response)) {
-            chatHistoryService.addUserMessage(telegramUserId, userMessage);
-            chatHistoryService.addAssistantMessage(telegramUserId, response);
-        }
+        String response = processChat(messages, userMessage, telegramUserId);
+        chatHistoryService.addUserMessage(telegramUserId, userMessage);
+        chatHistoryService.addAssistantMessage(telegramUserId, response);
         return response;
     }
 
     @Override
     public String chatWithImage(String userMessage, long telegramUserId, String base64Image, String mimeType) {
-        return "DeepSeek не поддерживает обработку изображений. "
-                + "Переключите провайдера на Gemini (LLM_PROVIDER=gemini) или опишите проблему текстом.";
+        throw new LlmProcessingException("Image not supported", "DeepSeek не поддерживает обработку изображений. Переключите провайдера на Gemini (LLM_PROVIDER=gemini) или опишите проблему текстом.");
     }
 
-    @Override
-    public String getLastError() {
-        try {
-            return lastErrorThreadLocal.get();
-        } finally {
-            lastErrorThreadLocal.remove();
-        }
-    }
-
-    private String processChat(List<Map<String, Object>> messages, int iteration,
-                                 String originalUserMessage, long telegramUserId) {
-        if (iteration >= MAX_TOOL_ITERATIONS) {
-            return "Превышено количество попыток обработки запроса. Пожалуйста, попробуйте ещё раз.";
-        }
-
+    private String processChat(List<Map<String, Object>> messages, String originalUserMessage, long telegramUserId) {
         List<Map<String, Object>> functionDefinitions = buildFunctionDefinitions();
+        int iteration = 0;
 
-        try {
-            ObjectNode requestBody = buildRequestBody(messages, functionDefinitions);
+        while (iteration < MAX_TOOL_ITERATIONS) {
+            try {
+                ObjectNode requestBody = buildRequestBody(messages, functionDefinitions);
+                log.debug("DeepSeek request (iteration {}): {} tools available", iteration, functionDefinitions.size());
 
-            log.debug("DeepSeek request (iteration {}): {} tools available", iteration, functionDefinitions.size());
+                String response = webClient.post()
+                        .uri("/chat/completions")
+                        .bodyValue(requestBody)
+                        .retrieve()
+                        .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
+                                clientResponse -> clientResponse.bodyToMono(String.class)
+                                        .flatMap(err -> Mono.error(new RuntimeException(
+                                                "DeepSeek API error: " + clientResponse.statusCode() + " - " + err))))
+                        .bodyToMono(String.class)
+                        .block();
 
-            String response = webClient.post()
-                    .uri("/chat/completions")
-                    .bodyValue(requestBody)
-                    .retrieve()
-                    .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
-                            clientResponse -> clientResponse.bodyToMono(String.class)
-                                    .flatMap(err -> Mono.error(new RuntimeException(
-                                            "DeepSeek API error: " + clientResponse.statusCode() + " - " + err))))
-                    .bodyToMono(String.class)
-                    .block();
-
-            JsonNode jsonResponse = objectMapper.readTree(response);
-            saveUsage(jsonResponse, telegramUserId);
-            JsonNode choices = jsonResponse.get("choices");
-            if (choices == null || !choices.isArray() || choices.isEmpty()) {
-                log.error("Empty choices in DeepSeek response: {}", response);
-                return "Не удалось получить ответ от модели. Попробуйте позже.";
-            }
-
-            JsonNode message = choices.get(0).get("message");
-            String content = message.has("content") && !message.get("content").isNull()
-                    ? message.get("content").asText()
-                    : null;
-            JsonNode toolCalls = message.get("tool_calls");
-
-            if (toolCalls != null && toolCalls.isArray() && toolCalls.size() > 0) {
-                log.info("DeepSeek requested {} tool call(s)", toolCalls.size());
-
-                messages.add(Map.of("role", "assistant", "tool_calls", objectMapper.convertValue(toolCalls, List.class)));
-
-                for (JsonNode toolCall : toolCalls) {
-                    String functionName = toolCall.get("function").get("name").asText();
-                    String argumentsStr = toolCall.get("function").get("arguments").asText();
-                    String toolCallId = toolCall.get("id").asText();
-
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> arguments = argumentsStr.isEmpty()
-                            ? Map.of()
-                            : objectMapper.readValue(argumentsStr, Map.class);
-
-                    log.info("Executing tool: {} with args: {}", functionName, arguments);
-
-                    String toolResult = mcpRouter.callTool(functionName, arguments);
-                    log.info("Tool {} result: {}",
-                            functionName,
-                            toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
-
-                    messages.add(Map.of(
-                            "role", "tool",
-                            "tool_call_id", toolCallId,
-                            "content", toolResult
-                    ));
+                JsonNode jsonResponse = objectMapper.readTree(response);
+                saveUsage(jsonResponse, telegramUserId);
+                JsonNode choices = jsonResponse.get("choices");
+                if (choices == null || !choices.isArray() || choices.isEmpty()) {
+                    log.error("Empty choices in DeepSeek response: {}", response);
+                    throw new LlmProcessingException("Empty choices", "Не удалось получить ответ от модели. Попробуйте позже.");
                 }
 
-                if (iteration == 0) {
-                    List<String> toolResults = messages.stream()
-                            .filter(m -> "tool".equals(m.get("role")))
-                            .map(m -> (String) m.get("content"))
-                            .toList();
-                    String refreshedFaq = faqEmbeddingService.buildRefinedFaqContext(
-                            originalUserMessage, toolResults);
-                    if (!refreshedFaq.isEmpty()) {
-                        messages.add(Map.of("role", "user", "content",
-                                "[Система] Результат диагностики получен. Актуальный FAQ:\n\n"
-                                        + refreshedFaq));
+                JsonNode message = choices.get(0).get("message");
+                String content = message.has("content") && !message.get("content").isNull()
+                        ? message.get("content").asText()
+                        : null;
+                JsonNode toolCalls = message.get("tool_calls");
+
+                if (toolCalls != null && toolCalls.isArray() && toolCalls.size() > 0) {
+                    log.info("DeepSeek requested {} tool call(s)", toolCalls.size());
+                    messages.add(Map.of("role", "assistant", "tool_calls", objectMapper.convertValue(toolCalls, List.class)));
+
+                    for (JsonNode toolCall : toolCalls) {
+                        String functionName = toolCall.get("function").get("name").asText();
+                        String argumentsStr = toolCall.get("function").get("arguments").asText();
+                        String toolCallId = toolCall.get("id").asText();
+
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> arguments = argumentsStr.isEmpty()
+                                ? Map.of()
+                                : objectMapper.readValue(argumentsStr, Map.class);
+
+                        log.info("Executing tool: {} with args: {}", functionName, arguments);
+                        String toolResult = mcpRouter.callTool(functionName, arguments);
+                        log.info("Tool {} result: {}", functionName,
+                                toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
+
+                        messages.add(Map.of("role", "tool", "tool_call_id", toolCallId, "content", toolResult));
                     }
+
+                    if (iteration == 0) {
+                        List<String> toolResults = messages.stream()
+                                .filter(m -> "tool".equals(m.get("role")))
+                                .map(m -> (String) m.get("content"))
+                                .toList();
+                        String refreshedFaq = faqEmbeddingService.buildRefinedFaqContext(originalUserMessage, toolResults);
+                        if (!refreshedFaq.isEmpty()) {
+                            messages.add(Map.of("role", "user", "content",
+                                    "[Система] Результат диагностики получен. Актуальный FAQ:\n\n" + refreshedFaq));
+                        }
+                    }
+                    iteration++;
+                    continue; // Re-evaluate with tools
                 }
 
-                return processChat(messages, iteration + 1, originalUserMessage, telegramUserId);
+                if (content != null && !content.isEmpty()) {
+                    return content;
+                }
+
+                throw new LlmProcessingException("No content returned", "Модель не вернула ответа. Попробуйте переформулировать вопрос.");
+
+            } catch (LlmProcessingException e) {
+                throw e;
+            } catch (Exception e) {
+                log.error("DeepSeek request failed", e);
+                throw new LlmProcessingException(e.getMessage(), "Произошла ошибка при обработке запроса. Попробуйте позже.", e);
             }
-
-            if (content != null && !content.isEmpty()) {
-                return content;
-            }
-
-            return "Модель не вернула ответа. Попробуйте переформулировать вопрос.";
-
-        } catch (Exception e) {
-            log.error("DeepSeek request failed", e);
-            lastErrorThreadLocal.set(extractErrorMessage(e));
-            return "Произошла ошибка при обработке запроса. Попробуйте позже.";
         }
-    }
 
-    private boolean isErrorResponse(String response) {
-        return response.startsWith("Превышено количество")
-                || response.startsWith("Не удалось")
-                || response.startsWith("Произошла ошибка")
-                || response.startsWith("Модель не вернула");
+        throw new LlmProcessingException("Max iterations reached", "Превышено количество попыток обработки запроса. Пожалуйста, попробуйте ещё раз.");
     }
 
     private List<Map<String, Object>> buildFunctionDefinitions() {
@@ -211,8 +182,7 @@ public class DeepSeekClient implements LlmClient {
         return functions;
     }
 
-    private ObjectNode buildRequestBody(List<Map<String, Object>> messages,
-                                         List<Map<String, Object>> tools) {
+    private ObjectNode buildRequestBody(List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("model", model);
 
@@ -230,7 +200,6 @@ public class DeepSeekClient implements LlmClient {
         }
 
         body.put("temperature", 0.3);
-
         return body;
     }
 
@@ -247,13 +216,5 @@ public class DeepSeekClient implements LlmClient {
         } catch (Exception e) {
             log.warn("Failed to save token usage: {}", e.getMessage());
         }
-    }
-
-    private String extractErrorMessage(Exception e) {
-        String msg = e.getMessage();
-        if (msg != null && msg.length() > 3000) {
-            msg = msg.substring(0, 3000) + "...";
-        }
-        return "DeepSeek: " + (msg != null ? msg : e.getClass().getSimpleName());
     }
 }

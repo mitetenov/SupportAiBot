@@ -20,21 +20,20 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Component;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 @Component
 public class VpnSupportBot {
 
     private static final Logger log = LoggerFactory.getLogger(VpnSupportBot.class);
+    private static final String ESCALATE_MARKER = "[ESCALATE]";
 
     private final TelegramBot telegramBot;
     private final LlmClient llmClient;
@@ -48,9 +47,8 @@ public class VpnSupportBot {
     private final long supportGroupChatId;
     private final LlmTokenUsageRepository tokenUsageRepository;
     private final Set<Long> adminTelegramIds;
-    private final JdbcTemplate jdbcTemplate;
-
-    private ExecutorService updateExecutor;
+    private final UserRepository userRepository;
+    private final TaskExecutor taskExecutor;
 
     public VpnSupportBot(TelegramBot telegramBot, LlmClient llmClient,
                           FaqEmbeddingService faqEmbeddingService,
@@ -62,7 +60,8 @@ public class VpnSupportBot {
                           WebClient webClient,
                           TelegramProperties telegramProperties,
                           LlmTokenUsageRepository tokenUsageRepository,
-                          JdbcTemplate jdbcTemplate) {
+                          UserRepository userRepository,
+                          TaskExecutor taskExecutor) {
         this.telegramBot = telegramBot;
         this.llmClient = llmClient;
         this.faqEmbeddingService = faqEmbeddingService;
@@ -75,15 +74,15 @@ public class VpnSupportBot {
         this.supportGroupChatId = telegramProperties.getSupportGroupChatId();
         this.tokenUsageRepository = tokenUsageRepository;
         this.adminTelegramIds = telegramProperties.getSupportAdminTelegramIds();
-        this.jdbcTemplate = jdbcTemplate;
+        this.userRepository = userRepository;
+        this.taskExecutor = taskExecutor;
     }
 
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
-        updateExecutor = Executors.newFixedThreadPool(4);
         telegramBot.setUpdatesListener(updates -> {
             for (Update update : updates) {
-                updateExecutor.submit(() -> processUpdate(update));
+                taskExecutor.execute(() -> processUpdate(update));
             }
             return UpdatesListener.CONFIRMED_UPDATES_ALL;
         }, e -> log.error("Telegram updates listener error", e));
@@ -94,17 +93,6 @@ public class VpnSupportBot {
     @PreDestroy
     public void stop() {
         telegramBot.removeGetUpdatesListener();
-        if (updateExecutor != null) {
-            updateExecutor.shutdown();
-            try {
-                if (!updateExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
-                    updateExecutor.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                updateExecutor.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-        }
     }
 
     private void processUpdate(Update update) {
@@ -121,7 +109,7 @@ public class VpnSupportBot {
         if (chatId == supportGroupChatId) {
             handleSupportGroupMessage(message);
         } else if (message.text() != null && !message.text().isBlank()) {
-            handleTextMessage(message);
+            handleUserMessage(message, message.text().trim(), null, null);
         } else if (message.photo() != null && message.photo().length > 0) {
             handlePhotoMessage(message);
         }
@@ -159,10 +147,9 @@ public class VpnSupportBot {
         }
     }
 
-    private void handleTextMessage(Message message) {
+    private void handleUserMessage(Message message, String text, String base64Image, String mimeType) {
         long chatId = message.chat().id();
         User user = message.from();
-        String text = message.text().trim();
 
         ensureUserInfo(user);
 
@@ -206,7 +193,13 @@ public class VpnSupportBot {
 
         try {
             telegramBot.execute(new SendChatAction(chatId, "typing"));
-            String rawResponse = llmClient.chat(text, user.id());
+            String rawResponse;
+            if (base64Image != null) {
+                rawResponse = llmClient.chatWithImage(text, user.id(), base64Image, mimeType);
+            } else {
+                rawResponse = llmClient.chat(text, user.id());
+            }
+
             String response = stripEscalateMarker(rawResponse);
             if (response.isEmpty()) {
                 response = "Передаю ваш запрос оператору. Ожидайте ответа в этом чате.";
@@ -214,46 +207,44 @@ public class VpnSupportBot {
 
             messageSender.send(chatId, response);
 
-            boolean errorResponse = isErrorResponse(response);
             boolean llmEscalation = llmRequestedEscalation(rawResponse);
             boolean humanRequest = userRequestsHuman(text);
-
-            if (errorResponse) {
-                String errorDetails = llmClient.getLastError();
-                if (errorDetails == null) {
-                    errorDetails = "Unknown LLM error";
-                }
-                forwarder.forwardErrorToTopic(user, text, response, errorDetails);
-            } else {
-                if (FaqImagePolicy.shouldAttachImages(response)) {
-                    List<String> images = faqEmbeddingService.getMatchedImages(text);
-                    for (String fileId : images) {
-                        messageSender.sendPhoto(chatId, fileId);
-                    }
-                }
-                forwarder.forwardToSupport(chatId, message.messageId(), user, text, response,
-                        llmEscalation || humanRequest);
+            
+            String forwardText = text;
+            if (base64Image != null) {
+                forwardText = text.isEmpty() ? "[Скриншот]" : "[Скриншот] " + text;
             }
+
+            if (base64Image == null && FaqImagePolicy.shouldAttachImages(response)) {
+                List<String> images = faqEmbeddingService.getMatchedImages(text);
+                for (String fileId : images) {
+                    messageSender.sendPhoto(chatId, fileId);
+                }
+            }
+            forwarder.forwardToSupport(chatId, message.messageId(), user, forwardText, response,
+                    llmEscalation || humanRequest);
+        } catch (com.vpnsupport.llm.LlmProcessingException e) {
+            log.error("LLM error processing message from user {}", chatId, e);
+            messageSender.send(chatId, e.getUserFriendlyMessage());
+            String forwardText = (base64Image != null && text.isEmpty()) ? "[Скриншот]" : 
+                                 (base64Image != null ? "[Скриншот] " + text : text);
+            forwarder.forwardErrorToTopic(user, forwardText, e.getUserFriendlyMessage(), extractErrorMessage(e));
         } catch (Exception e) {
             log.error("Error processing message from user {}", chatId, e);
             String errorText = "Произошла ошибка при обработке запроса. Попробуйте позже.";
             messageSender.send(chatId, errorText);
-            forwarder.forwardErrorToTopic(user, text, errorText, extractErrorMessage(e));
+            String forwardText = (base64Image != null && text.isEmpty()) ? "[Скриншот]" : 
+                                 (base64Image != null ? "[Скриншот] " + text : text);
+            forwarder.forwardErrorToTopic(user, forwardText, errorText, extractErrorMessage(e));
         }
     }
 
     private void handlePhotoMessage(Message message) {
         long chatId = message.chat().id();
-        User user = message.from();
         String caption = message.caption() != null ? message.caption().trim() : "";
 
         if (!llmClient.supportsImages()) {
             messageSender.send(chatId, "Пока что я не умею работать с медиафайлами. Опишите проблему текстом.");
-            return;
-        }
-
-        if (!rateLimiter.tryAcquire(user.id())) {
-            messageSender.send(chatId, "Подождите несколько секунд перед следующим сообщением.");
             return;
         }
 
@@ -290,41 +281,12 @@ public class VpnSupportBot {
                     ? "Посмотри на скриншот. Опиши, что на нём отображается, и помоги решить проблему."
                     : caption;
 
-            telegramBot.execute(new SendChatAction(chatId, "typing"));
-            String rawResponse = llmClient.chatWithImage(userPrompt, user.id(), base64Image, mimeType);
-            String response = stripEscalateMarker(rawResponse);
-            if (response.isEmpty()) {
-                response = "Передаю ваш запрос оператору. Ожидайте ответа в этом чате.";
-            }
-
-            messageSender.send(chatId, response);
-
-            boolean errorResponse = isErrorResponse(response);
-            boolean llmEscalation = llmRequestedEscalation(rawResponse);
-            boolean humanRequest = userRequestsHuman(caption);
-
-            String forwardText = caption.isEmpty() ? "[Скриншот]" : "[Скриншот] " + caption;
-
-            if (errorResponse) {
-                String errorDetails = llmClient.getLastError();
-                if (errorDetails == null) {
-                    errorDetails = "Unknown LLM error";
-                }
-                forwarder.forwardErrorToTopic(user, forwardText, response, errorDetails);
-            } else {
-                forwarder.forwardToSupport(chatId, message.messageId(), user, forwardText, response,
-                        llmEscalation || humanRequest);
-            }
+            handleUserMessage(message, userPrompt, base64Image, mimeType);
         } catch (Exception e) {
-            log.error("Error processing photo from user {}", chatId, e);
-            String errorText = "Произошла ошибка при обработке изображения. Попробуйте позже.";
-            messageSender.send(chatId, errorText);
-            String forwardText = caption.isEmpty() ? "[Скриншот]" : "[Скриншот] " + caption;
-            forwarder.forwardErrorToTopic(user, forwardText, errorText, extractErrorMessage(e));
+            log.error("Error downloading photo from user {}", chatId, e);
+            messageSender.send(chatId, "Произошла ошибка при загрузке изображения. Попробуйте позже.");
         }
     }
-
-    private static final String ESCALATE_MARKER = "[ESCALATE]";
 
     private void handleStats(long chatId, String command) {
         String[] parts = command.split("\\s+");
@@ -386,24 +348,13 @@ public class VpnSupportBot {
 
     private void ensureUserInfo(User user) {
         try {
-            jdbcTemplate.execute("""
-                    CREATE TABLE IF NOT EXISTS user_names (
-                        telegram_id BIGINT PRIMARY KEY,
-                        username VARCHAR(255),
-                        first_name VARCHAR(255),
-                        last_name VARCHAR(255),
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                    """);
-            jdbcTemplate.update(
-                    "INSERT INTO user_names (telegram_id, username, first_name, last_name, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) "
-                            + "ON CONFLICT (telegram_id) DO UPDATE SET username = EXCLUDED.username, "
-                            + "first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, "
-                            + "updated_at = CURRENT_TIMESTAMP",
-                    user.id(),
-                    user.username(),
-                    user.firstName(),
-                    user.lastName());
+            UserEntity entity = userRepository.findById(user.id()).orElse(new UserEntity());
+            entity.setTelegramId(user.id());
+            entity.setUsername(user.username());
+            entity.setFirstName(user.firstName());
+            entity.setLastName(user.lastName());
+            entity.setUpdatedAt(LocalDateTime.now());
+            userRepository.save(entity);
         } catch (Exception e) {
             log.warn("Failed to save user info: {}", e.getMessage());
         }
@@ -411,25 +362,18 @@ public class VpnSupportBot {
 
     private String resolveUserName(Long telegramId) {
         try {
-            List<java.util.Map<String, Object>> rows = jdbcTemplate.queryForList(
-                    "SELECT username FROM user_names WHERE telegram_id = ?", telegramId);
-            if (!rows.isEmpty()) {
-                String username = (String) rows.get(0).get("username");
-                if (username != null && !username.isBlank()) {
-                    return "@" + username + " (" + telegramId + ")";
-                }
-            }
+            return userRepository.findById(telegramId)
+                    .map(u -> {
+                        if (u.getUsername() != null && !u.getUsername().isBlank()) {
+                            return "@" + u.getUsername() + " (" + telegramId + ")";
+                        }
+                        return String.valueOf(telegramId);
+                    })
+                    .orElse(String.valueOf(telegramId));
         } catch (Exception e) {
             log.warn("Failed to resolve user name: {}", e.getMessage());
         }
         return String.valueOf(telegramId);
-    }
-
-    private boolean isErrorResponse(String response) {
-        return response.startsWith("Превышено")
-                || response.startsWith("Не удалось")
-                || response.startsWith("Произошла ошибка")
-                || response.startsWith("Модель не вернула");
     }
 
     private String stripEscalateMarker(String rawResponse) {

@@ -33,7 +33,6 @@ public class GeminiClient implements LlmClient {
     private final ChatHistoryService chatHistoryService;
     private final FaqEmbeddingService faqEmbeddingService;
     private final LlmTokenUsageRepository tokenUsageRepository;
-    private final ThreadLocal<String> lastErrorThreadLocal = new ThreadLocal<>();
     private final String model;
 
     public GeminiClient(GeminiProperties properties, ObjectMapper objectMapper,
@@ -59,258 +58,138 @@ public class GeminiClient implements LlmClient {
     }
 
     @Override
-    public String getLastError() {
-        try {
-            return lastErrorThreadLocal.get();
-        } finally {
-            lastErrorThreadLocal.remove();
-        }
-    }
-
-    @Override
     public String chat(String userMessage, long telegramUserId) {
-        String response = chatInternal(userMessage, telegramUserId, null, null, 0);
-        if (!isErrorResponse(response)) {
-            chatHistoryService.addUserMessage(telegramUserId, userMessage);
-            chatHistoryService.addAssistantMessage(telegramUserId, response);
-        }
+        String response = chatInternal(userMessage, telegramUserId, null, null);
+        chatHistoryService.addUserMessage(telegramUserId, userMessage);
+        chatHistoryService.addAssistantMessage(telegramUserId, response);
         return response;
     }
 
     @Override
     public String chatWithImage(String userMessage, long telegramUserId, String base64Image, String mimeType) {
-        String response = chatInternal(userMessage, telegramUserId, base64Image, mimeType, 0);
-        if (!isErrorResponse(response)) {
-            String historyMessage = userMessage.isBlank() ? "[Скриншот]" : userMessage;
-            chatHistoryService.addUserMessage(telegramUserId, historyMessage);
-            chatHistoryService.addAssistantMessage(telegramUserId, response);
-        }
+        String response = chatInternal(userMessage, telegramUserId, base64Image, mimeType);
+        String historyMessage = userMessage.isBlank() ? "[Скриншот]" : userMessage;
+        chatHistoryService.addUserMessage(telegramUserId, historyMessage);
+        chatHistoryService.addAssistantMessage(telegramUserId, response);
         return response;
     }
 
-    private String chatInternal(String userMessage, long telegramUserId,
-                                 String base64Image, String mimeType, int iteration) {
-        if (iteration >= MAX_TOOL_ITERATIONS) {
-            return "Превышено количество попыток обработки запроса. Пожалуйста, попробуйте ещё раз.";
-        }
+    private String chatInternal(String userMessage, long telegramUserId, String base64Image, String mimeType) {
+        int iteration = 0;
+        String faqContext = faqEmbeddingService.buildFaqContext(userMessage);
+        List<Map<String, Object>> contents = buildContentsList(userMessage, telegramUserId, base64Image, mimeType);
 
-        try {
-            String faqContext = faqEmbeddingService.buildFaqContext(userMessage);
-            ObjectNode requestBody = buildRequestBody(userMessage, telegramUserId,
-                    base64Image, mimeType, faqContext);
+        while (iteration < MAX_TOOL_ITERATIONS) {
+            try {
+                ObjectNode requestBody = buildRequestBody(contents, faqContext);
+                log.debug("Gemini request (iteration {}): {} tools available", iteration, mcpRouter.listTools().size());
 
-            log.debug("Gemini request (iteration {}): {} tools available",
-                    iteration, mcpRouter.listTools().size());
+                String response = executeGenerateContent(requestBody);
 
-            String response = executeGenerateContent(requestBody);
-
-            JsonNode jsonResponse = objectMapper.readTree(response);
-            saveUsage(jsonResponse, telegramUserId);
-            JsonNode candidates = jsonResponse.get("candidates");
-            if (candidates == null || !candidates.isArray() || candidates.isEmpty()) {
-                String blockReason = jsonResponse.has("promptFeedback")
-                        ? jsonResponse.get("promptFeedback").toString()
-                        : "неизвестно";
-                log.error("Empty candidates in Gemini response. Block: {}", blockReason);
-                return "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.";
-            }
-
-            JsonNode content = candidates.get(0).get("content");
-            JsonNode parts = content.get("parts");
-
-            if (parts == null || !parts.isArray()) {
-                return "Модель не вернула ответа. Попробуйте переформулировать вопрос.";
-            }
-
-            StringBuilder textResponse = new StringBuilder();
-            List<JsonNode> pendingFunctionCalls = new ArrayList<>();
-
-            for (JsonNode part : parts) {
-                if (part.has("text") && !part.get("text").isNull()) {
-                    textResponse.append(part.get("text").asText());
+                JsonNode jsonResponse = objectMapper.readTree(response);
+                saveUsage(jsonResponse, telegramUserId);
+                JsonNode candidates = jsonResponse.get("candidates");
+                if (candidates == null || !candidates.isArray() || candidates.isEmpty()) {
+                    String blockReason = jsonResponse.has("promptFeedback")
+                            ? jsonResponse.get("promptFeedback").toString()
+                            : "неизвестно";
+                    log.error("Empty candidates in Gemini response. Block: {}", blockReason);
+                    throw new LlmProcessingException("Empty candidates", "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.");
                 }
-                if (part.has("functionCall")) {
-                    pendingFunctionCalls.add(part.get("functionCall"));
+
+                JsonNode content = candidates.get(0).get("content");
+                JsonNode parts = content.get("parts");
+
+                if (parts == null || !parts.isArray()) {
+                    throw new LlmProcessingException("Empty parts", "Модель не вернула ответа. Попробуйте переформулировать вопрос.");
                 }
-            }
 
-            if (!pendingFunctionCalls.isEmpty()) {
-                log.info("Gemini requested {} tool call(s)", pendingFunctionCalls.size());
+                StringBuilder textResponse = new StringBuilder();
+                List<JsonNode> pendingFunctionCalls = new ArrayList<>();
 
-                List<Map<String, Object>> contents = buildContentsList(userMessage,
-                        telegramUserId, base64Image, mimeType);
-
-                ObjectNode modelContent = objectMapper.createObjectNode();
-                modelContent.put("role", "model");
-                ArrayNode modelParts = modelContent.putArray("parts");
                 for (JsonNode part : parts) {
-                    modelParts.add(part);
-                }
-                contents.add(objectMapper.convertValue(modelContent, Map.class));
-
-                for (JsonNode functionCall : pendingFunctionCalls) {
-                    String functionName = functionCall.get("name").asText();
-                    JsonNode argsNode = functionCall.get("args");
-
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> arguments = argsNode != null && !argsNode.isNull()
-                            ? objectMapper.convertValue(argsNode, Map.class)
-                            : Map.of();
-
-                    log.info("Executing tool: {} with args: {}", functionName, arguments);
-
-                    String toolResult = mcpRouter.callTool(functionName, arguments);
-                    log.info("Tool {} result: {}",
-                            functionName,
-                            toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
-
-                    Map<String, Object> functionResponse = Map.of(
-                            "role", "function",
-                            "parts", List.of(Map.of(
-                                    "functionResponse", Map.of(
-                                            "name", functionName,
-                                            "response", parseToolResultForGemini(toolResult)
-                                    )
-                            ))
-                    );
-                    contents.add(functionResponse);
-                }
-
-                if (iteration == 0) {
-                    List<String> toolResults = contents.stream()
-                            .filter(m -> "function".equals(m.get("role")))
-                            .map(m -> {
-                                @SuppressWarnings("unchecked")
-                                var funcParts = (List<Map<String, Object>>) m.get("parts");
-                                @SuppressWarnings("unchecked")
-                                var fr = (Map<String, Object>) funcParts.get(0).get("functionResponse");
-                                return String.valueOf(fr.get("response"));
-                            })
-                            .toList();
-                    String refreshedFaq = faqEmbeddingService.buildRefinedFaqContext(
-                            userMessage, toolResults);
-                    if (!refreshedFaq.isEmpty()) {
-                        contents.add(Map.of("role", "user", "parts", List.of(
-                                Map.of("text",
-                                        "[Система] Результат диагностики получен. Актуальный FAQ:\n\n"
-                                                + refreshedFaq))));
+                    if (part.has("text") && !part.get("text").isNull()) {
+                        textResponse.append(part.get("text").asText());
+                    }
+                    if (part.has("functionCall")) {
+                        pendingFunctionCalls.add(part.get("functionCall"));
                     }
                 }
 
-                return continueChat(contents, iteration + 1, telegramUserId);
+                if (!pendingFunctionCalls.isEmpty()) {
+                    log.info("Gemini requested {} tool call(s)", pendingFunctionCalls.size());
+
+                    ObjectNode modelContent = objectMapper.createObjectNode();
+                    modelContent.put("role", "model");
+                    ArrayNode modelParts = modelContent.putArray("parts");
+                    for (JsonNode part : parts) {
+                        modelParts.add(part);
+                    }
+                    contents.add(objectMapper.convertValue(modelContent, Map.class));
+
+                    for (JsonNode functionCall : pendingFunctionCalls) {
+                        String functionName = functionCall.get("name").asText();
+                        JsonNode argsNode = functionCall.get("args");
+
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> arguments = argsNode != null && !argsNode.isNull()
+                                ? objectMapper.convertValue(argsNode, Map.class)
+                                : Map.of();
+
+                        log.info("Executing tool: {} with args: {}", functionName, arguments);
+                        String toolResult = mcpRouter.callTool(functionName, arguments);
+                        log.info("Tool {} result: {}", functionName,
+                                toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
+
+                        Map<String, Object> functionResponse = Map.of(
+                                "role", "function",
+                                "parts", List.of(Map.of(
+                                        "functionResponse", Map.of(
+                                                "name", functionName,
+                                                "response", parseToolResultForGemini(toolResult)
+                                        )
+                                ))
+                        );
+                        contents.add(functionResponse);
+                    }
+
+                    if (iteration == 0) {
+                        List<String> toolResults = contents.stream()
+                                .filter(m -> "function".equals(m.get("role")))
+                                .map(m -> {
+                                    @SuppressWarnings("unchecked")
+                                    var funcParts = (List<Map<String, Object>>) m.get("parts");
+                                    @SuppressWarnings("unchecked")
+                                    var fr = (Map<String, Object>) funcParts.get(0).get("functionResponse");
+                                    return String.valueOf(fr.get("response"));
+                                })
+                                .toList();
+                        String refreshedFaq = faqEmbeddingService.buildRefinedFaqContext(userMessage, toolResults);
+                        if (!refreshedFaq.isEmpty()) {
+                            contents.add(Map.of("role", "user", "parts", List.of(
+                                    Map.of("text", "[Система] Результат диагностики получен. Актуальный FAQ:\n\n" + refreshedFaq))));
+                        }
+                    }
+
+                    iteration++;
+                    continue;
+                }
+
+                if (!textResponse.isEmpty()) {
+                    return textResponse.toString();
+                }
+
+                throw new LlmProcessingException("No text in response", "Модель не вернула текстового ответа. Попробуйте переформулировать вопрос.");
+
+            } catch (LlmProcessingException e) {
+                throw e;
+            } catch (Exception e) {
+                log.error("Gemini request failed", e);
+                throw new LlmProcessingException(e.getMessage(), "Произошла ошибка при обработке запроса. Попробуйте позже.", e);
             }
-
-            if (!textResponse.isEmpty()) {
-                return textResponse.toString();
-            }
-
-            return "Модель не вернула текстового ответа. Попробуйте переформулировать вопрос.";
-
-        } catch (Exception e) {
-            log.error("Gemini request failed", e);
-            lastErrorThreadLocal.set(extractErrorMessage(e));
-            return "Произошла ошибка при обработке запроса. Попробуйте позже.";
         }
-    }
 
-    private String continueChat(List<Map<String, Object>> contents, int iteration,
-                                  long telegramUserId) {
-        if (iteration >= MAX_TOOL_ITERATIONS) {
-            return "Превышено количество попыток обработки запроса.";
-        }
-
-        try {
-            ObjectNode requestBody = objectMapper.createObjectNode();
-
-            ObjectNode systemInstruction = objectMapper.createObjectNode();
-            ArrayNode systemParts = systemInstruction.putArray("parts");
-            systemParts.addObject().put("text", SupportPrompt.SYSTEM);
-            requestBody.set("system_instruction", systemInstruction);
-
-            ArrayNode contentsArray = requestBody.putArray("contents");
-            for (Map<String, Object> msg : contents) {
-                contentsArray.add(objectMapper.valueToTree(msg));
-            }
-
-            addTools(requestBody);
-
-            String response = executeGenerateContent(requestBody);
-
-            JsonNode jsonResponse = objectMapper.readTree(response);
-            saveUsage(jsonResponse, telegramUserId);
-            JsonNode candidates = jsonResponse.get("candidates");
-            if (candidates == null || !candidates.isArray() || candidates.isEmpty()) {
-                return "Не удалось получить ответ.";
-            }
-
-            JsonNode parts = candidates.get(0).get("content").get("parts");
-            if (parts == null || !parts.isArray()) {
-                return "Пустой ответ модели.";
-            }
-
-            StringBuilder textResponse = new StringBuilder();
-            List<JsonNode> pendingFunctionCalls = new ArrayList<>();
-
-            for (JsonNode part : parts) {
-                if (part.has("text") && !part.get("text").isNull()) {
-                    textResponse.append(part.get("text").asText());
-                }
-                if (part.has("functionCall")) {
-                    pendingFunctionCalls.add(part.get("functionCall"));
-                }
-            }
-
-            if (!pendingFunctionCalls.isEmpty()) {
-                ObjectNode modelContent = objectMapper.createObjectNode();
-                modelContent.put("role", "model");
-                ArrayNode modelParts = modelContent.putArray("parts");
-                for (JsonNode part : parts) {
-                    modelParts.add(part);
-                }
-                contents.add(objectMapper.convertValue(modelContent, Map.class));
-
-                for (JsonNode functionCall : pendingFunctionCalls) {
-                    String functionName = functionCall.get("name").asText();
-                    JsonNode argsNode = functionCall.get("args");
-
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> arguments = argsNode != null && !argsNode.isNull()
-                            ? objectMapper.convertValue(argsNode, Map.class)
-                            : Map.of();
-
-                    log.info("Executing tool: {} with args: {}", functionName, arguments);
-
-                    String toolResult = mcpRouter.callTool(functionName, arguments);
-                    log.info("Tool {} result: {}",
-                            functionName,
-                            toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
-
-                    Map<String, Object> functionResponse = Map.of(
-                            "role", "function",
-                            "parts", List.of(Map.of(
-                                    "functionResponse", Map.of(
-                                            "name", functionName,
-                                            "response", parseToolResultForGemini(toolResult)
-                                    )
-                            ))
-                    );
-                    contents.add(functionResponse);
-                }
-
-                return continueChat(contents, iteration + 1, telegramUserId);
-            }
-
-            if (!textResponse.isEmpty()) {
-                return textResponse.toString();
-            }
-
-            return "Модель не вернула текстового ответа.";
-
-        } catch (Exception e) {
-            log.error("Gemini continue chat failed", e);
-            lastErrorThreadLocal.set(extractErrorMessage(e));
-            return "Ошибка при обработке. Попробуйте позже.";
-        }
+        throw new LlmProcessingException("Max iterations reached", "Превышено количество попыток обработки запроса. Пожалуйста, попробуйте ещё раз.");
     }
 
     private String executeGenerateContent(ObjectNode requestBody) {
@@ -326,37 +205,18 @@ public class GeminiClient implements LlmClient {
                 .block();
     }
 
-    private ObjectNode buildRequestBody(String userMessage, long telegramUserId,
-                                         String base64Image, String mimeType,
-                                         String faqContext) {
+    private ObjectNode buildRequestBody(List<Map<String, Object>> contents, String faqContext) {
         ObjectNode body = objectMapper.createObjectNode();
 
         ObjectNode systemInstruction = objectMapper.createObjectNode();
         ArrayNode systemParts = systemInstruction.putArray("parts");
-        systemParts.addObject().put("text",
-                SupportPrompt.withFaqContext(faqContext, telegramUserId));
+        systemParts.addObject().put("text", SupportPrompt.withFaqContext(faqContext, 0)); // passing 0 for user id as it's not strictly needed for context
         body.set("system_instruction", systemInstruction);
 
         ArrayNode contentsArray = body.putArray("contents");
-        for (Map<String, Object> historyMessage : chatHistoryService.toGeminiContents(telegramUserId)) {
-            contentsArray.add(objectMapper.valueToTree(historyMessage));
+        for (Map<String, Object> msg : contents) {
+            contentsArray.add(objectMapper.valueToTree(msg));
         }
-
-        ObjectNode userContent = objectMapper.createObjectNode();
-        userContent.put("role", "user");
-        ArrayNode userParts = userContent.putArray("parts");
-
-        if (base64Image != null && !base64Image.isEmpty()) {
-            userParts.addObject().put("text", userMessage);
-            ObjectNode imagePart = userParts.addObject();
-            ObjectNode inlineData = imagePart.putObject("inline_data");
-            inlineData.put("mime_type", mimeType != null ? mimeType : "image/jpeg");
-            inlineData.put("data", base64Image);
-        } else {
-            userParts.addObject().put("text", userMessage);
-        }
-
-        contentsArray.add(userContent);
 
         addTools(body);
 
@@ -367,8 +227,7 @@ public class GeminiClient implements LlmClient {
         return body;
     }
 
-    private List<Map<String, Object>> buildContentsList(String userMessage, long telegramUserId,
-                                                          String base64Image, String mimeType) {
+    private List<Map<String, Object>> buildContentsList(String userMessage, long telegramUserId, String base64Image, String mimeType) {
         List<Map<String, Object>> contents = new ArrayList<>(chatHistoryService.toGeminiContents(telegramUserId));
 
         Map<String, Object> userContent = new java.util.LinkedHashMap<>();
@@ -440,11 +299,9 @@ public class GeminiClient implements LlmClient {
                 value.fieldNames().forEachRemaining(propName ->
                         cleanedProps.set(propName, sanitizeSchemaParams(value.get(propName))));
                 cleaned.set("properties", cleanedProps);
-            } else if (("items".equals(field) || "anyOf".equals(field))
-                    && value.isObject()) {
+            } else if (("items".equals(field) || "anyOf".equals(field)) && value.isObject()) {
                 cleaned.set(field, sanitizeSchemaParams(value));
-            } else if (("anyOf".equals(field) || "oneOf".equals(field) || "allOf".equals(field))
-                    && value.isArray()) {
+            } else if (("anyOf".equals(field) || "oneOf".equals(field) || "allOf".equals(field)) && value.isArray()) {
                 ArrayNode arr = cleaned.putArray(field);
                 for (JsonNode item : value) {
                     arr.add(sanitizeSchemaParams(item));
@@ -465,15 +322,6 @@ public class GeminiClient implements LlmClient {
         }
     }
 
-    private boolean isErrorResponse(String response) {
-        return response.startsWith("Превышено количество")
-                || response.startsWith("Не удалось")
-                || response.startsWith("Произошла ошибка")
-                || response.startsWith("Модель не вернула")
-                || response.startsWith("Пустой ответ")
-                || response.startsWith("Ошибка при обработке");
-    }
-
     private void saveUsage(JsonNode jsonResponse, long telegramUserId) {
         try {
             JsonNode usage = jsonResponse.get("usageMetadata");
@@ -487,13 +335,5 @@ public class GeminiClient implements LlmClient {
         } catch (Exception e) {
             log.warn("Failed to save token usage: {}", e.getMessage());
         }
-    }
-
-    private String extractErrorMessage(Exception e) {
-        String msg = e.getMessage();
-        if (msg != null && msg.length() > 3000) {
-            msg = msg.substring(0, 3000) + "...";
-        }
-        return "Gemini: " + (msg != null ? msg : e.getClass().getSimpleName());
     }
 }

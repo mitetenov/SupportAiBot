@@ -3,39 +3,94 @@ name: Docker Multi-Arch Build & Push
 on:
   push:
     branches: [master]
-  workflow_dispatch:  # можно запустить вручную из Actions
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+  repository_dispatch:
+    types: [mcp-release]
+
+permissions:
+  contents: write
+  packages: write
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Run tests
+        run: mvn test -pl bot -B
+
+  build:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Extract version from POM
+        id: version
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout -pl .)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v4
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Build and push
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          # MCP: fetch pre-built mcp-release.zip from mitetenov/mcp-remnawave
           build-args: |
             MCP_OWNER=mitetenov
             MCP_REPO=mcp-remnawave
+            MCP_VERSION=v1.2.2
           tags: |
             mitetenov/supportbot:latest
+            mitetenov/supportbot:${{ steps.version.outputs.version }}
             mitetenov/supportbot:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Bump minor version
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout -pl .)
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          MINOR=$(echo "$VERSION" | cut -d. -f2)
+          NEXT_VERSION="${MAJOR}.$((MINOR + 1)).0"
+          sed -i "s|<version>${VERSION}</version>|<version>${NEXT_VERSION}</version>|" pom.xml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pom.xml
+          git commit -m "Bump version to ${NEXT_VERSION} [skip ci]" || true
+          git push
