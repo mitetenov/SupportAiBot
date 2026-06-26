@@ -1,0 +1,63 @@
+name: Deploy to RPi
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to deploy'
+        required: true
+        default: 'latest'
+      service:
+        description: 'Which service to deploy'
+        required: true
+        default: 'supportbot'
+        type: choice
+        options:
+          - supportbot
+          - tg-captcha-bot
+          - all
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.RPI_HOST }}
+          username: ${{ secrets.RPI_USER }}
+          key: ${{ secrets.RPI_SSH_KEY }}
+          port: ${{ secrets.RPI_PORT || 22 }}
+          script: |
+            set -e
+
+            deploy_supportbot() {
+              echo "🚀 Deploying supportbot:${{ inputs.tag }}..."
+              cd /root/SupportAiBot
+              export BOT_TAG=${{ inputs.tag }}
+              docker compose pull
+              docker compose up -d
+              echo "✅ supportbot:${{ inputs.tag }} deployed"
+            }
+
+            deploy_captchabot() {
+              echo "🚀 Deploying tg-captcha-bot..."
+              cd /root/tg-captcha-bot
+              export TGTOKEN=${{ secrets.TG_TOKEN }}
+              docker compose pull
+              docker compose up -d
+              echo "✅ tg-captcha-bot deployed"
+            }
+
+            case "${{ inputs.service }}" in
+              supportbot)
+                deploy_supportbot
+                ;;
+              tg-captcha-bot)
+                deploy_captchabot
+                ;;
+              all)
+                deploy_supportbot
+                deploy_captchabot
+                ;;
+            esac
