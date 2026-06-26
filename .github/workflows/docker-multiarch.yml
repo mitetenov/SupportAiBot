@@ -69,13 +69,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Bump minor version
+      - name: Bump patch version
         if: github.event_name != 'pull_request'
         run: |
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout -pl .)
           MAJOR=$(echo "$VERSION" | cut -d. -f1)
           MINOR=$(echo "$VERSION" | cut -d. -f2)
-          NEXT_VERSION="${MAJOR}.$((MINOR + 1)).0"
+          PATCH=$(echo "$VERSION" | cut -d. -f3)
+          NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
           sed -i "s|<version>${VERSION}</version>|<version>${NEXT_VERSION}</version>|" pom.xml bot/pom.xml
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
