@@ -4,6 +4,8 @@ import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.User;
 import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.response.MessageIdResponse;
+import com.vpnsupport.bot.MessageMapping;
+import com.vpnsupport.bot.MessageMappingRepository;
 import com.vpnsupport.bot.TelegramMessageSender;
 import com.vpnsupport.bot.TopicManager;
 import com.vpnsupport.config.TelegramProperties;
@@ -20,14 +22,18 @@ public class SupportGroupForwarder {
     private final TelegramBot telegramBot;
     private final TelegramMessageSender messageSender;
     private final TopicManager topicManager;
+    private final MessageMappingRepository messageMappingRepository;
     private final long supportGroupChatId;
     private final String adminUsername;
 
     public SupportGroupForwarder(TelegramBot telegramBot, TelegramMessageSender messageSender,
-                                  TopicManager topicManager, TelegramProperties properties) {
+                                  TopicManager topicManager,
+                                  MessageMappingRepository messageMappingRepository,
+                                  TelegramProperties properties) {
         this.telegramBot = telegramBot;
         this.messageSender = messageSender;
         this.topicManager = topicManager;
+        this.messageMappingRepository = messageMappingRepository;
         this.supportGroupChatId = properties.getSupportGroupChatId();
         this.adminUsername = properties.getSupportAdminUsername();
     }
@@ -69,6 +75,13 @@ public class SupportGroupForwarder {
             if (!response.isOk()) {
                 log.warn("Failed to copy user message to topic {}: {}", topicId, response.description());
                 return false;
+            }
+            // Save mapping so operator replies to this topic message can be
+            // forwarded back as replies to the original user message.
+            Integer topicMessageId = response.messageId();
+            if (topicMessageId != null) {
+                messageMappingRepository.save(
+                        new MessageMapping(topicMessageId, topicId, userChatId, userMessageId));
             }
             return true;
         } catch (Exception e) {

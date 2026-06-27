@@ -1,9 +1,12 @@
 package com.vpnsupport.support;
 
 import com.pengrad.telegrambot.TelegramBot;
+import com.pengrad.telegrambot.model.Message;
 import com.pengrad.telegrambot.model.User;
 import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.response.MessageIdResponse;
+import com.vpnsupport.bot.MessageMapping;
+import com.vpnsupport.bot.MessageMappingRepository;
 import com.vpnsupport.bot.TelegramMessageSender;
 import com.vpnsupport.bot.TopicManager;
 import com.vpnsupport.config.TelegramProperties;
@@ -26,6 +29,9 @@ class SupportGroupForwarderTest {
 
     @Mock
     private TopicManager topicManager;
+
+    @Mock
+    private MessageMappingRepository messageMappingRepository;
 
     @Test
     void shouldForwardToSupportWithExistingTopic() {
@@ -246,9 +252,29 @@ class SupportGroupForwarderTest {
         verify(topicManager).recreateStaleTopic(1L, "@johndoe", 42);
     }
 
+    @Test
+    void shouldSaveMessageMappingAfterSuccessfulForward() {
+        User user = userWithUsername(1L, "johndoe");
+        when(topicManager.resolveTopicId(1L, "@johndoe")).thenReturn(42);
+
+        MessageIdResponse ok = okResponse();
+        when(telegramBot.execute(any(CopyMessage.class))).thenReturn(ok);
+
+        SupportGroupForwarder forwarder = createForwarder();
+        forwarder.forwardToSupport(1L, 100, user, "Help me!", "Bot response", false);
+
+        verify(messageMappingRepository).save(argThat(m ->
+                m.getTopicMessageId() == 200
+                && m.getTopicId() == 42
+                && m.getUserChatId() == 1L
+                && m.getUserMessageId() == 100
+        ));
+    }
+
     private MessageIdResponse okResponse() {
         MessageIdResponse response = mock(MessageIdResponse.class);
         when(response.isOk()).thenReturn(true);
+        when(response.messageId()).thenReturn(200);
         return response;
     }
 
@@ -262,14 +288,16 @@ class SupportGroupForwarderTest {
     private SupportGroupForwarder createForwarder() {
         TelegramProperties properties = new TelegramProperties();
         properties.setSupportGroupChatId(100L);
-        return new SupportGroupForwarder(telegramBot, messageSender, topicManager, properties);
+        return new SupportGroupForwarder(telegramBot, messageSender, topicManager,
+                messageMappingRepository, properties);
     }
 
     private SupportGroupForwarder createForwarderWithAdmin(String adminUsername) {
         TelegramProperties properties = new TelegramProperties();
         properties.setSupportGroupChatId(100L);
         properties.setSupportAdminUsername(adminUsername);
-        return new SupportGroupForwarder(telegramBot, messageSender, topicManager, properties);
+        return new SupportGroupForwarder(telegramBot, messageSender, topicManager,
+                messageMappingRepository, properties);
     }
 
     private User userWithUsername(long id, String username) {

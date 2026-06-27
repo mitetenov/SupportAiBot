@@ -40,6 +40,7 @@ public class VpnSupportBot {
     private final FaqEmbeddingService faqEmbeddingService;
     private final SupportGroupForwarder forwarder;
     private final TopicMappingRepository topicMappingRepository;
+    private final MessageMappingRepository messageMappingRepository;
     private final TelegramMessageSender messageSender;
     private final UserRateLimiter rateLimiter;
     private final ChatHistoryService chatHistoryService;
@@ -54,6 +55,7 @@ public class VpnSupportBot {
                           FaqEmbeddingService faqEmbeddingService,
                           SupportGroupForwarder forwarder,
                           TopicMappingRepository topicMappingRepository,
+                          MessageMappingRepository messageMappingRepository,
                           TelegramMessageSender messageSender,
                           UserRateLimiter rateLimiter,
                           ChatHistoryService chatHistoryService,
@@ -67,6 +69,7 @@ public class VpnSupportBot {
         this.faqEmbeddingService = faqEmbeddingService;
         this.forwarder = forwarder;
         this.topicMappingRepository = topicMappingRepository;
+        this.messageMappingRepository = messageMappingRepository;
         this.messageSender = messageSender;
         this.rateLimiter = rateLimiter;
         this.chatHistoryService = chatHistoryService;
@@ -124,7 +127,27 @@ public class VpnSupportBot {
         topicMappingRepository.findByTopicId(topicId).ifPresentOrElse(mapping -> {
             String text = message.text() != null ? message.text().trim() : "";
             if (!text.isEmpty()) {
-                messageSender.send(mapping.getUserId(), "Поддержка: " + text);
+                // Check if the operator replied to a specific message in the topic
+                Message repliedTo = message.replyToMessage();
+                if (repliedTo != null) {
+                    Integer repliedToMessageId = repliedTo.messageId();
+                    // Look up the original user message that maps to this topic message
+                    messageMappingRepository
+                            .findByTopicMessageIdAndTopicId(repliedToMessageId, topicId)
+                            .ifPresentOrElse(msgMapping -> {
+                                // Send as a reply to the original user message
+                                messageSender.sendReply(
+                                        msgMapping.getUserChatId(),
+                                        msgMapping.getUserMessageId(),
+                                        text);
+                            }, () -> {
+                                // Fallback: no mapping found, send as new message
+                                messageSender.send(mapping.getUserId(), "Поддержка: " + text);
+                            });
+                } else {
+                    // No reply — send as a new message as before
+                    messageSender.send(mapping.getUserId(), "Поддержка: " + text);
+                }
             } else {
                 copyToUser(mapping.getUserId(), message);
             }
