@@ -31,7 +31,7 @@ public class GeminiClient extends AbstractLlmClient {
 
     private final WebClient webClient;
     private final String model;
-    private final List<JsonNode> cachedSanitizedTools;
+    private volatile List<JsonNode> cachedSanitizedTools;
 
     public GeminiClient(GeminiProperties properties, ObjectMapper objectMapper,
                         McpRouter mcpRouter, ChatHistoryService chatHistoryService,
@@ -39,7 +39,6 @@ public class GeminiClient extends AbstractLlmClient {
                         LlmTokenUsageRepository tokenUsageRepository) {
         super(objectMapper, mcpRouter, chatHistoryService, faqEmbeddingService, tokenUsageRepository);
         this.model = properties.getModel();
-        this.cachedSanitizedTools = buildSanitizedTools();
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getBaseUrl())
                 .defaultHeader("Content-Type", "application/json")
@@ -47,6 +46,19 @@ public class GeminiClient extends AbstractLlmClient {
                 .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
                         HttpClient.create().responseTimeout(Duration.ofSeconds(60))))
                 .build();
+    }
+
+    private List<JsonNode> getSanitizedTools() {
+        List<JsonNode> tools = cachedSanitizedTools;
+        if (tools == null) {
+            synchronized (this) {
+                tools = cachedSanitizedTools;
+                if (tools == null) {
+                    cachedSanitizedTools = tools = buildSanitizedTools();
+                }
+            }
+        }
+        return tools;
     }
 
     @Override
@@ -82,7 +94,7 @@ public class GeminiClient extends AbstractLlmClient {
     @Override
     protected String callApi(List<Map<String, Object>> conversation, String faqContext, long telegramUserId) {
         ObjectNode requestBody = buildRequestBody(conversation, faqContext, telegramUserId);
-        log.debug("Gemini request ({} tools available)", cachedSanitizedTools.size());
+        log.debug("Gemini request ({} tools available)", getSanitizedTools().size());
 
         return webClient.post()
                 .uri("/models/{model}:generateContent", model)
@@ -124,8 +136,13 @@ public class GeminiClient extends AbstractLlmClient {
 
             StringBuilder textResponse = new StringBuilder();
             List<LlmResponse.ToolCall> functionCalls = new ArrayList<>();
+            List<Map<String, Object>> rawParts = new ArrayList<>();
 
             for (JsonNode part : parts) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> rawPart = objectMapper.convertValue(part, Map.class);
+                rawParts.add(rawPart);
+
                 if (part.has("text") && !part.get("text").isNull()) {
                     textResponse.append(part.get("text").asText());
                 }
@@ -137,11 +154,12 @@ public class GeminiClient extends AbstractLlmClient {
                     Map<String, Object> arguments = argsNode != null && !argsNode.isNull()
                             ? objectMapper.convertValue(argsNode, Map.class)
                             : Map.of();
-                    functionCalls.add(new LlmResponse.ToolCall(fnName, "", arguments));
+                    String thoughtSig = fc.has("thought_signature") ? fc.get("thought_signature").asText() : null;
+                    functionCalls.add(new LlmResponse.ToolCall(fnName, "", arguments, thoughtSig));
                 }
             }
 
-            return new LlmResponse(textResponse.toString(), functionCalls);
+            return new LlmResponse(textResponse.toString(), functionCalls, rawParts);
         } catch (LlmProcessingException e) {
             throw e;
         } catch (Exception e) {
@@ -156,14 +174,21 @@ public class GeminiClient extends AbstractLlmClient {
         modelContent.put("role", "model");
         List<Map<String, Object>> modelParts = new ArrayList<>();
 
-        if (response.text() != null && !response.text().isEmpty()) {
-            modelParts.add(Map.of("text", response.text()));
-        }
-        for (LlmResponse.ToolCall tc : response.toolCalls()) {
-            modelParts.add(Map.of("functionCall", Map.of(
-                    "name", tc.name(),
-                    "args", tc.arguments()
-            )));
+        if (!response.rawParts().isEmpty()) {
+            modelParts.addAll(response.rawParts());
+        } else {
+            if (response.text() != null && !response.text().isEmpty()) {
+                modelParts.add(Map.of("text", response.text()));
+            }
+            for (LlmResponse.ToolCall tc : response.toolCalls()) {
+                Map<String, Object> fc = new LinkedHashMap<>();
+                fc.put("name", tc.name());
+                fc.put("args", tc.arguments());
+                if (tc.thoughtSignature() != null) {
+                    fc.put("thought_signature", tc.thoughtSignature());
+                }
+                modelParts.add(Map.of("functionCall", fc));
+            }
         }
         modelContent.put("parts", modelParts);
         conversation.add(modelContent);
@@ -179,14 +204,15 @@ public class GeminiClient extends AbstractLlmClient {
         } catch (Exception e) {
             responseContent = Map.of("output", toolResult);
         }
+        Map<String, Object> functionResponse = new LinkedHashMap<>();
+        functionResponse.put("name", toolCall.name());
+        functionResponse.put("response", responseContent);
+        if (toolCall.thoughtSignature() != null) {
+            functionResponse.put("thought_signature", toolCall.thoughtSignature());
+        }
         conversation.add(Map.of(
                 "role", "function",
-                "parts", List.of(Map.of(
-                        "functionResponse", Map.of(
-                                "name", toolCall.name(),
-                                "response", responseContent
-                        )
-                ))
+                "parts", List.of(Map.of("functionResponse", functionResponse))
         ));
     }
 
@@ -252,11 +278,12 @@ public class GeminiClient extends AbstractLlmClient {
             contentsArray.add(objectMapper.valueToTree(msg));
         }
 
-        if (!cachedSanitizedTools.isEmpty()) {
+        List<JsonNode> tools = getSanitizedTools();
+        if (!tools.isEmpty()) {
             ArrayNode toolsArray = body.putArray("tools");
             ObjectNode toolsEntry = toolsArray.addObject();
             ArrayNode functionDeclarations = toolsEntry.putArray("function_declarations");
-            for (JsonNode decl : cachedSanitizedTools) {
+            for (JsonNode decl : tools) {
                 functionDeclarations.add(decl);
             }
         }

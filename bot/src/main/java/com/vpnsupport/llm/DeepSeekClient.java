@@ -31,7 +31,7 @@ public class DeepSeekClient extends AbstractLlmClient {
 
     private final WebClient webClient;
     private final String model;
-    private final List<Map<String, Object>> cachedToolDefinitions;
+    private volatile List<Map<String, Object>> cachedToolDefinitions;
 
     public DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper,
                           McpRouter mcpRouter, ChatHistoryService chatHistoryService,
@@ -39,7 +39,6 @@ public class DeepSeekClient extends AbstractLlmClient {
                           LlmTokenUsageRepository tokenUsageRepository) {
         super(objectMapper, mcpRouter, chatHistoryService, faqEmbeddingService, tokenUsageRepository);
         this.model = properties.getModel();
-        this.cachedToolDefinitions = buildToolDefinitions();
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getBaseUrl())
                 .defaultHeader("Authorization", "Bearer " + properties.getApiKey())
@@ -47,6 +46,19 @@ public class DeepSeekClient extends AbstractLlmClient {
                 .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
                         HttpClient.create().responseTimeout(Duration.ofSeconds(60))))
                 .build();
+    }
+
+    private List<Map<String, Object>> getToolDefinitions() {
+        List<Map<String, Object>> tools = cachedToolDefinitions;
+        if (tools == null) {
+            synchronized (this) {
+                tools = cachedToolDefinitions;
+                if (tools == null) {
+                    cachedToolDefinitions = tools = buildToolDefinitions();
+                }
+            }
+        }
+        return tools;
     }
 
     @Override
@@ -64,7 +76,7 @@ public class DeepSeekClient extends AbstractLlmClient {
     @Override
     protected String callApi(List<Map<String, Object>> conversation, String faqContext, long telegramUserId) {
         ObjectNode requestBody = buildRequestBody(conversation);
-        log.debug("DeepSeek request ({} tools available)", cachedToolDefinitions.size());
+        log.debug("DeepSeek request ({} tools available)", getToolDefinitions().size());
 
         return webClient.post()
                 .uri("/chat/completions")
@@ -196,9 +208,10 @@ public class DeepSeekClient extends AbstractLlmClient {
             messagesArray.add(objectMapper.valueToTree(msg));
         }
 
-        if (!cachedToolDefinitions.isEmpty()) {
+        List<Map<String, Object>> tools = getToolDefinitions();
+        if (!tools.isEmpty()) {
             ArrayNode toolsArray = body.putArray("tools");
-            for (Map<String, Object> tool : cachedToolDefinitions) {
+            for (Map<String, Object> tool : tools) {
                 toolsArray.add(objectMapper.valueToTree(tool));
             }
             body.put("tool_choice", "auto");
