@@ -6,57 +6,53 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 
 class McpToolTest {
 
     @Test
-    void shouldCreateWithDefaultConstructor() {
-        McpTool tool = new McpTool();
-        assertNotNull(tool);
-    }
-
-    @Test
-    void shouldCreateWithParameterizedConstructor() {
+    void shouldCreateWithConstructor() {
         Map<String, Object> schema = Map.of("type", "object");
         McpTool tool = new McpTool("nodes_get", "Get nodes", schema);
 
-        assertEquals("nodes_get", tool.getName());
-        assertEquals("Get nodes", tool.getDescription());
-        assertEquals(schema, tool.getInputSchema());
+        assertEquals("nodes_get", tool.name());
+        assertEquals("Get nodes", tool.description());
+        assertEquals(schema, tool.inputSchema());
     }
 
     @Test
-    void shouldAllowSettingName() {
-        McpTool tool = new McpTool();
-        tool.setName("test_tool");
-        assertEquals("test_tool", tool.getName());
+    void shouldCreateWithNullSchema() {
+        McpTool tool = new McpTool("test", "desc", null);
+
+        assertEquals("test", tool.name());
+        assertEquals("desc", tool.description());
+        assertNotNull(tool.inputSchema());
+        assertEquals(Map.of(), tool.inputSchema());
     }
 
     @Test
-    void shouldAllowSettingDescription() {
-        McpTool tool = new McpTool();
-        tool.setDescription("A test tool");
-        assertEquals("A test tool", tool.getDescription());
+    void shouldCreateWithNullDescription() {
+        McpTool tool = new McpTool("test", null, Map.of());
+        assertEquals("test", tool.name());
+        assertEquals(null, tool.description());
     }
 
     @Test
-    void shouldAllowSettingInputSchema() {
-        McpTool tool = new McpTool();
-        Map<String, Object> schema = Map.of("properties", Map.of());
-        tool.setInputSchema(schema);
-        assertEquals(schema, tool.getInputSchema());
+    void shouldSupportEquality() {
+        McpTool a = new McpTool("t", "d", Map.of("k", "v"));
+        McpTool b = new McpTool("t", "d", Map.of("k", "v"));
+        assertEquals(a, b);
+        assertEquals(a.hashCode(), b.hashCode());
     }
 
     @Test
-    void shouldAllowNullValues() {
-        McpTool tool = new McpTool();
-        tool.setName(null);
-        tool.setDescription(null);
-        tool.setInputSchema(null);
+    void shouldSupportToString() {
+        McpTool tool = new McpTool("t", "d", Map.of());
+        String str = tool.toString();
+        assertNotNull(str);
+        assertTrue(str.contains("t"));
+    }
 
-        assertNull(tool.getName());
-        assertNull(tool.getDescription());
-        assertNull(tool.getInputSchema());
+    private void assertTrue(boolean condition) {
+        if (!condition) throw new AssertionError("Expected true");
     }
 }

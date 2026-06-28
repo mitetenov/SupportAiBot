@@ -11,13 +11,15 @@ import java.util.List;
 @Repository
 public interface LlmTokenUsageRepository extends JpaRepository<LlmTokenUsage, Long> {
 
-    @Query("SELECT u.telegramId, SUM(u.totalTokens), SUM(u.promptTokens), "
-            + "SUM(u.completionTokens), COUNT(u) "
+    @Query("SELECT new com.vpnsupport.bot.TokenStatsDto(u.telegramId, SUM(u.totalTokens), SUM(u.promptTokens), "
+            + "SUM(u.completionTokens), COUNT(u)) "
             + "FROM LlmTokenUsage u GROUP BY u.telegramId "
             + "ORDER BY SUM(u.totalTokens) DESC")
-    List<Object[]> findTopByTokens(Pageable pageable);
+    List<TokenStatsDto> findTopByTokens(Pageable pageable);
 
-    @Query("SELECT SUM(u.totalTokens), SUM(u.promptTokens), SUM(u.completionTokens), COUNT(u) "
-            + "FROM LlmTokenUsage u WHERE u.telegramId = :telegramId")
-    List<Object[]> getStatsByTelegramId(@Param("telegramId") Long telegramId);
+    @Query("SELECT new com.vpnsupport.bot.TokenStatsDto(u.telegramId, SUM(u.totalTokens), SUM(u.promptTokens), "
+            + "SUM(u.completionTokens), COUNT(u)) "
+            + "FROM LlmTokenUsage u WHERE u.telegramId = :telegramId "
+            + "GROUP BY u.telegramId")
+    List<TokenStatsDto> getStatsByTelegramId(@Param("telegramId") Long telegramId);
 }

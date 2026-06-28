@@ -3,6 +3,7 @@ package com.vpnsupport.bot;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 public class UserRateLimiter {
@@ -13,11 +14,14 @@ public class UserRateLimiter {
 
     public boolean tryAcquire(long userId) {
         long now = System.currentTimeMillis();
-        Long previous = lastRequestAt.get(userId);
-        if (previous != null && now - previous < MIN_INTERVAL_MS) {
-            return false;
-        }
-        lastRequestAt.put(userId, now);
-        return true;
+        AtomicBoolean allowed = new AtomicBoolean(false);
+        lastRequestAt.compute(userId, (k, v) -> {
+            if (v == null || now - v >= MIN_INTERVAL_MS) {
+                allowed.set(true);
+                return now;
+            }
+            return v;
+        });
+        return allowed.get();
     }
 }

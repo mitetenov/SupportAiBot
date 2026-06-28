@@ -48,6 +48,11 @@ class GeminiClientTest {
     }
 
     @Test
+    void shouldSupportImages() {
+        assertTrue(client.supportsImages());
+    }
+
+    @Test
     void buildRequestBodyShouldIncludeCorrectTelegramId() throws Exception {
         long telegramUserId = 12345L;
         List<Map<String, Object>> contents = List.of();
@@ -83,5 +88,38 @@ class GeminiClientTest {
                 "System prompt must contain the actual user ID 777, but got: " + systemText);
         assertTrue(!systemText.contains("Telegram ID: 0"),
                 "System prompt must NOT contain Telegram ID: 0 when real ID is different");
+    }
+
+    @Test
+    void shouldBuildInitialConversationForText() throws Exception {
+        var method = GeminiClient.class.getDeclaredMethod(
+                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
+                client, "Hello", 123L, "FAQ", null, null);
+
+        assertTrue(!conv.isEmpty(), "Conversation should not be empty");
+        Map<String, Object> last = conv.get(conv.size() - 1);
+        assertTrue("user".equals(last.get("role")));
+    }
+
+    @Test
+    void shouldBuildInitialConversationForImage() throws Exception {
+        var method = GeminiClient.class.getDeclaredMethod(
+                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
+                client, "Describe", 123L, "FAQ", "base64data", "image/png");
+
+        assertTrue(!conv.isEmpty());
+        Map<String, Object> last = conv.get(conv.size() - 1);
+        assertTrue("user".equals(last.get("role")));
+        @SuppressWarnings("unchecked")
+        List<Object> parts = (List<Object>) last.get("parts");
+        assertTrue(parts.size() == 2, "Should have text and image parts");
     }
 }

@@ -61,16 +61,17 @@ public class FaqInitializer implements ApplicationRunner {
             }
 
             log.info("FAQ indexing complete: {} entries", entries.size());
+            embeddingService.markReady();
         } catch (Exception e) {
-            log.error("Failed to load FAQ file", e);
+            log.error("Failed to load FAQ file — FAQ search will be unavailable", e);
         }
-        embeddingService.markReady();
     }
 
-    @SuppressWarnings("unchecked")
     private static String extractImages(Object imagesValue) {
         if (imagesValue instanceof List<?> list && !list.isEmpty()) {
-            return String.join(",", (List<String>) list);
+            return list.stream()
+                    .map(Object::toString)
+                    .collect(java.util.stream.Collectors.joining(","));
         }
         return null;
     }

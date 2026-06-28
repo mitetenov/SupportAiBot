@@ -28,6 +28,7 @@ import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Component
 public class VpnSupportBot {
@@ -233,10 +234,7 @@ public class VpnSupportBot {
             boolean llmEscalation = llmRequestedEscalation(rawResponse);
             boolean humanRequest = userRequestsHuman(text);
             
-            String forwardText = text;
-            if (base64Image != null) {
-                forwardText = text.isEmpty() ? "[Скриншот]" : "[Скриншот] " + text;
-            }
+            String forwardText = buildForwardText(text, base64Image);
 
             if (base64Image == null && FaqImagePolicy.shouldAttachImages(response)) {
                 List<String> images = faqEmbeddingService.getMatchedImages(text);
@@ -249,16 +247,14 @@ public class VpnSupportBot {
         } catch (com.vpnsupport.llm.LlmProcessingException e) {
             log.error("LLM error processing message from user {}", chatId, e);
             messageSender.send(chatId, e.getUserFriendlyMessage());
-            String forwardText = (base64Image != null && text.isEmpty()) ? "[Скриншот]" : 
-                                 (base64Image != null ? "[Скриншот] " + text : text);
-            forwarder.forwardErrorToTopic(user, forwardText, e.getUserFriendlyMessage(), extractErrorMessage(e));
+            forwarder.forwardErrorToTopic(user, buildForwardText(text, base64Image),
+                    e.getUserFriendlyMessage(), extractErrorMessage(e));
         } catch (Exception e) {
             log.error("Error processing message from user {}", chatId, e);
             String errorText = "Произошла ошибка при обработке запроса. Попробуйте позже.";
             messageSender.send(chatId, errorText);
-            String forwardText = (base64Image != null && text.isEmpty()) ? "[Скриншот]" : 
-                                 (base64Image != null ? "[Скриншот] " + text : text);
-            forwarder.forwardErrorToTopic(user, forwardText, errorText, extractErrorMessage(e));
+            forwarder.forwardErrorToTopic(user, buildForwardText(text, base64Image),
+                    errorText, extractErrorMessage(e));
         }
     }
 
@@ -329,7 +325,7 @@ public class VpnSupportBot {
     }
 
     private void showTopStats(long chatId, int limit) {
-        List<Object[]> top = tokenUsageRepository.findTopByTokens(
+        List<TokenStatsDto> top = tokenUsageRepository.findTopByTokens(
                 org.springframework.data.domain.PageRequest.of(0, limit));
         if (top.isEmpty()) {
             messageSender.send(chatId, "Статистика пока пуста.");
@@ -338,28 +334,27 @@ public class VpnSupportBot {
         StringBuilder sb = new StringBuilder("Топ-").append(limit)
                 .append(" пользователей по токенам LLM:\n");
         int rank = 1;
-        for (Object[] row : top) {
-            Long tgId = (Long) row[0];
-            sb.append(rank++).append(". ").append(resolveUserName(tgId))
-                    .append(" — ").append(formatNumber((Long) row[1]))
-                    .append(" токенов (").append(row[4]).append(" запросов)\n");
+        for (TokenStatsDto row : top) {
+            sb.append(rank++).append(". ").append(resolveUserName(row.telegramId()))
+                    .append(" — ").append(formatNumber(row.totalTokens()))
+                    .append(" токенов (").append(row.requestCount()).append(" запросов)\n");
         }
         messageSender.send(chatId, sb.toString());
     }
 
     private void showUserStats(long chatId, long telegramId) {
-        List<Object[]> stats = tokenUsageRepository.getStatsByTelegramId(telegramId);
-        if (stats.isEmpty() || stats.get(0)[0] == null) {
+        List<TokenStatsDto> stats = tokenUsageRepository.getStatsByTelegramId(telegramId);
+        if (stats.isEmpty()) {
             messageSender.send(chatId, "Нет данных по " + resolveUserName(telegramId) + ".");
             return;
         }
-        Object[] row = stats.get(0);
+        TokenStatsDto row = stats.get(0);
         messageSender.send(chatId,
                 "Статистика " + resolveUserName(telegramId) + ":\n"
-                        + "Запросов: " + row[3] + "\n"
-                        + "Prompt-токенов: " + formatNumber((Long) row[1]) + "\n"
-                        + "Completion-токенов: " + formatNumber((Long) row[2]) + "\n"
-                        + "Всего токенов: " + formatNumber((Long) row[0]));
+                        + "Запросов: " + row.requestCount() + "\n"
+                        + "Prompt-токенов: " + formatNumber(row.promptTokens()) + "\n"
+                        + "Completion-токенов: " + formatNumber(row.completionTokens()) + "\n"
+                        + "Всего токенов: " + formatNumber(row.totalTokens()));
     }
 
     private static String formatNumber(long n) {
@@ -437,5 +432,12 @@ public class VpnSupportBot {
             msg = msg.substring(0, 3000) + "...";
         }
         return "Bot: " + (msg != null ? msg : e.getClass().getSimpleName());
+    }
+
+    private static String buildForwardText(String text, String base64Image) {
+        if (base64Image == null) {
+            return text;
+        }
+        return text.isEmpty() ? "[Скриншот]" : "[Скриншот] " + text;
     }
 }
