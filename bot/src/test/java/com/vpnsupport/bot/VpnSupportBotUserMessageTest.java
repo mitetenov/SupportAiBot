@@ -93,7 +93,7 @@ class VpnSupportBotUserMessageTest {
         invokeHandleUserMessage(msg, "/start", null, null);
 
         verify(chatHistoryService).clear(USER_ID);
-        verify(messageSender).send(eq(USER_CHAT_ID), contains("Привет!"));
+        verify(messageSender).send(eq(USER_CHAT_ID), contains("Привет, чем вам помочь?"));
         verify(llmClient, never()).chat(anyString(), anyLong());
     }
 
