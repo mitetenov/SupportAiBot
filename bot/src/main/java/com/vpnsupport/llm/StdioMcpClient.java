@@ -34,12 +34,13 @@ public class StdioMcpClient implements McpClientInterface {
     private BufferedWriter stdin;
     private BufferedReader stdout;
     private Thread readerThread;
+    private Thread stderrThread;
     private final Map<Integer, CompletableFuture<JsonNode>> pendingRequests = new ConcurrentHashMap<>();
     private final AtomicInteger requestId = new AtomicInteger(0);
     private volatile boolean running = false;
     private volatile boolean initialized = false;
 
-    private List<McpTool> cachedTools = Collections.emptyList();
+    private volatile List<McpTool> cachedTools = Collections.emptyList();
 
     public StdioMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper,
                           AdminNotifier adminNotifier) {
@@ -59,6 +60,7 @@ public class StdioMcpClient implements McpClientInterface {
         } catch (Exception e) {
             log.error("Failed to initialize MCP client — bot will run without Remnawave tools", e);
             adminNotifier.notifyError("MCP init failed", e);
+            destroyProcess();
         }
     }
 
@@ -69,12 +71,28 @@ public class StdioMcpClient implements McpClientInterface {
         if (readerThread != null) {
             readerThread.interrupt();
         }
-        if (process != null && process.isAlive()) {
-            process.destroy();
-            try {
-                process.waitFor(5, TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                process.destroyForcibly();
+        if (stderrThread != null) {
+            stderrThread.interrupt();
+        }
+        destroyProcess();
+    }
+
+    private void destroyProcess() {
+        Process p = process;
+        if (p != null) {
+            try { stdin.close(); } catch (Exception ignored) {}
+            try { stdout.close(); } catch (Exception ignored) {}
+            if (p.isAlive()) {
+                p.destroy();
+                try {
+                    if (!p.waitFor(5, TimeUnit.SECONDS)) {
+                        p.destroyForcibly();
+                        p.waitFor(2, TimeUnit.SECONDS);
+                    }
+                } catch (InterruptedException e) {
+                    p.destroyForcibly();
+                    Thread.currentThread().interrupt();
+                }
             }
         }
     }
@@ -96,7 +114,7 @@ public class StdioMcpClient implements McpClientInterface {
         stdout = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
 
         BufferedReader stderr = new BufferedReader(new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8));
-        Thread stderrReader = new Thread(() -> {
+        stderrThread = new Thread(() -> {
             try {
                 String line;
                 while ((line = stderr.readLine()) != null) {
@@ -106,8 +124,8 @@ public class StdioMcpClient implements McpClientInterface {
                 log.trace("MCP stderr reader ended", e);
             }
         }, "mcp-stderr");
-        stderrReader.setDaemon(true);
-        stderrReader.start();
+        stderrThread.setDaemon(true);
+        stderrThread.start();
 
         readerThread = new Thread(this::readResponses, "mcp-reader");
         readerThread.setDaemon(true);
@@ -156,7 +174,7 @@ public class StdioMcpClient implements McpClientInterface {
     @Override
     public String callTool(String toolName, Map<String, Object> arguments) {
         if (!initialized) {
-            return "{\"error\": \"MCP client not initialized\"}";
+            return errorResponse("MCP client not initialized");
         }
         try {
             JsonNode response = sendRequest("tools/call", Map.of(
@@ -167,12 +185,24 @@ public class StdioMcpClient implements McpClientInterface {
         } catch (Exception e) {
             log.error("Failed to call tool: {}", toolName, e);
             adminNotifier.notifyError("MCP tool call failed: " + toolName, e);
-            return "{\"error\": \"" + e.getMessage() + "\"}";
+            try {
+                return objectMapper.writeValueAsString(Map.of("error", e.getMessage() != null ? e.getMessage() : "unknown error"));
+            } catch (JsonProcessingException ex) {
+                return "{\"error\":\"tool call failed\"}";
+            }
+        }
+    }
+
+    private String errorResponse(String message) {
+        try {
+            return objectMapper.writeValueAsString(Map.of("error", message));
+        } catch (JsonProcessingException e) {
+            return "{\"error\":\"unknown error\"}";
         }
     }
 
     private JsonNode sendRequest(String method, Map<String, Object> params) throws Exception {
-        int id = requestId.incrementAndGet();
+        int id = requestId.updateAndGet(i -> (i + 1) & 0x7FFFFFFF);
         CompletableFuture<JsonNode> future = new CompletableFuture<>();
         pendingRequests.put(id, future);
 
@@ -221,7 +251,7 @@ public class StdioMcpClient implements McpClientInterface {
             while (running && (line = stdout.readLine()) != null) {
                 try {
                     JsonNode message = objectMapper.readTree(line);
-                    if (message.has("id") && message.has("result")) {
+                    if (message.has("id")) {
                         int id = message.get("id").asInt();
                         CompletableFuture<JsonNode> future = pendingRequests.get(id);
                         if (future != null) {
@@ -231,13 +261,6 @@ public class StdioMcpClient implements McpClientInterface {
                             } else {
                                 future.complete(message.get("result"));
                             }
-                        }
-                    } else if (message.has("id") && message.has("error")) {
-                        int id = message.get("id").asInt();
-                        CompletableFuture<JsonNode> future = pendingRequests.get(id);
-                        if (future != null) {
-                            future.completeExceptionally(
-                                    new RuntimeException(message.get("error").toString()));
                         }
                     }
                 } catch (JsonProcessingException e) {

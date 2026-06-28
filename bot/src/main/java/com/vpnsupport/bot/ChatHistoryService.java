@@ -1,9 +1,11 @@
 package com.vpnsupport.bot;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Deque;
 import java.util.List;
 import java.util.Map;
@@ -13,15 +15,19 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 @Service
 public class ChatHistoryService {
 
+    private static final Logger log = LoggerFactory.getLogger(ChatHistoryService.class);
     private static final int MAX_MESSAGES = 20;
+    private static final long CLEANUP_INACTIVE_MS = 30 * 60 * 1000;
 
     private final ConcurrentHashMap<Long, Deque<Map<String, Object>>> histories = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Long> lastActivity = new ConcurrentHashMap<>();
 
     public List<Map<String, Object>> getHistory(long userId) {
         Deque<Map<String, Object>> history = histories.get(userId);
         if (history == null || history.isEmpty()) {
             return List.of();
         }
+        lastActivity.put(userId, System.currentTimeMillis());
         return List.copyOf(history);
     }
 
@@ -34,6 +40,7 @@ public class ChatHistoryService {
     }
 
     private void append(long userId, Map<String, Object> message) {
+        lastActivity.put(userId, System.currentTimeMillis());
         Deque<Map<String, Object>> history = histories.computeIfAbsent(userId, id -> new ConcurrentLinkedDeque<>());
         synchronized (history) {
             history.addLast(message);
@@ -64,5 +71,17 @@ public class ChatHistoryService {
 
     public void clear(long userId) {
         histories.remove(userId);
+        lastActivity.remove(userId);
+    }
+
+    @Scheduled(fixedRate = 60_000)
+    public void evictStaleEntries() {
+        long cutoff = System.currentTimeMillis() - CLEANUP_INACTIVE_MS;
+        lastActivity.forEach((userId, lastSeen) -> {
+            if (lastSeen < cutoff) {
+                histories.remove(userId);
+                lastActivity.remove(userId);
+            }
+        });
     }
 }

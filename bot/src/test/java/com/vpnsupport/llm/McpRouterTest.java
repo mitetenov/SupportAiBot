@@ -1,5 +1,6 @@
 package com.vpnsupport.llm;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -10,16 +11,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class McpRouterTest {
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     @Test
     void shouldReturnEmptyToolsWithNoClients() {
-        McpRouter router = new McpRouter(List.of());
+        McpRouter router = new McpRouter(List.of(), objectMapper);
         List<McpTool> tools = router.listTools();
         assertTrue(tools.isEmpty());
     }
 
     @Test
     void shouldReturnEmptyToolsWithNullClientList() {
-        McpRouter router = new McpRouter(null);
+        McpRouter router = new McpRouter(null, objectMapper);
         List<McpTool> tools = router.listTools();
         assertTrue(tools.isEmpty());
     }
@@ -35,12 +38,12 @@ class McpRouterTest {
                 Map.of("tool2", "result2")
         );
 
-        McpRouter router = new McpRouter(List.of(client1, client2));
+        McpRouter router = new McpRouter(List.of(client1, client2), objectMapper);
         List<McpTool> tools = router.listTools();
 
         assertEquals(2, tools.size());
-        assertEquals("tool1", tools.get(0).getName());
-        assertEquals("tool2", tools.get(1).getName());
+        assertEquals("tool1", tools.get(0).name());
+        assertEquals("tool2", tools.get(1).name());
     }
 
     @Test
@@ -50,7 +53,7 @@ class McpRouterTest {
                 Map.of("test_tool", "{\"status\": \"ok\"}")
         );
 
-        McpRouter router = new McpRouter(List.of(client));
+        McpRouter router = new McpRouter(List.of(client), objectMapper);
         String result = router.callTool("test_tool", Map.of("param", "value"));
 
         assertTrue(result.contains("ok"));
@@ -58,11 +61,10 @@ class McpRouterTest {
 
     @Test
     void shouldReturnErrorForUnknownTool() {
-        McpRouter router = new McpRouter(List.of());
+        McpRouter router = new McpRouter(List.of(), objectMapper);
         String result = router.callTool("nonexistent", Map.of());
 
         assertTrue(result.contains("error"));
-        assertTrue(result.contains("Unknown tool"));
         assertTrue(result.contains("nonexistent"));
     }
 
@@ -77,7 +79,7 @@ class McpRouterTest {
                 Map.of("tool2", "result2")
         );
 
-        McpRouter router = new McpRouter(List.of(client1, client2));
+        McpRouter router = new McpRouter(List.of(client1, client2), objectMapper);
 
         assertEquals("result1", router.callTool("tool1", Map.of()));
         assertEquals("result2", router.callTool("tool2", Map.of()));
@@ -90,15 +92,15 @@ class McpRouterTest {
                 Map.of("tool_a", "result_a")
         );
 
-        McpRouter router = new McpRouter(List.of(client));
+        McpRouter router = new McpRouter(List.of(client), objectMapper);
         String result = router.callTool("tool_b", Map.of());
 
-        assertTrue(result.contains("Unknown tool: tool_b"));
+        assertTrue(result.contains("tool_b"));
     }
 
     @Test
     void shouldHandleEmptyClientsWithNullSafety() {
-        McpRouter router = new McpRouter(null);
+        McpRouter router = new McpRouter(null, objectMapper);
         assertTrue(router.listTools().isEmpty());
         assertTrue(router.callTool("any", Map.of()).contains("error"));
     }

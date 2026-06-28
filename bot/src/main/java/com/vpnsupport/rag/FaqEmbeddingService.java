@@ -7,10 +7,13 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.vpnsupport.config.GeminiProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClient;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -38,6 +41,8 @@ public class FaqEmbeddingService {
         this.webClient = WebClient.builder()
                 .baseUrl(geminiProperties.getBaseUrl())
                 .defaultHeader("x-goog-api-key", geminiProperties.getApiKey())
+                .clientConnector(new ReactorClientHttpConnector(
+                        HttpClient.create().responseTimeout(Duration.ofSeconds(60))))
                 .build();
     }
 
@@ -132,11 +137,16 @@ public class FaqEmbeddingService {
         return results;
     }
 
-    public String buildFaqContext(String userQuery) {
-        List<FaqResult> results = search(userQuery);
-        if (results.isEmpty() && looksLikeConnectionIssue(userQuery)) {
+    private List<FaqResult> searchWithFallback(String query) {
+        List<FaqResult> results = search(query);
+        if (results.isEmpty() && looksLikeConnectionIssue(query)) {
             results = search(CONNECTION_FAQ_QUERY);
         }
+        return results;
+    }
+
+    public String buildFaqContext(String userQuery) {
+        List<FaqResult> results = searchWithFallback(userQuery);
         if (results.isEmpty()) {
             return "";
         }
@@ -174,21 +184,19 @@ public class FaqEmbeddingService {
 
     public String buildRefinedFaqContext(String originalQuery, List<String> mcpResults) {
         StringBuilder enrichedQuery = new StringBuilder(originalQuery);
-        for (String result : mcpResults) {
-            if (result != null && !result.isBlank()) {
-                String truncated = result.length() > 500 ? result.substring(0, 500) : result;
-                enrichedQuery.append(" ").append(truncated);
+        if (mcpResults != null) {
+            for (String result : mcpResults) {
+                if (result != null && !result.isBlank()) {
+                    String truncated = result.length() > 500 ? result.substring(0, 500) : result;
+                    enrichedQuery.append(" ").append(truncated);
+                }
             }
         }
         return buildFaqContext(enrichedQuery.toString());
     }
 
     public List<String> getMatchedImages(String userQuery) {
-        List<FaqResult> results = search(userQuery);
-        if (results.isEmpty() && looksLikeConnectionIssue(userQuery)) {
-            results = search(CONNECTION_FAQ_QUERY);
-        }
-        return results.stream()
+        return searchWithFallback(userQuery).stream()
                 .filter(r -> r.images() != null && !r.images().isEmpty())
                 .flatMap(r -> r.images().stream())
                 .map(String::trim)

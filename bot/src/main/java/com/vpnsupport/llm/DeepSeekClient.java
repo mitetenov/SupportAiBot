@@ -15,196 +15,143 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import reactor.netty.http.client.HttpClient;
 
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 @Component
 @ConditionalOnProperty(name = "llm.provider", havingValue = "deepseek")
-public class DeepSeekClient implements LlmClient {
+public class DeepSeekClient extends AbstractLlmClient {
 
     private static final Logger log = LoggerFactory.getLogger(DeepSeekClient.class);
-    private static final int MAX_TOOL_ITERATIONS = 5;
 
     private final WebClient webClient;
-    private final ObjectMapper objectMapper;
-    private final McpRouter mcpRouter;
-    private final ChatHistoryService chatHistoryService;
-    private final FaqEmbeddingService faqEmbeddingService;
-    private final LlmTokenUsageRepository tokenUsageRepository;
     private final String model;
+    private final List<Map<String, Object>> cachedToolDefinitions;
 
     public DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper,
                           McpRouter mcpRouter, ChatHistoryService chatHistoryService,
                           FaqEmbeddingService faqEmbeddingService,
                           LlmTokenUsageRepository tokenUsageRepository) {
-        this.objectMapper = objectMapper;
-        this.mcpRouter = mcpRouter;
-        this.chatHistoryService = chatHistoryService;
-        this.faqEmbeddingService = faqEmbeddingService;
-        this.tokenUsageRepository = tokenUsageRepository;
+        super(objectMapper, mcpRouter, chatHistoryService, faqEmbeddingService, tokenUsageRepository);
         this.model = properties.getModel();
+        this.cachedToolDefinitions = buildToolDefinitions();
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getBaseUrl())
                 .defaultHeader("Authorization", "Bearer " + properties.getApiKey())
                 .defaultHeader("Content-Type", "application/json")
+                .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
+                        HttpClient.create().responseTimeout(Duration.ofSeconds(60))))
                 .build();
     }
 
     @Override
-    public String chat(String userMessage, long telegramUserId) {
+    protected List<Map<String, Object>> buildInitialConversation(
+            String userMessage, long telegramUserId, String faqContext,
+            String base64Image, String mimeType) {
         List<Map<String, Object>> messages = new ArrayList<>();
-
-        String faqContext = faqEmbeddingService.buildFaqContext(userMessage);
         messages.add(Map.of("role", "system", "content",
                 SupportPrompt.withFaqContext(faqContext, telegramUserId)));
         messages.addAll(chatHistoryService.getHistory(telegramUserId));
         messages.add(Map.of("role", "user", "content", userMessage));
-
-        String response = processChat(messages, userMessage, telegramUserId);
-        chatHistoryService.addUserMessage(telegramUserId, userMessage);
-        chatHistoryService.addAssistantMessage(telegramUserId, response);
-        return response;
+        return messages;
     }
 
     @Override
-    public String chatWithImage(String userMessage, long telegramUserId, String base64Image, String mimeType) {
-        throw new LlmProcessingException("Image not supported", "DeepSeek не поддерживает обработку изображений. Переключите провайдера на Gemini (LLM_PROVIDER=gemini) или опишите проблему текстом.");
+    protected String callApi(List<Map<String, Object>> conversation, String faqContext, long telegramUserId) {
+        ObjectNode requestBody = buildRequestBody(conversation);
+        log.debug("DeepSeek request ({} tools available)", cachedToolDefinitions.size());
+
+        return webClient.post()
+                .uri("/chat/completions")
+                .bodyValue(requestBody)
+                .retrieve()
+                .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                                .flatMap(err -> Mono.error(new RuntimeException(
+                                        "DeepSeek API error: " + clientResponse.statusCode() + " - " + err))))
+                .bodyToMono(String.class)
+                .block();
     }
 
-    private String processChat(List<Map<String, Object>> messages, String originalUserMessage, long telegramUserId) {
-        List<Map<String, Object>> functionDefinitions = buildFunctionDefinitions();
-        int iteration = 0;
-
-        while (iteration < MAX_TOOL_ITERATIONS) {
-            try {
-                ObjectNode requestBody = buildRequestBody(messages, functionDefinitions);
-                log.debug("DeepSeek request (iteration {}): {} tools available", iteration, functionDefinitions.size());
-
-                String response = webClient.post()
-                        .uri("/chat/completions")
-                        .bodyValue(requestBody)
-                        .retrieve()
-                        .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
-                                clientResponse -> clientResponse.bodyToMono(String.class)
-                                        .flatMap(err -> Mono.error(new RuntimeException(
-                                                "DeepSeek API error: " + clientResponse.statusCode() + " - " + err))))
-                        .bodyToMono(String.class)
-                        .block();
-
-                JsonNode jsonResponse = objectMapper.readTree(response);
-                saveUsage(jsonResponse, telegramUserId);
-                JsonNode choices = jsonResponse.get("choices");
-                if (choices == null || !choices.isArray() || choices.isEmpty()) {
-                    log.error("Empty choices in DeepSeek response: {}", response);
-                    throw new LlmProcessingException("Empty choices", "Не удалось получить ответ от модели. Попробуйте позже.");
-                }
-
-                JsonNode message = choices.get(0).get("message");
-                String content = message.has("content") && !message.get("content").isNull()
-                        ? message.get("content").asText()
-                        : null;
-                JsonNode toolCalls = message.get("tool_calls");
-
-                if (toolCalls != null && toolCalls.isArray() && toolCalls.size() > 0) {
-                    log.info("DeepSeek requested {} tool call(s)", toolCalls.size());
-                    messages.add(Map.of("role", "assistant", "tool_calls", objectMapper.convertValue(toolCalls, List.class)));
-
-                    for (JsonNode toolCall : toolCalls) {
-                        String functionName = toolCall.get("function").get("name").asText();
-                        String argumentsStr = toolCall.get("function").get("arguments").asText();
-                        String toolCallId = toolCall.get("id").asText();
-
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> arguments = argumentsStr.isEmpty()
-                                ? Map.of()
-                                : objectMapper.readValue(argumentsStr, Map.class);
-
-                        log.info("Executing tool: {} with args: {}", functionName, arguments);
-                        String toolResult = mcpRouter.callTool(functionName, arguments);
-                        log.info("Tool {} result: {}", functionName,
-                                toolResult.length() > 2000 ? toolResult.substring(0, 2000) + "..." : toolResult);
-
-                        messages.add(Map.of("role", "tool", "tool_call_id", toolCallId, "content", toolResult));
-                    }
-
-                    if (iteration == 0) {
-                        List<String> toolResults = messages.stream()
-                                .filter(m -> "tool".equals(m.get("role")))
-                                .map(m -> (String) m.get("content"))
-                                .toList();
-                        String refreshedFaq = faqEmbeddingService.buildRefinedFaqContext(originalUserMessage, toolResults);
-                        if (!refreshedFaq.isEmpty()) {
-                            messages.add(Map.of("role", "user", "content",
-                                    "[Система] Результат диагностики получен. Актуальный FAQ:\n\n" + refreshedFaq));
-                        }
-                    }
-                    iteration++;
-                    continue; // Re-evaluate with tools
-                }
-
-                if (content != null && !content.isEmpty()) {
-                    return content;
-                }
-
-                throw new LlmProcessingException("No content returned", "Модель не вернула ответа. Попробуйте переформулировать вопрос.");
-
-            } catch (LlmProcessingException e) {
-                throw e;
-            } catch (Exception e) {
-                log.error("DeepSeek request failed", e);
-                throw new LlmProcessingException(e.getMessage(), "Произошла ошибка при обработке запроса. Попробуйте позже.", e);
-            }
-        }
-
-        throw new LlmProcessingException("Max iterations reached", "Превышено количество попыток обработки запроса. Пожалуйста, попробуйте ещё раз.");
-    }
-
-    private List<Map<String, Object>> buildFunctionDefinitions() {
-        List<McpTool> tools = mcpRouter.listTools();
-        List<Map<String, Object>> functions = new ArrayList<>();
-
-        for (McpTool tool : tools) {
-            Map<String, Object> function = new java.util.LinkedHashMap<>();
-            function.put("name", tool.getName());
-            function.put("description", tool.getDescription());
-
-            Map<String, Object> parameters = tool.getInputSchema();
-            if (parameters == null || parameters.isEmpty()) {
-                parameters = Map.of("type", "object", "properties", Map.of());
-            }
-            function.put("parameters", parameters);
-
-            functions.add(Map.of("type", "function", "function", function));
-        }
-
-        return functions;
-    }
-
-    private ObjectNode buildRequestBody(List<Map<String, Object>> messages, List<Map<String, Object>> tools) {
-        ObjectNode body = objectMapper.createObjectNode();
-        body.put("model", model);
-
-        ArrayNode messagesArray = body.putArray("messages");
-        for (Map<String, Object> msg : messages) {
-            messagesArray.add(objectMapper.valueToTree(msg));
-        }
-
-        if (!tools.isEmpty()) {
-            ArrayNode toolsArray = body.putArray("tools");
-            for (Map<String, Object> tool : tools) {
-                toolsArray.add(objectMapper.valueToTree(tool));
-            }
-            body.put("tool_choice", "auto");
-        }
-
-        body.put("temperature", 0.3);
-        return body;
-    }
-
-    private void saveUsage(JsonNode jsonResponse, long telegramUserId) {
+    @Override
+    protected LlmResponse parseResponse(String rawResponse) {
         try {
+            JsonNode jsonResponse = objectMapper.readTree(rawResponse);
+            JsonNode choices = jsonResponse.get("choices");
+            if (choices == null || !choices.isArray() || choices.isEmpty()) {
+                log.error("Empty choices in DeepSeek response: {}", rawResponse);
+                throw new LlmProcessingException("Empty choices",
+                        "Не удалось получить ответ от модели. Попробуйте позже.");
+            }
+
+            JsonNode message = choices.get(0).get("message");
+            if (message == null) {
+                throw new LlmProcessingException("No message in response",
+                        "Не удалось получить ответ от модели. Попробуйте позже.");
+            }
+
+            String content = message.has("content") && !message.get("content").isNull()
+                    ? message.get("content").asText() : null;
+
+            List<LlmResponse.ToolCall> toolCalls = new ArrayList<>();
+            JsonNode toolCallsNode = message.get("tool_calls");
+            if (toolCallsNode != null && toolCallsNode.isArray()) {
+                for (JsonNode tc : toolCallsNode) {
+                    String fnName = tc.get("function").get("name").asText();
+                    String fnArgsStr = tc.get("function").get("arguments").asText();
+                    String tcId = tc.get("id").asText();
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> args = fnArgsStr.isEmpty()
+                            ? Map.of()
+                            : objectMapper.readValue(fnArgsStr, Map.class);
+                    toolCalls.add(new LlmResponse.ToolCall(fnName, tcId, args));
+                }
+            }
+
+            return new LlmResponse(content != null ? content : "", toolCalls);
+        } catch (LlmProcessingException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new LlmProcessingException("Parse error",
+                    "Ошибка обработки ответа модели.");
+        }
+    }
+
+    @Override
+    protected void addToolCallsToConversation(List<Map<String, Object>> conversation, LlmResponse response) {
+        List<Map<String, Object>> toolCallMaps = new ArrayList<>();
+        for (LlmResponse.ToolCall tc : response.toolCalls()) {
+            toolCallMaps.add(Map.of(
+                    "id", tc.id(),
+                    "type", "function",
+                    "function", Map.of("name", tc.name(), "arguments",
+                            objectMapper.convertValue(tc.arguments(), Map.class))
+            ));
+        }
+        conversation.add(Map.of("role", "assistant", "tool_calls", toolCallMaps));
+    }
+
+    @Override
+    protected void addToolResultToConversation(List<Map<String, Object>> conversation,
+                                                LlmResponse.ToolCall toolCall, String toolResult) {
+        conversation.add(Map.of("role", "tool", "tool_call_id", toolCall.id(), "content", toolResult));
+    }
+
+    @Override
+    protected void injectFaqToConversation(List<Map<String, Object>> conversation, String faqText) {
+        conversation.add(Map.of("role", "user", "content",
+                "[Система] Результат диагностики получен. Актуальный FAQ:\n\n" + faqText));
+    }
+
+    @Override
+    protected void saveUsage(String rawResponse, long telegramUserId) {
+        try {
+            JsonNode jsonResponse = objectMapper.readTree(rawResponse);
             JsonNode usage = jsonResponse.get("usage");
             if (usage != null) {
                 long promptTokens = usage.get("prompt_tokens").asLong();
@@ -216,5 +163,54 @@ public class DeepSeekClient implements LlmClient {
         } catch (Exception e) {
             log.warn("Failed to save token usage: {}", e.getMessage());
         }
+    }
+
+    @Override
+    protected String getProviderName() {
+        return "DeepSeek";
+    }
+
+    private List<Map<String, Object>> buildToolDefinitions() {
+        List<McpTool> tools = mcpRouter.listTools();
+        List<Map<String, Object>> functions = new ArrayList<>();
+        for (McpTool tool : tools) {
+            Map<String, Object> function = new LinkedHashMap<>();
+            function.put("name", tool.name());
+            function.put("description", tool.description());
+            Map<String, Object> parameters = tool.inputSchema();
+            if (parameters == null || parameters.isEmpty()) {
+                parameters = Map.of("type", "object", "properties", Map.of());
+            }
+            function.put("parameters", parameters);
+            functions.add(Map.of("type", "function", "function", function));
+        }
+        return List.copyOf(functions);
+    }
+
+    private ObjectNode buildRequestBody(List<Map<String, Object>> messages) {
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("model", model);
+
+        ArrayNode messagesArray = body.putArray("messages");
+        for (Map<String, Object> msg : messages) {
+            messagesArray.add(objectMapper.valueToTree(msg));
+        }
+
+        if (!cachedToolDefinitions.isEmpty()) {
+            ArrayNode toolsArray = body.putArray("tools");
+            for (Map<String, Object> tool : cachedToolDefinitions) {
+                toolsArray.add(objectMapper.valueToTree(tool));
+            }
+            body.put("tool_choice", "auto");
+        }
+
+        body.put("temperature", 0.3);
+        return body;
+    }
+
+    @Override
+    public String chatWithImage(String userMessage, long telegramUserId, String base64Image, String mimeType) {
+        throw new LlmProcessingException("Image not supported",
+                "DeepSeek не поддерживает обработку изображений. Переключите провайдера на Gemini (LLM_PROVIDER=gemini) или опишите проблему текстом.");
     }
 }
