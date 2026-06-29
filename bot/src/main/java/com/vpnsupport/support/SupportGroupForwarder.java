@@ -18,6 +18,7 @@ public class SupportGroupForwarder {
 
     private static final Logger log = LoggerFactory.getLogger(SupportGroupForwarder.class);
     private static final int SUPPORT_PREVIEW_MAX_LENGTH = 3500;
+    private static final int ERROR_USER_MSG_MAX_LENGTH = 300;
 
     private final TelegramBot telegramBot;
     private final TelegramMessageSender messageSender;
@@ -127,8 +128,8 @@ public class SupportGroupForwarder {
                 ? "@" + adminUsername + " "
                 : "";
 
-        String truncatedUserMsg = userMessage.length() > 300
-                ? userMessage.substring(0, 300) + "..."
+        String truncatedUserMsg = userMessage.length() > ERROR_USER_MSG_MAX_LENGTH
+                ? userMessage.substring(0, ERROR_USER_MSG_MAX_LENGTH) + "..."
                 : userMessage;
 
         messageSender.sendToTopic(supportGroupChatId, topicId,
