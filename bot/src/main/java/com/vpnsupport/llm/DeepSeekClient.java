@@ -28,6 +28,7 @@ import java.util.Map;
 public class DeepSeekClient extends AbstractLlmClient {
 
     private static final Logger log = LoggerFactory.getLogger(DeepSeekClient.class);
+    private static final double TEMPERATURE = 0.3;
 
     private final WebClient webClient;
     private final String model;
@@ -217,7 +218,7 @@ public class DeepSeekClient extends AbstractLlmClient {
             body.put("tool_choice", "auto");
         }
 
-        body.put("temperature", 0.3);
+        body.put("temperature", TEMPERATURE);
         return body;
     }
 

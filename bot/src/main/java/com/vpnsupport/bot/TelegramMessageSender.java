@@ -17,7 +17,7 @@ import java.util.List;
 public class TelegramMessageSender {
 
     private static final Logger log = LoggerFactory.getLogger(TelegramMessageSender.class);
-    static final int MAX_MESSAGE_LENGTH = 4096;
+    private static final int MAX_MESSAGE_LENGTH = 4096;
 
     private final TelegramBot telegramBot;
 

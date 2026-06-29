@@ -26,6 +26,7 @@ public class FaqEmbeddingService {
     private static final String EMBEDDING_MODEL = "gemini-embedding-001";
     private static final int SEARCH_LIMIT = 3;
     private static final double MIN_SIMILARITY = 0.5;
+    private static final int MCP_RESULT_TRUNCATION_LENGTH = 500;
     private static final String CONNECTION_FAQ_QUERY =
             "Не могу подключиться к VPN / не работает / не заходит";
 
@@ -187,7 +188,7 @@ public class FaqEmbeddingService {
         if (mcpResults != null) {
             for (String result : mcpResults) {
                 if (result != null && !result.isBlank()) {
-                    String truncated = result.length() > 500 ? result.substring(0, 500) : result;
+                    String truncated = result.length() > MCP_RESULT_TRUNCATION_LENGTH ? result.substring(0, MCP_RESULT_TRUNCATION_LENGTH) : result;
                     enrichedQuery.append(" ").append(truncated);
                 }
             }

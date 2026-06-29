@@ -28,13 +28,15 @@ import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 @Component
 public class VpnSupportBot {
 
     private static final Logger log = LoggerFactory.getLogger(VpnSupportBot.class);
     private static final String ESCALATE_MARKER = "[ESCALATE]";
+    private static final int STATS_ID_THRESHOLD = 100;
+    private static final int DEFAULT_STATS_LIMIT = 10;
+    private static final int MAX_ERROR_FORWARD_LENGTH = 3000;
 
     private final TelegramBot telegramBot;
     private final LlmClient llmClient;
@@ -272,8 +274,9 @@ public class VpnSupportBot {
                 return;
             }
 
-            String fileUrl = telegramBot.getFullFilePath(fileResponse.file());
-            String filePath = fileResponse.file().filePath();
+            var file = fileResponse.file();
+            String fileUrl = telegramBot.getFullFilePath(file);
+            String filePath = file.filePath();
 
             byte[] imageBytes = webClient.get()
                     .uri(fileUrl)
@@ -305,8 +308,8 @@ public class VpnSupportBot {
         if (parts.length == 2) {
             try {
                 long num = Long.parseLong(parts[1]);
-                if (num <= 100) {
-                    showTopStats(chatId, (int) Math.clamp(num, 1, 100));
+                if (num <= STATS_ID_THRESHOLD) {
+                    showTopStats(chatId, (int) Math.clamp(num, 1, STATS_ID_THRESHOLD));
                 } else {
                     showUserStats(chatId, num);
                 }
@@ -314,7 +317,7 @@ public class VpnSupportBot {
             } catch (NumberFormatException ignored) {
             }
         }
-        showTopStats(chatId, 10);
+        showTopStats(chatId, DEFAULT_STATS_LIMIT);
     }
 
     private void showTopStats(long chatId, int limit) {
@@ -359,7 +362,7 @@ public class VpnSupportBot {
 
     private void ensureUserInfo(User user) {
         try {
-            UserEntity entity = userRepository.findById(user.id()).orElse(new UserEntity());
+            UserEntity entity = userRepository.findById(user.id()).orElseGet(UserEntity::new);
             entity.setTelegramId(user.id());
             entity.setUsername(user.username());
             entity.setFirstName(user.firstName());
@@ -421,8 +424,8 @@ public class VpnSupportBot {
 
     private String extractErrorMessage(Exception e) {
         String msg = e.getMessage();
-        if (msg != null && msg.length() > 3000) {
-            msg = msg.substring(0, 3000) + "...";
+        if (msg != null && msg.length() > MAX_ERROR_FORWARD_LENGTH) {
+            msg = msg.substring(0, MAX_ERROR_FORWARD_LENGTH) + "...";
         }
         return "Bot: " + (msg != null ? msg : e.getClass().getSimpleName());
     }

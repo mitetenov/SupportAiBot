@@ -16,6 +16,7 @@ public abstract class AbstractLlmClient implements LlmClient {
     protected final Logger log = LoggerFactory.getLogger(getClass());
 
     protected static final int MAX_TOOL_ITERATIONS = 5;
+    private static final int TOOL_RESULT_MAX_LOG_LENGTH = 2000;
 
     protected final ObjectMapper objectMapper;
     protected final McpRouter mcpRouter;
@@ -130,6 +131,6 @@ public abstract class AbstractLlmClient implements LlmClient {
     protected abstract String getProviderName();
 
     protected static String truncate(String s) {
-        return s != null && s.length() > 2000 ? s.substring(0, 2000) + "..." : s;
+        return s != null && s.length() > TOOL_RESULT_MAX_LOG_LENGTH ? s.substring(0, TOOL_RESULT_MAX_LOG_LENGTH) + "..." : s;
     }
 }
