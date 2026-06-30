@@ -13,17 +13,20 @@ public class StartupValidator implements ApplicationRunner {
     private final DeepSeekProperties deepSeekProperties;
     private final GeminiProperties geminiProperties;
     private final RemnawaveMcpProperties remnawaveMcpProperties;
+    private final OpenAiProperties openAiProperties;
 
     public StartupValidator(TelegramProperties telegramProperties,
                             LlmProperties llmProperties,
                             DeepSeekProperties deepSeekProperties,
                             GeminiProperties geminiProperties,
-                            RemnawaveMcpProperties remnawaveMcpProperties) {
+                            RemnawaveMcpProperties remnawaveMcpProperties,
+                            OpenAiProperties openAiProperties) {
         this.telegramProperties = telegramProperties;
         this.llmProperties = llmProperties;
         this.deepSeekProperties = deepSeekProperties;
         this.geminiProperties = geminiProperties;
         this.remnawaveMcpProperties = remnawaveMcpProperties;
+        this.openAiProperties = openAiProperties;
     }
 
     @Override
@@ -40,6 +43,9 @@ public class StartupValidator implements ApplicationRunner {
         } else if ("gemini".equalsIgnoreCase(provider)) {
             requireText(geminiProperties.getApiKey(), "GEMINI_API_KEY");
             requireText(geminiProperties.getModel(), "GEMINI_MODEL");
+        } else if ("openai".equalsIgnoreCase(provider)) {
+            requireText(openAiProperties.getApiKey(), "OPENAI_API_KEY");
+            requireText(openAiProperties.getModel(), "OPENAI_MODEL");
         } else {
             throw new IllegalStateException("Unknown LLM provider: " + provider);
         }
