@@ -210,7 +210,11 @@ public class FaqEmbeddingService {
                 || lower.contains("instagram")
                 || lower.contains("ошибк")
                 || lower.contains("отвали")
-                || lower.contains("обрыв");
+                || lower.contains("обрыв")
+                || lower.contains("обнов")
+                || lower.contains("подписк")
+                || lower.contains("пинг")
+                || lower.contains("сервер");
     }
 
 

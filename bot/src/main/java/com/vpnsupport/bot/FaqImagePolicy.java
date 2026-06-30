@@ -20,9 +20,6 @@ public final class FaqImagePolicy {
     }
 
     private static boolean indicatesPaymentOrTrafficIssue(String lower) {
-        if (lower.contains("peipivosalesbot")) {
-            return true;
-        }
         if (lower.contains("триал") && (lower.contains("истёк") || lower.contains("истек")
                 || lower.contains("законч") || lower.contains("исчерп"))) {
             return true;

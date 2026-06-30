@@ -73,6 +73,14 @@ class FaqImagePolicyTest {
     }
 
     @Test
+    void shouldAttachImagesWhenPeipivoSalesBotWithoutPaymentContext() {
+        assertTrue(FaqImagePolicy.shouldAttachImages(
+                "Скачайте приложение по инструкции из @PeipivoSalesBot и нажмите Обновить подписку"));
+        assertTrue(FaqImagePolicy.shouldAttachImages(
+                "Откройте @PeipivoSalesBot, вкладка Подключиться, и следуйте инструкции"));
+    }
+
+    @Test
     void caseInsensitiveMatching() {
         assertFalse(FaqImagePolicy.shouldAttachImages("ПОЛЬЗОВАТЕЛЬ НЕ НАЙДЕН в базе"));
         assertFalse(FaqImagePolicy.shouldAttachImages("Ваш ТРИАЛ ИСТЁК"));
