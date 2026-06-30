@@ -39,10 +39,14 @@ public class OpenAiClient extends AbstractLlmClient {
                         FaqEmbeddingService faqEmbeddingService,
                         LlmTokenUsageRepository tokenUsageRepository) {
         super(objectMapper, mcpRouter, chatHistoryService, faqEmbeddingService, tokenUsageRepository);
+        String apiKey = properties.getApiKey();
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalArgumentException("OpenAI API key must not be null or blank");
+        }
         this.model = properties.getModel();
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getBaseUrl())
-                .defaultHeader("Authorization", "Bearer " + properties.getApiKey())
+                .defaultHeader("Authorization", "Bearer " + apiKey)
                 .defaultHeader("Content-Type", "application/json")
                 .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
                         HttpClient.create().responseTimeout(Duration.ofSeconds(60))))

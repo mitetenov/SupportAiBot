@@ -294,4 +294,40 @@ class OpenAiClientTest {
                 && usage.getTotalTokens() == 150
         ));
     }
+
+    @Test
+    void shouldRejectNullApiKey() {
+        OpenAiProperties props = new OpenAiProperties();
+        props.setBaseUrl("http://localhost:9999");
+        props.setModel("test");
+        props.setApiKey(null);
+
+        assertThrows(IllegalArgumentException.class, () ->
+                new OpenAiClient(props, objectMapper, mcpRouter,
+                        chatHistoryService, faqEmbeddingService, tokenUsageRepository));
+    }
+
+    @Test
+    void shouldRejectBlankApiKey() {
+        OpenAiProperties props = new OpenAiProperties();
+        props.setBaseUrl("http://localhost:9999");
+        props.setModel("test");
+        props.setApiKey("   ");
+
+        assertThrows(IllegalArgumentException.class, () ->
+                new OpenAiClient(props, objectMapper, mcpRouter,
+                        chatHistoryService, faqEmbeddingService, tokenUsageRepository));
+    }
+
+    @Test
+    void shouldRejectEmptyApiKey() {
+        OpenAiProperties props = new OpenAiProperties();
+        props.setBaseUrl("http://localhost:9999");
+        props.setModel("test");
+        props.setApiKey("");
+
+        assertThrows(IllegalArgumentException.class, () ->
+                new OpenAiClient(props, objectMapper, mcpRouter,
+                        chatHistoryService, faqEmbeddingService, tokenUsageRepository));
+    }
 }
