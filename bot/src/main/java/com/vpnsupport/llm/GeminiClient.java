@@ -67,10 +67,26 @@ public class GeminiClient extends AbstractLlmClient {
     }
 
     @Override
+    @SuppressWarnings("unused")
     protected List<Map<String, Object>> buildInitialConversation(
             String userMessage, long telegramUserId, String faqContext,
             String base64Image, String mimeType) {
-        List<Map<String, Object>> contents = new ArrayList<>(chatHistoryService.toGeminiContents(telegramUserId));
+        List<Map<String, Object>> contents = new ArrayList<>();
+
+        String dynamicContext = "Telegram ID: " + telegramUserId;
+        if (faqContext != null && !faqContext.isEmpty()) {
+            dynamicContext += "\n\n" + faqContext;
+        }
+        contents.add(Map.of(
+                "role", "user",
+                "parts", List.of(Map.of("text", "[Система: Контекст текущего пользователя]\n" + dynamicContext))
+        ));
+        contents.add(Map.of(
+                "role", "model",
+                "parts", List.of(Map.of("text", "Принято. Я готов помочь пользователю."))
+        ));
+
+        contents.addAll(chatHistoryService.toGeminiContents(telegramUserId));
 
         Map<String, Object> userContent = new LinkedHashMap<>();
         userContent.put("role", "user");
@@ -216,11 +232,7 @@ public class GeminiClient extends AbstractLlmClient {
         ));
     }
 
-    @Override
-    protected void injectFaqToConversation(List<Map<String, Object>> conversation, String faqText) {
-        conversation.add(Map.of("role", "user", "parts", List.of(
-                Map.of("text", "[Система] Результат диагностики получен. Актуальный FAQ:\n\n" + faqText))));
-    }
+
 
     @Override
     protected void saveUsage(String rawResponse, long telegramUserId) {
@@ -270,7 +282,7 @@ public class GeminiClient extends AbstractLlmClient {
 
         ObjectNode systemInstruction = objectMapper.createObjectNode();
         ArrayNode systemParts = systemInstruction.putArray("parts");
-        systemParts.addObject().put("text", SupportPrompt.withFaqContext(faqContext, telegramUserId));
+        systemParts.addObject().put("text", SupportPrompt.SYSTEM);
         body.set("system_instruction", systemInstruction);
 
         ArrayNode contentsArray = body.putArray("contents");

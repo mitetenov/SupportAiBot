@@ -52,11 +52,7 @@ class FaqEmbeddingServiceTest {
         assertTrue(images.isEmpty());
     }
 
-    @Test
-    void shouldReturnEmptyRefinedFaqContextWhenNotReady() {
-        String context = service.buildRefinedFaqContext("test", List.of("result1"));
-        assertEquals("", context);
-    }
+
 
     @Test
     void shouldReturnEmptySearchWhenReadyButEmbedFails() {
@@ -71,7 +67,7 @@ class FaqEmbeddingServiceTest {
         service.initSchema();
 
         verify(jdbcTemplate).execute("CREATE EXTENSION IF NOT EXISTS vector");
-        verify(jdbcTemplate).execute(contains("CREATE TABLE IF NOT EXISTS faq"));
+        verify(jdbcTemplate).execute(contains("CREATE TABLE IF NOT EXISTS faq ("));
         verify(jdbcTemplate, atLeastOnce()).execute(contains("ALTER TABLE faq"));
     }
 
@@ -87,27 +83,7 @@ class FaqEmbeddingServiceTest {
         assertFalse(service.search("test") instanceof List<?> list && !list.isEmpty());
     }
 
-    @Test
-    void shouldBuildRefinedFaqContextWithNullResults() {
-        String context = service.buildRefinedFaqContext("query", null);
-        assertEquals("", context);
-    }
 
-    @Test
-    void shouldBuildRefinedFaqContextWithEmptyResults() {
-        String context = service.buildRefinedFaqContext("query", List.of());
-        assertEquals("", context);
-    }
-
-    @Test
-    void shouldBuildRefinedFaqContextWithBlankResults() {
-        java.util.List<String> blankResults = new java.util.ArrayList<>();
-        blankResults.add("");
-        blankResults.add("  ");
-        blankResults.add(null);
-        String context = service.buildRefinedFaqContext("query", blankResults);
-        assertEquals("", context);
-    }
 
     @Test
     void shouldHandleNullQueryInBuildFaqContext() {

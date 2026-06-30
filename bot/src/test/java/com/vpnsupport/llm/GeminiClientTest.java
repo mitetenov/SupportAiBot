@@ -53,41 +53,21 @@ class GeminiClientTest {
     }
 
     @Test
-    void buildRequestBodyShouldIncludeCorrectTelegramId() throws Exception {
-        long telegramUserId = 12345L;
-        List<Map<String, Object>> contents = List.of();
-        String faq = "FAQ context";
-
-        var method = GeminiClient.class.getDeclaredMethod(
-                "buildRequestBody", List.class, String.class, long.class);
-        method.setAccessible(true);
-        ObjectNode body = (ObjectNode) method.invoke(client, contents, faq, telegramUserId);
-
-        String systemText = body.get("system_instruction")
-                .get("parts").get(0).get("text").asText();
-
-        assertTrue(systemText.contains("Telegram ID: 12345"),
-                "System prompt must contain Telegram ID: " + telegramUserId + ", but got: " + systemText);
-        assertTrue(systemText.contains("FAQ context"));
-    }
-
-    @Test
-    void buildRequestBodyShouldNotContainDefaultTelegramId() throws Exception {
-        long telegramUserId = 777L;
+    void buildRequestBodyShouldIncludeStaticSystemPrompt() throws Exception {
         List<Map<String, Object>> contents = List.of();
 
         var method = GeminiClient.class.getDeclaredMethod(
                 "buildRequestBody", List.class, String.class, long.class);
         method.setAccessible(true);
-        ObjectNode body = (ObjectNode) method.invoke(client, contents, null, telegramUserId);
+        ObjectNode body = (ObjectNode) method.invoke(client, contents, "FAQ", 12345L);
 
         String systemText = body.get("system_instruction")
                 .get("parts").get(0).get("text").asText();
 
-        assertTrue(systemText.contains("Telegram ID: 777"),
-                "System prompt must contain the actual user ID 777, but got: " + systemText);
-        assertTrue(!systemText.contains("Telegram ID: 0"),
-                "System prompt must NOT contain Telegram ID: 0 when real ID is different");
+        assertTrue(systemText.contains("Ты — техподдержка VPN-сервиса"),
+                "System instruction must contain the static system prompt");
+        assertTrue(!systemText.contains("Telegram ID: 12345"),
+                "System instruction must NOT contain Telegram ID");
     }
 
     @Test

@@ -25,8 +25,7 @@ public class FaqEmbeddingService {
     private static final int EMBEDDING_DIMENSION = 2000;
     private static final String EMBEDDING_MODEL = "gemini-embedding-001";
     private static final int SEARCH_LIMIT = 3;
-    private static final double MIN_SIMILARITY = 0.5;
-    private static final int MCP_RESULT_TRUNCATION_LENGTH = 500;
+    private static final double MIN_SIMILARITY = 0.70;
     private static final String CONNECTION_FAQ_QUERY =
             "Не могу подключиться к VPN / не работает / не заходит";
 
@@ -70,7 +69,38 @@ public class FaqEmbeddingService {
         } catch (Exception e) {
             log.warn("Could not create FAQ index: {}", e.getMessage());
         }
+
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS faq_metadata (
+                    key VARCHAR(50) PRIMARY KEY,
+                    val VARCHAR(256) NOT NULL
+                )
+                """);
+
         log.info("FAQ schema initialized");
+    }
+
+    public String getFaqHash() {
+        try {
+            return jdbcTemplate.queryForObject(
+                    "SELECT val FROM faq_metadata WHERE key = 'faq_hash'", String.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public void updateFaqHash(String hash) {
+        jdbcTemplate.update(
+                "INSERT INTO faq_metadata (key, val) VALUES ('faq_hash', ?) " +
+                "ON CONFLICT (key) DO UPDATE SET val = EXCLUDED.val", hash);
+    }
+
+    public Integer getFaqCount() {
+        try {
+            return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM faq", Integer.class);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     public void indexFaq(String question, String answer, String images) {
@@ -183,18 +213,6 @@ public class FaqEmbeddingService {
                 || lower.contains("обрыв");
     }
 
-    public String buildRefinedFaqContext(String originalQuery, List<String> mcpResults) {
-        StringBuilder enrichedQuery = new StringBuilder(originalQuery);
-        if (mcpResults != null) {
-            for (String result : mcpResults) {
-                if (result != null && !result.isBlank()) {
-                    String truncated = result.length() > MCP_RESULT_TRUNCATION_LENGTH ? result.substring(0, MCP_RESULT_TRUNCATION_LENGTH) : result;
-                    enrichedQuery.append(" ").append(truncated);
-                }
-            }
-        }
-        return buildFaqContext(enrichedQuery.toString());
-    }
 
     public List<String> getMatchedImages(String userQuery) {
         return searchWithFallback(userQuery).stream()

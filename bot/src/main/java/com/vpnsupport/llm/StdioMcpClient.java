@@ -88,8 +88,8 @@ public class StdioMcpClient implements McpClientInterface {
     private void destroyProcess() {
         Process p = process;
         if (p != null) {
-            try { stdin.close(); } catch (Exception ignored) {}
-            try { stdout.close(); } catch (Exception ignored) {}
+            try { stdin.close(); } catch (Exception e) { log.trace("stdin close failed", e); }
+            try { stdout.close(); } catch (Exception e) { log.trace("stdout close failed", e); }
             if (p.isAlive()) {
                 p.destroy();
                 try {
@@ -100,6 +100,7 @@ public class StdioMcpClient implements McpClientInterface {
                 } catch (InterruptedException e) {
                     p.destroyForcibly();
                     Thread.currentThread().interrupt();
+                    log.trace("Wait interrupted", e);
                 }
             }
         }

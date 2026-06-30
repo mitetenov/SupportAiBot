@@ -57,6 +57,7 @@ public class TelegramProperties {
                         try {
                             return Long.parseLong(s);
                         } catch (NumberFormatException e) {
+                            log.trace("Invalid Telegram ID format", e);
                             log.warn("Invalid admin Telegram ID ignored: {}", s);
                             return null;
                         }

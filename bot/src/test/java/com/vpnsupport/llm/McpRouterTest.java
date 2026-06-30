@@ -30,31 +30,31 @@ class McpRouterTest {
     @Test
     void shouldAggregateToolsFromAllClients() {
         McpClientInterface client1 = new StubMcpClient(
-                List.of(new McpTool("tool1", "desc1", Map.of())),
-                Map.of("tool1", "result1")
+                List.of(new McpTool("users_get_by_telegram_id", "desc1", Map.of())),
+                Map.of("users_get_by_telegram_id", "result1")
         );
         McpClientInterface client2 = new StubMcpClient(
-                List.of(new McpTool("tool2", "desc2", Map.of())),
-                Map.of("tool2", "result2")
+                List.of(new McpTool("users_revoke_subscription", "desc2", Map.of())),
+                Map.of("users_revoke_subscription", "result2")
         );
 
         McpRouter router = new McpRouter(List.of(client1, client2), objectMapper);
         List<McpTool> tools = router.listTools();
 
         assertEquals(2, tools.size());
-        assertEquals("tool1", tools.get(0).name());
-        assertEquals("tool2", tools.get(1).name());
+        assertEquals("users_get_by_telegram_id", tools.get(0).name());
+        assertEquals("users_revoke_subscription", tools.get(1).name());
     }
 
     @Test
     void shouldCallCorrectTool() {
         McpClientInterface client = new StubMcpClient(
-                List.of(new McpTool("test_tool", "A test tool", Map.of())),
-                Map.of("test_tool", "{\"status\": \"ok\"}")
+                List.of(new McpTool("nodes_list", "A test tool", Map.of())),
+                Map.of("nodes_list", "{\"status\": \"ok\"}")
         );
 
         McpRouter router = new McpRouter(List.of(client), objectMapper);
-        String result = router.callTool("test_tool", Map.of("param", "value"));
+        String result = router.callTool("nodes_list", Map.of("param", "value"));
 
         assertTrue(result.contains("ok"));
     }
@@ -71,31 +71,31 @@ class McpRouterTest {
     @Test
     void shouldCallToolFromCorrectClientWhenMultiple() {
         McpClientInterface client1 = new StubMcpClient(
-                List.of(new McpTool("tool1", "desc1", Map.of())),
-                Map.of("tool1", "result1")
+                List.of(new McpTool("users_get_by_telegram_id", "desc1", Map.of())),
+                Map.of("users_get_by_telegram_id", "result1")
         );
         McpClientInterface client2 = new StubMcpClient(
-                List.of(new McpTool("tool2", "desc2", Map.of())),
-                Map.of("tool2", "result2")
+                List.of(new McpTool("users_revoke_subscription", "desc2", Map.of())),
+                Map.of("users_revoke_subscription", "result2")
         );
 
         McpRouter router = new McpRouter(List.of(client1, client2), objectMapper);
 
-        assertEquals("result1", router.callTool("tool1", Map.of()));
-        assertEquals("result2", router.callTool("tool2", Map.of()));
+        assertEquals("result1", router.callTool("users_get_by_telegram_id", Map.of()));
+        assertEquals("result2", router.callTool("users_revoke_subscription", Map.of()));
     }
 
     @Test
     void shouldReturnErrorForToolNotInAnyClient() {
         McpClientInterface client = new StubMcpClient(
-                List.of(new McpTool("tool_a", "desc", Map.of())),
-                Map.of("tool_a", "result_a")
+                List.of(new McpTool("nodes_get", "desc", Map.of())),
+                Map.of("nodes_get", "result_a")
         );
 
         McpRouter router = new McpRouter(List.of(client), objectMapper);
-        String result = router.callTool("tool_b", Map.of());
+        String result = router.callTool("hwid_devices_list", Map.of());
 
-        assertTrue(result.contains("tool_b"));
+        assertTrue(result.contains("hwid_devices_list"));
     }
 
     @Test

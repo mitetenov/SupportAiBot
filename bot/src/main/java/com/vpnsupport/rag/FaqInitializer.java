@@ -38,6 +38,16 @@ public class FaqInitializer implements ApplicationRunner {
         try {
             embeddingService.initSchema();
 
+            String currentHash = computeHash(resource);
+            String storedHash = embeddingService.getFaqHash();
+            Integer faqCount = embeddingService.getFaqCount();
+
+            if (currentHash != null && currentHash.equals(storedHash) && faqCount != null && faqCount > 0) {
+                log.info("FAQ database is up to date (hash matches, count = {}). Skipping re-indexing.", faqCount);
+                embeddingService.markReady();
+                return;
+            }
+
             List<Map<String, Object>> entries;
             try (java.io.InputStream is = resource.getInputStream()) {
                 entries = objectMapper.readValue(is,
@@ -46,7 +56,7 @@ public class FaqInitializer implements ApplicationRunner {
                 );
             }
 
-            log.info("Indexing {} FAQ entries", entries.size());
+            log.info("Indexing {} FAQ entries (stored hash = {}, current hash = {})", entries.size(), storedHash, currentHash);
 
             embeddingService.clearFaq();
 
@@ -59,10 +69,36 @@ public class FaqInitializer implements ApplicationRunner {
                 }
             }
 
+            if (currentHash != null) {
+                embeddingService.updateFaqHash(currentHash);
+            }
+
             log.info("FAQ indexing complete: {} entries", entries.size());
             embeddingService.markReady();
         } catch (Exception e) {
             log.error("Failed to load FAQ file — FAQ search will be unavailable", e);
+        }
+    }
+
+    private String computeHash(ClassPathResource resource) {
+        try (java.io.InputStream is = resource.getInputStream()) {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] block = new byte[4096];
+            int length;
+            while ((length = is.read(block)) > 0) {
+                digest.update(block, 0, length);
+            }
+            byte[] hash = digest.digest();
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hash) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) hexString.append('0');
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (Exception e) {
+            log.error("Failed to compute FAQ file hash", e);
+            return null;
         }
     }
 

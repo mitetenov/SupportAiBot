@@ -72,9 +72,10 @@ class DeepSeekClientTest {
         List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
                 client, "Hello", 123L, "FAQ content", null, null);
 
-        assertEquals(2, conv.size());
+        assertEquals(3, conv.size());
         assertEquals("system", conv.get(0).get("role"));
-        assertEquals("user", conv.get(1).get("role"));
+        assertEquals("system", conv.get(1).get("role"));
+        assertEquals("user", conv.get(2).get("role"));
     }
 
     @Test
@@ -92,7 +93,7 @@ class DeepSeekClientTest {
         List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
                 client, "Hello", 123L, "FAQ", null, null);
 
-        assertEquals(4, conv.size());
+        assertEquals(5, conv.size());
     }
 
     @Test
@@ -162,19 +163,7 @@ class DeepSeekClientTest {
         assertEquals("DeepSeek", client.getClass().getSimpleName().equals("DeepSeekClient") ? "DeepSeek" : "");
     }
 
-    @Test
-    void shouldInjectFaqToConversation() throws Exception {
-        var method = DeepSeekClient.class.getDeclaredMethod(
-                "injectFaqToConversation", List.class, String.class);
-        method.setAccessible(true);
 
-        List<Map<String, Object>> conversation = new java.util.ArrayList<>();
-        method.invoke(client, conversation, "Refreshed FAQ");
-
-        assertEquals(1, conversation.size());
-        assertEquals("user", conversation.get(0).get("role"));
-        assertTrue(((String) conversation.get(0).get("content")).contains("Refreshed FAQ"));
-    }
 
     @Test
     void shouldAddToolResultToConversation() throws Exception {

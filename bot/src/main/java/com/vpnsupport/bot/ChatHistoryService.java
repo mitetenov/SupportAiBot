@@ -72,6 +72,7 @@ public class ChatHistoryService {
     public void clear(long userId) {
         histories.remove(userId);
         lastActivity.remove(userId);
+        log.debug("Chat history cleared for user {}", userId);
     }
 
     @Scheduled(fixedRate = 60_000)
@@ -81,6 +82,7 @@ public class ChatHistoryService {
             if (lastSeen < cutoff) {
                 histories.remove(userId);
                 lastActivity.remove(userId);
+                log.debug("Evicted stale history for user {}", userId);
             }
         });
     }
