@@ -28,6 +28,7 @@ import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class VpnSupportBot {
@@ -50,6 +51,7 @@ public class VpnSupportBot {
     private final Set<Long> adminTelegramIds;
     private final UserRepository userRepository;
     private final TaskExecutor taskExecutor;
+    private final ConcurrentHashMap<Long, Long> lastOperatorReply = new ConcurrentHashMap<>();
 
     public VpnSupportBot(TelegramBot telegramBot, LlmClient llmClient,
                           FaqEmbeddingService faqEmbeddingService,
@@ -153,6 +155,7 @@ public class VpnSupportBot {
             }
             messageSender.sendReply(supportGroupChatId, message.messageId(),
                     "Отправлено пользователю.");
+            lastOperatorReply.put(mapping.getUserId(), System.currentTimeMillis());
         }, () -> log.debug("No user mapping found for topic {}", topicId));
     }
 
@@ -211,6 +214,14 @@ public class VpnSupportBot {
 
         if (!rateLimiter.tryAcquire(user.id())) {
             messageSender.send(chatId, "Подождите несколько секунд перед следующим сообщением.");
+            return;
+        }
+
+        // Suppress AI replies for 30 minutes after the latest operator reply
+        Long lastOpReply = lastOperatorReply.get(chatId);
+        if (lastOpReply != null && System.currentTimeMillis() - lastOpReply < 30 * 60 * 1000L) {
+            forwarder.forwardToSupport(chatId, message.messageId(), user,
+                    text, "[AI suppressed — operator recently active]", false);
             return;
         }
 
