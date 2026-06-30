@@ -15,8 +15,8 @@ class OpenAiPropertiesTest {
     }
 
     @Test
-    void shouldDefaultModel() {
-        assertEquals("gpt-5.4-mini", properties.getModel());
+    void shouldDefaultModelToNull() {
+        assertNull(properties.getModel());
     }
 
     @Test

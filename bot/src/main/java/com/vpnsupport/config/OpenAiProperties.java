@@ -1,15 +1,13 @@
 package com.vpnsupport.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 @ConfigurationProperties(prefix = "openai")
-@Component
 public class OpenAiProperties {
 
     private String apiKey;
     private String baseUrl = "https://api.openai.com/v1";
-    private String model = "gpt-5.4-mini";
+    private String model;
 
     public String getApiKey() {
         return apiKey;
