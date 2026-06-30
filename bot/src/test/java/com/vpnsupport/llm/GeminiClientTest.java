@@ -15,7 +15,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 @ExtendWith(MockitoExtension.class)
 class GeminiClientTest {
@@ -83,6 +83,60 @@ class GeminiClientTest {
         assertTrue(!conv.isEmpty(), "Conversation should not be empty");
         Map<String, Object> last = conv.get(conv.size() - 1);
         assertTrue("user".equals(last.get("role")));
+    }
+
+    @Test
+    void shouldBuildInitialConversationIncludeDynamicContext() throws Exception {
+        var method = GeminiClient.class.getDeclaredMethod(
+                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
+                client, "Hello", 777L, "FAQ text", null, null);
+
+        assertEquals("user", conv.get(0).get("role"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> firstParts = (List<Map<String, Object>>) conv.get(0).get("parts");
+        String firstText = (String) firstParts.get(0).get("text");
+        assertTrue(firstText.contains("Telegram ID: 777"));
+        assertTrue(firstText.contains("FAQ text"));
+
+        assertEquals("model", conv.get(1).get("role"));
+    }
+
+    @Test
+    void shouldBuildInitialConversationWithoutFaqWhenNull() throws Exception {
+        var method = GeminiClient.class.getDeclaredMethod(
+                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
+                client, "Hello", 123L, null, null, null);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> firstParts = (List<Map<String, Object>>) conv.get(0).get("parts");
+        String firstText = (String) firstParts.get(0).get("text");
+        assertTrue(firstText.contains("Telegram ID: 123"));
+        assertTrue(!firstText.contains("FAQ"));
+    }
+
+    @Test
+    void shouldBuildInitialConversationWithoutFaqWhenEmpty() throws Exception {
+        var method = GeminiClient.class.getDeclaredMethod(
+                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
+                client, "Hello", 123L, "", null, null);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> firstParts = (List<Map<String, Object>>) conv.get(0).get("parts");
+        String firstText = (String) firstParts.get(0).get("text");
+        assertTrue(firstText.contains("Telegram ID: 123"));
+        assertTrue(!firstText.contains("\n\n"));
     }
 
     @Test

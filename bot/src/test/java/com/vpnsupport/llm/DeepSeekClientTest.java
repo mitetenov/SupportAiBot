@@ -166,6 +166,59 @@ class DeepSeekClientTest {
 
 
     @Test
+    void shouldIncludeTelegramIdInDynamicContext() throws Exception {
+        when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
+
+        var method = DeepSeekClient.class.getDeclaredMethod(
+                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
+                client, "Hello", 777L, null, null, null);
+
+        String dynamicContext = (String) conv.get(1).get("content");
+        assertTrue(dynamicContext.contains("Telegram ID: 777"),
+                "Dynamic context must contain Telegram ID: 777, got: " + dynamicContext);
+        assertTrue(!dynamicContext.contains("FAQ"),
+                "Dynamic context must NOT contain FAQ when null");
+    }
+
+    @Test
+    void shouldIncludeFaqInDynamicContextWhenPresent() throws Exception {
+        when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
+
+        var method = DeepSeekClient.class.getDeclaredMethod(
+                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
+                client, "Hello", 123L, "Some FAQ content", null, null);
+
+        String dynamicContext = (String) conv.get(1).get("content");
+        assertTrue(dynamicContext.contains("Telegram ID: 123"));
+        assertTrue(dynamicContext.contains("Some FAQ content"));
+    }
+
+    @Test
+    void shouldNotIncludeFaqInDynamicContextWhenEmpty() throws Exception {
+        when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
+
+        var method = DeepSeekClient.class.getDeclaredMethod(
+                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
+                client, "Hello", 123L, "", null, null);
+
+        String dynamicContext = (String) conv.get(1).get("content");
+        assertTrue(dynamicContext.contains("Telegram ID: 123"));
+        assertTrue(!dynamicContext.contains("FAQ"));
+    }
+
+    @Test
     void shouldAddToolResultToConversation() throws Exception {
         var method = DeepSeekClient.class.getDeclaredMethod(
                 "addToolResultToConversation", List.class, LlmResponse.ToolCall.class, String.class);

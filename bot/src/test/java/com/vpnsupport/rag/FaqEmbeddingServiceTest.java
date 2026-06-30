@@ -127,6 +127,86 @@ class FaqEmbeddingServiceTest {
     }
 
     @Test
+    void shouldGetFaqHashWhenExists() {
+        when(jdbcTemplate.queryForObject(
+                eq("SELECT val FROM faq_metadata WHERE key = 'faq_hash'"), eq(String.class)))
+                .thenReturn("abc123def");
+
+        String hash = service.getFaqHash();
+
+        assertEquals("abc123def", hash);
+    }
+
+    @Test
+    void shouldGetFaqHashWhenNotExists() {
+        when(jdbcTemplate.queryForObject(
+                eq("SELECT val FROM faq_metadata WHERE key = 'faq_hash'"), eq(String.class)))
+                .thenReturn(null);
+
+        String hash = service.getFaqHash();
+
+        assertNull(hash);
+    }
+
+    @Test
+    void shouldGetFaqHashWhenError() {
+        when(jdbcTemplate.queryForObject(
+                eq("SELECT val FROM faq_metadata WHERE key = 'faq_hash'"), eq(String.class)))
+                .thenThrow(new RuntimeException("DB error"));
+
+        String hash = service.getFaqHash();
+
+        assertNull(hash);
+    }
+
+    @Test
+    void shouldUpdateFaqHash() {
+        service.updateFaqHash("newhash123");
+
+        verify(jdbcTemplate).update(
+                eq("INSERT INTO faq_metadata (key, val) VALUES ('faq_hash', ?) " +
+                   "ON CONFLICT (key) DO UPDATE SET val = EXCLUDED.val"),
+                eq("newhash123"));
+    }
+
+    @Test
+    void shouldGetFaqCountWhenHasRows() {
+        when(jdbcTemplate.queryForObject(eq("SELECT COUNT(*) FROM faq"), eq(Integer.class)))
+                .thenReturn(42);
+
+        Integer count = service.getFaqCount();
+
+        assertEquals(42, count);
+    }
+
+    @Test
+    void shouldGetFaqCountWhenTableNotExists() {
+        when(jdbcTemplate.queryForObject(eq("SELECT COUNT(*) FROM faq"), eq(Integer.class)))
+                .thenThrow(new RuntimeException("Table not found"));
+
+        Integer count = service.getFaqCount();
+
+        assertEquals(0, count);
+    }
+
+    @Test
+    void shouldGetFaqCountWhenNullResult() {
+        when(jdbcTemplate.queryForObject(eq("SELECT COUNT(*) FROM faq"), eq(Integer.class)))
+                .thenReturn(null);
+
+        Integer count = service.getFaqCount();
+
+        assertNull(count);
+    }
+
+    @Test
+    void shouldInitSchemaCreateMetadataTable() {
+        service.initSchema();
+
+        verify(jdbcTemplate).execute(contains("CREATE TABLE IF NOT EXISTS faq_metadata"));
+    }
+
+    @Test
     void shouldIdentifyConnectionIssues() throws Exception {
         var method = FaqEmbeddingService.class.getDeclaredMethod("looksLikeConnectionIssue", String.class);
         method.setAccessible(true);

@@ -105,6 +105,56 @@ class McpRouterTest {
         assertTrue(router.callTool("any", Map.of()).contains("error"));
     }
 
+    @Test
+    void shouldFilterOutNonAllowedTools() {
+        McpClientInterface client = new StubMcpClient(
+                List.of(
+                        new McpTool("users_get_by_telegram_id", "Allowed tool", Map.of()),
+                        new McpTool("some_unsafe_tool", "Should be filtered out", Map.of()),
+                        new McpTool("nodes_list", "Also allowed", Map.of())
+                ),
+                Map.of(
+                        "users_get_by_telegram_id", "allowed_result",
+                        "some_unsafe_tool", "should_not_be_callable"
+                )
+        );
+
+        McpRouter router = new McpRouter(List.of(client), objectMapper);
+        List<McpTool> tools = router.listTools();
+
+        assertEquals(2, tools.size());
+        assertEquals("users_get_by_telegram_id", tools.get(0).name());
+        assertEquals("nodes_list", tools.get(1).name());
+    }
+
+    @Test
+    void shouldReturnErrorForFilteredTool() {
+        McpClientInterface client = new StubMcpClient(
+                List.of(new McpTool("some_unsafe_tool", "Filtered tool", Map.of())),
+                Map.of("some_unsafe_tool", "should_not_be_callable")
+        );
+
+        McpRouter router = new McpRouter(List.of(client), objectMapper);
+        String result = router.callTool("some_unsafe_tool", Map.of());
+
+        assertTrue(result.contains("error"));
+        assertTrue(result.contains("some_unsafe_tool"));
+    }
+
+    @Test
+    void shouldRejectToolNotInAnyClientEvenIfResultExists() {
+        McpClientInterface client = new StubMcpClient(
+                List.of(new McpTool("users_get_by_telegram_id", "desc", Map.of())),
+                Map.of("users_get_by_telegram_id", "result")
+        );
+
+        McpRouter router = new McpRouter(List.of(client), objectMapper);
+        String result = router.callTool("nonexistent_tool", Map.of());
+
+        assertTrue(result.contains("error"));
+        assertTrue(result.contains("nonexistent_tool"));
+    }
+
     private static class StubMcpClient implements McpClientInterface {
         private final List<McpTool> tools;
         private final Map<String, String> toolResults;
