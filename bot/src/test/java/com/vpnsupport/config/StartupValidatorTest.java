@@ -22,11 +22,12 @@ class StartupValidatorTest {
         deepSeek.setModel("deepseek-chat");
 
         GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
         remnawave.setBaseUrl("https://example.com");
         remnawave.setApiToken("api-token");
 
-        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave);
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
         assertDoesNotThrow(() -> validator.run(null));
     }
@@ -45,11 +46,36 @@ class StartupValidatorTest {
         gemini.setApiKey("gemini-key");
         gemini.setModel("gemini-pro");
 
+        OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
         remnawave.setBaseUrl("https://example.com");
         remnawave.setApiToken("api-token");
 
-        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave);
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
+
+        assertDoesNotThrow(() -> validator.run(null));
+    }
+
+    @Test
+    void shouldValidateOpenAiProvider() {
+        TelegramProperties telegram = new TelegramProperties();
+        telegram.setBotToken("token123");
+        telegram.setSupportGroupChatId(123L);
+
+        LlmProperties llm = new LlmProperties();
+        llm.setProvider("openai");
+
+        DeepSeekProperties deepSeek = new DeepSeekProperties();
+        GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
+        openAi.setApiKey("sk-openai-key");
+        openAi.setModel("gpt-4");
+
+        RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
+        remnawave.setBaseUrl("https://example.com");
+        remnawave.setApiToken("api-token");
+
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
         assertDoesNotThrow(() -> validator.run(null));
     }
@@ -67,11 +93,12 @@ class StartupValidatorTest {
         deepSeek.setModel("deepseek-chat");
 
         GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
         remnawave.setBaseUrl("https://example.com");
         remnawave.setApiToken("api-token");
 
-        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave);
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertEquals("TELEGRAM_BOT_TOKEN is required", ex.getMessage());
@@ -90,11 +117,12 @@ class StartupValidatorTest {
         deepSeek.setModel("deepseek-chat");
 
         GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
         remnawave.setBaseUrl("https://example.com");
         remnawave.setApiToken("api-token");
 
-        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave);
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertEquals("TELEGRAM_SUPPORT_GROUP_CHAT_ID is required", ex.getMessage());
@@ -113,11 +141,12 @@ class StartupValidatorTest {
         deepSeek.setModel("deepseek-chat");
 
         GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
         remnawave.setBaseUrl("https://example.com");
         remnawave.setApiToken("api-token");
 
-        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave);
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertEquals("DEEPSEEK_API_KEY is required", ex.getMessage());
@@ -136,14 +165,63 @@ class StartupValidatorTest {
         deepSeek.setApiKey("sk-key");
 
         GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
         remnawave.setBaseUrl("https://example.com");
         remnawave.setApiToken("api-token");
 
-        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave);
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertEquals("DEEPSEEK_MODEL is required", ex.getMessage());
+    }
+
+    @Test
+    void shouldThrowWhenOpenAiApiKeyMissing() {
+        TelegramProperties telegram = new TelegramProperties();
+        telegram.setBotToken("token123");
+        telegram.setSupportGroupChatId(123L);
+
+        LlmProperties llm = new LlmProperties();
+        llm.setProvider("openai");
+
+        DeepSeekProperties deepSeek = new DeepSeekProperties();
+        GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
+        openAi.setModel("gpt-4");
+
+        RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
+        remnawave.setBaseUrl("https://example.com");
+        remnawave.setApiToken("api-token");
+
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
+        assertEquals("OPENAI_API_KEY is required", ex.getMessage());
+    }
+
+    @Test
+    void shouldThrowWhenOpenAiModelMissing() {
+        TelegramProperties telegram = new TelegramProperties();
+        telegram.setBotToken("token123");
+        telegram.setSupportGroupChatId(123L);
+
+        LlmProperties llm = new LlmProperties();
+        llm.setProvider("openai");
+
+        DeepSeekProperties deepSeek = new DeepSeekProperties();
+        GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
+        openAi.setApiKey("sk-openai-key");
+
+        RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
+        remnawave.setBaseUrl("https://example.com");
+        remnawave.setApiToken("api-token");
+
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
+        assertEquals("OPENAI_MODEL is required", ex.getMessage());
     }
 
     @Test
@@ -160,10 +238,11 @@ class StartupValidatorTest {
         deepSeek.setModel("deepseek-chat");
 
         GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
         remnawave.setApiToken("api-token");
 
-        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave);
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertEquals("REMNAWAVE_BASE_URL is required", ex.getMessage());
@@ -183,10 +262,11 @@ class StartupValidatorTest {
         deepSeek.setModel("deepseek-chat");
 
         GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
         remnawave.setBaseUrl("https://example.com");
 
-        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave);
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertEquals("REMNAWAVE_API_TOKEN is required", ex.getMessage());
@@ -199,17 +279,18 @@ class StartupValidatorTest {
         telegram.setSupportGroupChatId(123L);
 
         LlmProperties llm = new LlmProperties();
-        llm.setProvider("openai");
+        llm.setProvider("unknown");
 
         DeepSeekProperties deepSeek = new DeepSeekProperties();
         GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
         remnawave.setBaseUrl("https://example.com");
         remnawave.setApiToken("api-token");
 
-        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave);
+        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
-        assertEquals("Unknown LLM provider: openai", ex.getMessage());
+        assertEquals("Unknown LLM provider: unknown", ex.getMessage());
     }
 }
