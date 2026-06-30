@@ -15,7 +15,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 @ExtendWith(MockitoExtension.class)
 class GeminiClientTest {
@@ -53,41 +53,21 @@ class GeminiClientTest {
     }
 
     @Test
-    void buildRequestBodyShouldIncludeCorrectTelegramId() throws Exception {
-        long telegramUserId = 12345L;
-        List<Map<String, Object>> contents = List.of();
-        String faq = "FAQ context";
-
-        var method = GeminiClient.class.getDeclaredMethod(
-                "buildRequestBody", List.class, String.class, long.class);
-        method.setAccessible(true);
-        ObjectNode body = (ObjectNode) method.invoke(client, contents, faq, telegramUserId);
-
-        String systemText = body.get("system_instruction")
-                .get("parts").get(0).get("text").asText();
-
-        assertTrue(systemText.contains("Telegram ID: 12345"),
-                "System prompt must contain Telegram ID: " + telegramUserId + ", but got: " + systemText);
-        assertTrue(systemText.contains("FAQ context"));
-    }
-
-    @Test
-    void buildRequestBodyShouldNotContainDefaultTelegramId() throws Exception {
-        long telegramUserId = 777L;
+    void buildRequestBodyShouldIncludeStaticSystemPrompt() throws Exception {
         List<Map<String, Object>> contents = List.of();
 
         var method = GeminiClient.class.getDeclaredMethod(
                 "buildRequestBody", List.class, String.class, long.class);
         method.setAccessible(true);
-        ObjectNode body = (ObjectNode) method.invoke(client, contents, null, telegramUserId);
+        ObjectNode body = (ObjectNode) method.invoke(client, contents, "FAQ", 12345L);
 
         String systemText = body.get("system_instruction")
                 .get("parts").get(0).get("text").asText();
 
-        assertTrue(systemText.contains("Telegram ID: 777"),
-                "System prompt must contain the actual user ID 777, but got: " + systemText);
-        assertTrue(!systemText.contains("Telegram ID: 0"),
-                "System prompt must NOT contain Telegram ID: 0 when real ID is different");
+        assertTrue(systemText.contains("Ты — техподдержка VPN-сервиса"),
+                "System instruction must contain the static system prompt");
+        assertTrue(!systemText.contains("Telegram ID: 12345"),
+                "System instruction must NOT contain Telegram ID");
     }
 
     @Test
@@ -103,6 +83,60 @@ class GeminiClientTest {
         assertTrue(!conv.isEmpty(), "Conversation should not be empty");
         Map<String, Object> last = conv.get(conv.size() - 1);
         assertTrue("user".equals(last.get("role")));
+    }
+
+    @Test
+    void shouldBuildInitialConversationIncludeDynamicContext() throws Exception {
+        var method = GeminiClient.class.getDeclaredMethod(
+                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
+                client, "Hello", 777L, "FAQ text", null, null);
+
+        assertEquals("user", conv.get(0).get("role"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> firstParts = (List<Map<String, Object>>) conv.get(0).get("parts");
+        String firstText = (String) firstParts.get(0).get("text");
+        assertTrue(firstText.contains("Telegram ID: 777"));
+        assertTrue(firstText.contains("FAQ text"));
+
+        assertEquals("model", conv.get(1).get("role"));
+    }
+
+    @Test
+    void shouldBuildInitialConversationWithoutFaqWhenNull() throws Exception {
+        var method = GeminiClient.class.getDeclaredMethod(
+                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
+                client, "Hello", 123L, null, null, null);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> firstParts = (List<Map<String, Object>>) conv.get(0).get("parts");
+        String firstText = (String) firstParts.get(0).get("text");
+        assertTrue(firstText.contains("Telegram ID: 123"));
+        assertTrue(!firstText.contains("FAQ"));
+    }
+
+    @Test
+    void shouldBuildInitialConversationWithoutFaqWhenEmpty() throws Exception {
+        var method = GeminiClient.class.getDeclaredMethod(
+                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
+        method.setAccessible(true);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
+                client, "Hello", 123L, "", null, null);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> firstParts = (List<Map<String, Object>>) conv.get(0).get("parts");
+        String firstText = (String) firstParts.get(0).get("text");
+        assertTrue(firstText.contains("Telegram ID: 123"));
+        assertTrue(!firstText.contains("\n\n"));
     }
 
     @Test

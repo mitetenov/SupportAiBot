@@ -52,11 +52,7 @@ class FaqEmbeddingServiceTest {
         assertTrue(images.isEmpty());
     }
 
-    @Test
-    void shouldReturnEmptyRefinedFaqContextWhenNotReady() {
-        String context = service.buildRefinedFaqContext("test", List.of("result1"));
-        assertEquals("", context);
-    }
+
 
     @Test
     void shouldReturnEmptySearchWhenReadyButEmbedFails() {
@@ -71,7 +67,7 @@ class FaqEmbeddingServiceTest {
         service.initSchema();
 
         verify(jdbcTemplate).execute("CREATE EXTENSION IF NOT EXISTS vector");
-        verify(jdbcTemplate).execute(contains("CREATE TABLE IF NOT EXISTS faq"));
+        verify(jdbcTemplate).execute(contains("CREATE TABLE IF NOT EXISTS faq ("));
         verify(jdbcTemplate, atLeastOnce()).execute(contains("ALTER TABLE faq"));
     }
 
@@ -87,27 +83,7 @@ class FaqEmbeddingServiceTest {
         assertFalse(service.search("test") instanceof List<?> list && !list.isEmpty());
     }
 
-    @Test
-    void shouldBuildRefinedFaqContextWithNullResults() {
-        String context = service.buildRefinedFaqContext("query", null);
-        assertEquals("", context);
-    }
 
-    @Test
-    void shouldBuildRefinedFaqContextWithEmptyResults() {
-        String context = service.buildRefinedFaqContext("query", List.of());
-        assertEquals("", context);
-    }
-
-    @Test
-    void shouldBuildRefinedFaqContextWithBlankResults() {
-        java.util.List<String> blankResults = new java.util.ArrayList<>();
-        blankResults.add("");
-        blankResults.add("  ");
-        blankResults.add(null);
-        String context = service.buildRefinedFaqContext("query", blankResults);
-        assertEquals("", context);
-    }
 
     @Test
     void shouldHandleNullQueryInBuildFaqContext() {
@@ -148,6 +124,86 @@ class FaqEmbeddingServiceTest {
         assertEquals(2, result.size());
         assertEquals("img1.jpg", result.get(0));
         assertEquals("img2.jpg", result.get(1));
+    }
+
+    @Test
+    void shouldGetFaqHashWhenExists() {
+        when(jdbcTemplate.queryForObject(
+                eq("SELECT val FROM faq_metadata WHERE key = 'faq_hash'"), eq(String.class)))
+                .thenReturn("abc123def");
+
+        String hash = service.getFaqHash();
+
+        assertEquals("abc123def", hash);
+    }
+
+    @Test
+    void shouldGetFaqHashWhenNotExists() {
+        when(jdbcTemplate.queryForObject(
+                eq("SELECT val FROM faq_metadata WHERE key = 'faq_hash'"), eq(String.class)))
+                .thenReturn(null);
+
+        String hash = service.getFaqHash();
+
+        assertNull(hash);
+    }
+
+    @Test
+    void shouldGetFaqHashWhenError() {
+        when(jdbcTemplate.queryForObject(
+                eq("SELECT val FROM faq_metadata WHERE key = 'faq_hash'"), eq(String.class)))
+                .thenThrow(new RuntimeException("DB error"));
+
+        String hash = service.getFaqHash();
+
+        assertNull(hash);
+    }
+
+    @Test
+    void shouldUpdateFaqHash() {
+        service.updateFaqHash("newhash123");
+
+        verify(jdbcTemplate).update(
+                eq("INSERT INTO faq_metadata (key, val) VALUES ('faq_hash', ?) " +
+                   "ON CONFLICT (key) DO UPDATE SET val = EXCLUDED.val"),
+                eq("newhash123"));
+    }
+
+    @Test
+    void shouldGetFaqCountWhenHasRows() {
+        when(jdbcTemplate.queryForObject(eq("SELECT COUNT(*) FROM faq"), eq(Integer.class)))
+                .thenReturn(42);
+
+        Integer count = service.getFaqCount();
+
+        assertEquals(42, count);
+    }
+
+    @Test
+    void shouldGetFaqCountWhenTableNotExists() {
+        when(jdbcTemplate.queryForObject(eq("SELECT COUNT(*) FROM faq"), eq(Integer.class)))
+                .thenThrow(new RuntimeException("Table not found"));
+
+        Integer count = service.getFaqCount();
+
+        assertEquals(0, count);
+    }
+
+    @Test
+    void shouldGetFaqCountWhenNullResult() {
+        when(jdbcTemplate.queryForObject(eq("SELECT COUNT(*) FROM faq"), eq(Integer.class)))
+                .thenReturn(null);
+
+        Integer count = service.getFaqCount();
+
+        assertNull(count);
+    }
+
+    @Test
+    void shouldInitSchemaCreateMetadataTable() {
+        service.initSchema();
+
+        verify(jdbcTemplate).execute(contains("CREATE TABLE IF NOT EXISTS faq_metadata"));
     }
 
     @Test

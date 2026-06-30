@@ -63,18 +63,26 @@ public class DeepSeekClient extends AbstractLlmClient {
     }
 
     @Override
+    @SuppressWarnings("unused")
     protected List<Map<String, Object>> buildInitialConversation(
             String userMessage, long telegramUserId, String faqContext,
             String base64Image, String mimeType) {
         List<Map<String, Object>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "system", "content",
-                SupportPrompt.withFaqContext(faqContext, telegramUserId)));
+        messages.add(Map.of("role", "system", "content", SupportPrompt.SYSTEM));
+
+        String dynamicContext = "Telegram ID: " + telegramUserId;
+        if (faqContext != null && !faqContext.isEmpty()) {
+            dynamicContext += "\n\n" + faqContext;
+        }
+        messages.add(Map.of("role", "system", "content", dynamicContext));
+
         messages.addAll(chatHistoryService.getHistory(telegramUserId));
         messages.add(Map.of("role", "user", "content", userMessage));
         return messages;
     }
 
     @Override
+    @SuppressWarnings("unused")
     protected String callApi(List<Map<String, Object>> conversation, String faqContext, long telegramUserId) {
         ObjectNode requestBody = buildRequestBody(conversation);
         log.debug("DeepSeek request ({} tools available)", getToolDefinitions().size());
@@ -155,11 +163,7 @@ public class DeepSeekClient extends AbstractLlmClient {
         conversation.add(Map.of("role", "tool", "tool_call_id", toolCall.id(), "content", toolResult));
     }
 
-    @Override
-    protected void injectFaqToConversation(List<Map<String, Object>> conversation, String faqText) {
-        conversation.add(Map.of("role", "user", "content",
-                "[Система] Результат диагностики получен. Актуальный FAQ:\n\n" + faqText));
-    }
+
 
     @Override
     protected void saveUsage(String rawResponse, long telegramUserId) {
@@ -223,6 +227,7 @@ public class DeepSeekClient extends AbstractLlmClient {
     }
 
     @Override
+    @SuppressWarnings("unused")
     public String chatWithImage(String userMessage, long telegramUserId, String base64Image, String mimeType) {
         throw new LlmProcessingException("Image not supported",
                 "DeepSeek не поддерживает обработку изображений. Переключите провайдера на Gemini (LLM_PROVIDER=gemini) или опишите проблему текстом.");

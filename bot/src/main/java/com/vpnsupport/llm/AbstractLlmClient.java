@@ -61,7 +61,6 @@ public abstract class AbstractLlmClient implements LlmClient {
         String faqContext = faqEmbeddingService.buildFaqContext(userMessage);
         List<Map<String, Object>> conversation = buildInitialConversation(
                 userMessage, telegramUserId, faqContext, base64Image, mimeType);
-        List<String> toolResults = new ArrayList<>();
 
         while (iteration < MAX_TOOL_ITERATIONS) {
             try {
@@ -77,16 +76,9 @@ public abstract class AbstractLlmClient implements LlmClient {
                         log.info("Executing tool: {} with args: {}", tc.name(), tc.arguments());
                         String toolResult = mcpRouter.callTool(tc.name(), tc.arguments());
                         log.info("Tool {} result: {}", tc.name(), truncate(toolResult));
-                        toolResults.add(toolResult);
                         addToolResultToConversation(conversation, tc, toolResult);
                     }
 
-                    if (iteration == 0) {
-                        String refreshedFaq = faqEmbeddingService.buildRefinedFaqContext(userMessage, toolResults);
-                        if (!refreshedFaq.isEmpty()) {
-                            injectFaqToConversation(conversation, refreshedFaq);
-                        }
-                    }
                     iteration++;
                     continue;
                 }
@@ -123,8 +115,6 @@ public abstract class AbstractLlmClient implements LlmClient {
 
     protected abstract void addToolResultToConversation(List<Map<String, Object>> conversation,
                                                          LlmResponse.ToolCall toolCall, String toolResult);
-
-    protected abstract void injectFaqToConversation(List<Map<String, Object>> conversation, String faqText);
 
     protected abstract void saveUsage(String rawResponse, long telegramUserId);
 

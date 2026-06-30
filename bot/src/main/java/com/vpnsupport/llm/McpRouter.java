@@ -15,6 +15,15 @@ public class McpRouter {
 
     private static final Logger log = LoggerFactory.getLogger(McpRouter.class);
 
+    private static final java.util.Set<String> ALLOWED_TOOLS = java.util.Set.of(
+            "users_get_by_telegram_id",
+            "users_revoke_subscription",
+            "nodes_list",
+            "nodes_get",
+            "hwid_devices_list",
+            "hwid_device_delete"
+    );
+
     private final List<McpClientInterface> clients;
     private final Map<String, McpClientInterface> toolToClient;
     private final ObjectMapper objectMapper;
@@ -30,7 +39,9 @@ public class McpRouter {
         Map<String, McpClientInterface> map = new java.util.LinkedHashMap<>();
         for (McpClientInterface client : clients) {
             for (McpTool tool : client.listTools()) {
-                map.putIfAbsent(tool.name(), client);
+                if (ALLOWED_TOOLS.contains(tool.name())) {
+                    map.putIfAbsent(tool.name(), client);
+                }
             }
         }
         return Map.copyOf(map);
@@ -39,7 +50,11 @@ public class McpRouter {
     public List<McpTool> listTools() {
         List<McpTool> allTools = new ArrayList<>();
         for (McpClientInterface client : clients) {
-            allTools.addAll(client.listTools());
+            for (McpTool tool : client.listTools()) {
+                if (ALLOWED_TOOLS.contains(tool.name())) {
+                    allTools.add(tool);
+                }
+            }
         }
         return allTools;
     }
