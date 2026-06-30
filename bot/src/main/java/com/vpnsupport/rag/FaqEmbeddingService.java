@@ -25,7 +25,7 @@ public class FaqEmbeddingService {
     private static final int EMBEDDING_DIMENSION = 2000;
     private static final String EMBEDDING_MODEL = "gemini-embedding-001";
     private static final int SEARCH_LIMIT = 3;
-    private static final double MIN_SIMILARITY = 0.70;
+    private static final double MIN_SIMILARITY = 0.5;
     private static final String CONNECTION_FAQ_QUERY =
             "Не могу подключиться к VPN / не работает / не заходит";
 
