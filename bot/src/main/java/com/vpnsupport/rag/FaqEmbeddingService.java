@@ -214,6 +214,7 @@ public class FaqEmbeddingService {
     }
 
 
+
     public List<String> getMatchedImages(String userQuery) {
         return searchWithFallback(userQuery).stream()
                 .filter(r -> r.images() != null && !r.images().isEmpty())
