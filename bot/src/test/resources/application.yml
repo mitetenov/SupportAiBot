@@ -14,3 +14,8 @@ spring:
 
 llm:
   provider: deepseek
+
+openai:
+  api-key: test-openai-api-key
+  base-url: https://api.openai.com/v1
+  model: gpt-5.4-mini
