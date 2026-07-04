@@ -47,7 +47,7 @@ public final class FaqImagePolicy {
         if (lower.contains("сброс") && lower.contains("устройств")) {
             return true;
         }
-        return lower.contains("5 устройств") || lower.contains("лимит устройств");
+        return lower.contains("лимит устройств") || (lower.contains("устройств") && lower.contains("hwid"));
     }
 
     private FaqImagePolicy() {

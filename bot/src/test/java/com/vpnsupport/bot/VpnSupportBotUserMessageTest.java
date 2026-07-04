@@ -200,13 +200,13 @@ class VpnSupportBotUserMessageTest {
         when(userRepository.save(any())).thenReturn(null);
         when(rateLimiter.tryAcquire(USER_ID)).thenReturn(true);
         when(llmClient.chat(anyString(), eq(USER_ID)))
-                .thenReturn("Обратитесь в @PeipivoSalesBot [ESCALATE]");
+                .thenReturn("Обратитесь в @peipivosales [ESCALATE]");
 
         invokeHandleUserMessage(msg, "Оплатил но не продлилось", null, null);
 
-        verify(messageSender).send(eq(USER_CHAT_ID), eq("Обратитесь в @PeipivoSalesBot"));
+        verify(messageSender).send(eq(USER_CHAT_ID), eq("Обратитесь в @peipivosales"));
         verify(forwarder).forwardToSupport(eq(USER_CHAT_ID), eq(555), any(),
-                eq("Оплатил но не продлилось"), eq("Обратитесь в @PeipivoSalesBot"), eq(true));
+                eq("Оплатил но не продлилось"), eq("Обратитесь в @peipivosales"), eq(true));
     }
 
     @Test
@@ -285,7 +285,7 @@ class VpnSupportBotUserMessageTest {
         when(userRepository.save(any())).thenReturn(null);
         when(rateLimiter.tryAcquire(USER_ID)).thenReturn(true);
         when(llmClient.chat(anyString(), eq(USER_ID)))
-                .thenReturn("Ваш трафик исчерпан. Обратитесь в @PeipivoSalesBot");
+                .thenReturn("Ваш трафик исчерпан. Обратитесь в @peipivosales");
 
         invokeHandleUserMessage(msg, "у меня закончился трафик", null, null);
 
