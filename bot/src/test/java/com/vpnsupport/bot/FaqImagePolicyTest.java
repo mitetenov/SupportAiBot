@@ -27,7 +27,7 @@ class FaqImagePolicyTest {
 
     @Test
     void shouldNotAttachImagesWhenPaymentIssue() {
-        assertFalse(FaqImagePolicy.shouldAttachImages("Обратитесь в @peipivosales для оплаты"));
+        assertFalse(FaqImagePolicy.shouldAttachImages("Обратитесь в @PeipivoSalesBot для оплаты"));
         assertFalse(FaqImagePolicy.shouldAttachImages("Ваш триал истёк, пополните баланс"));
         assertFalse(FaqImagePolicy.shouldAttachImages("Триал закончился, нужна оплата"));
         assertFalse(FaqImagePolicy.shouldAttachImages("Трафик 20 ГБ исчерпан"));
@@ -75,9 +75,9 @@ class FaqImagePolicyTest {
     @Test
     void shouldAttachImagesWhenBotReferenceWithoutPaymentContext() {
         assertTrue(FaqImagePolicy.shouldAttachImages(
-                "Скачайте приложение по инструкции из @peipivosales и нажмите Обновить подписку"));
+                "Скачайте приложение по инструкции из @PeipivoSalesBot и нажмите Обновить подписку"));
         assertTrue(FaqImagePolicy.shouldAttachImages(
-                "Откройте @peipivosales, вкладка Подключиться, и следуйте инструкции"));
+                "Откройте @PeipivoSalesBot, вкладка Подключиться, и следуйте инструкции"));
     }
 
     @Test
