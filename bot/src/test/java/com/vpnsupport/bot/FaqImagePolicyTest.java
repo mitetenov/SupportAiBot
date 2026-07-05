@@ -52,7 +52,7 @@ class FaqImagePolicyTest {
 
     @Test
     void shouldNotAttachImagesWhenDeviceLimitIssue() {
-        assertFalse(FaqImagePolicy.shouldAttachImages("У вас привязано 5 устройств. Нужен HWID сброс."));
+        assertFalse(FaqImagePolicy.shouldAttachImages("У вас привязано много устройств. Нужен HWID сброс."));
         assertFalse(FaqImagePolicy.shouldAttachImages("Сброс устройств требуется"));
         assertFalse(FaqImagePolicy.shouldAttachImages("Достигнут лимит устройств на аккаунте"));
     }
@@ -73,7 +73,7 @@ class FaqImagePolicyTest {
     }
 
     @Test
-    void shouldAttachImagesWhenPeipivoSalesBotWithoutPaymentContext() {
+    void shouldAttachImagesWhenBotReferenceWithoutPaymentContext() {
         assertTrue(FaqImagePolicy.shouldAttachImages(
                 "Скачайте приложение по инструкции из @PeipivoSalesBot и нажмите Обновить подписку"));
         assertTrue(FaqImagePolicy.shouldAttachImages(
