@@ -7,6 +7,8 @@ public class RemnawaveMcpProperties {
 
     private String command = "node";
     private String scriptPath = "/mcp-remnawave/dist/index.js";
+    /** URL of the containerized MCP HTTP endpoint, e.g. http://mcp-remnawave:3100 */
+    private String url;
     private String baseUrl;
     private String apiToken;
     private boolean readonly = true;
@@ -25,6 +27,14 @@ public class RemnawaveMcpProperties {
 
     public void setScriptPath(String scriptPath) {
         this.scriptPath = scriptPath;
+    }
+
+    public String getUrl() {
+        return url;
+    }
+
+    public void setUrl(String url) {
+        this.url = url;
     }
 
     public String getBaseUrl() {

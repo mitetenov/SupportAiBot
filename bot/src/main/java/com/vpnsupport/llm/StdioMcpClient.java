@@ -9,6 +9,7 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -28,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
+@ConditionalOnProperty(name = "remnawave.mcp.url", havingValue = "false", matchIfMissing = true)
 public class StdioMcpClient implements McpClientInterface {
 
     private static final Logger log = LoggerFactory.getLogger(StdioMcpClient.class);
