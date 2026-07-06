@@ -1,8 +1,12 @@
 package com.vpnsupport.bot;
 
 import com.pengrad.telegrambot.TelegramBot;
+import com.pengrad.telegrambot.model.reaction.ReactionType;
+import com.pengrad.telegrambot.request.BaseRequest;
 import com.pengrad.telegrambot.request.SendMessage;
 import com.pengrad.telegrambot.request.SendPhoto;
+import com.pengrad.telegrambot.request.SetMessageReaction;
+import com.pengrad.telegrambot.response.BaseResponse;
 import com.pengrad.telegrambot.response.SendResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,6 +58,31 @@ public class TelegramMessageSender {
                 request.replyToMessageId(replyToMessageId);
             }
             execute(chatId, request);
+        }
+    }
+
+    /**
+     * Sets reactions on a message. Pass an empty list to remove all reactions.
+     *
+     * @param chatId   Telegram chat ID
+     * @param messageId ID of the message to react to
+     * @param reactions reactions to set, or empty list to remove all reactions
+     */
+    public void setReaction(String chatId, int messageId, List<ReactionType> reactions) {
+        try {
+            BaseRequest<SetMessageReaction, BaseResponse> request;
+            if (reactions == null || reactions.isEmpty()) {
+                request = new SetMessageReaction(chatId, messageId);
+            } else {
+                request = new SetMessageReaction(chatId, messageId, reactions.toArray(new ReactionType[0]));
+            }
+            BaseResponse response = telegramBot.execute(request);
+            if (!response.isOk()) {
+                log.error("Failed to set reaction on message {} in chat {}: {} (error {})",
+                        messageId, chatId, response.description(), response.errorCode());
+            }
+        } catch (Exception e) {
+            log.error("Error setting reaction on message {} in chat {}", messageId, chatId, e);
         }
     }
 
