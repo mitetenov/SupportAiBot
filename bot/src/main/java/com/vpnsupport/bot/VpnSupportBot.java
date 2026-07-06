@@ -10,6 +10,7 @@ import com.pengrad.telegrambot.model.User;
 import com.pengrad.telegrambot.model.reaction.ReactionType;
 import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.request.GetFile;
+import com.pengrad.telegrambot.request.GetUpdates;
 import com.pengrad.telegrambot.response.GetFileResponse;
 import com.pengrad.telegrambot.response.MessageIdResponse;
 import com.pengrad.telegrambot.request.SendChatAction;
@@ -91,12 +92,14 @@ public class VpnSupportBot {
 
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
+        GetUpdates allowedUpdates = new GetUpdates()
+                .allowedUpdates("message", "message_reaction");
         telegramBot.setUpdatesListener(updates -> {
             for (Update update : updates) {
                 taskExecutor.execute(() -> processUpdate(update));
             }
             return UpdatesListener.CONFIRMED_UPDATES_ALL;
-        }, e -> log.error("Telegram updates listener error", e));
+        }, e -> log.error("Telegram updates listener error", e), allowedUpdates);
 
         log.info("VPN Support Bot started");
     }
