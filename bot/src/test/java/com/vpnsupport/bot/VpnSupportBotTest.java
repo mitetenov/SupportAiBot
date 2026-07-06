@@ -3,7 +3,11 @@ package com.vpnsupport.bot;
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.Chat;
 import com.pengrad.telegrambot.model.Message;
+import com.pengrad.telegrambot.model.MessageReactionUpdated;
 import com.pengrad.telegrambot.model.User;
+import com.pengrad.telegrambot.model.reaction.ReactionType;
+import com.pengrad.telegrambot.model.reaction.ReactionTypeEmoji;
+import com.pengrad.telegrambot.model.reaction.ReactionTypePaid;
 import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.response.MessageIdResponse;
 import com.vpnsupport.config.TelegramProperties;
@@ -20,6 +24,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.mockito.ArgumentMatchers.*;
@@ -419,5 +424,180 @@ class VpnSupportBotTest {
         verify(messageSender).send(eq(chatId), anyString());
         verifyNoInteractions(rateLimiter);
         verify(llmClient, never()).chat(anyString(), anyLong());
+    }
+
+    // ───── Tests for reaction forwarding ─────
+
+    /**
+     * Helper: invoke the private handleReactionUpdated method via reflection.
+     */
+    private void invokeHandleReactionUpdated(MessageReactionUpdated reaction) {
+        ReflectionTestUtils.invokeMethod(bot, "handleReactionUpdated", reaction);
+    }
+
+    /**
+     * Helper: create a mock MessageReactionUpdated with given parameters.
+     */
+    private MessageReactionUpdated reactionUpdated(long chatId, int messageId,
+                                                    ReactionType[] newReactions, ReactionType[] oldReactions) {
+        Chat chat = mock(Chat.class);
+        lenient().when(chat.id()).thenReturn(chatId);
+
+        MessageReactionUpdated reaction = mock(MessageReactionUpdated.class);
+        lenient().when(reaction.chat()).thenReturn(chat);
+        lenient().when(reaction.messageId()).thenReturn(messageId);
+        lenient().when(reaction.newReaction()).thenReturn(newReactions);
+        lenient().when(reaction.oldReaction()).thenReturn(oldReactions);
+        return reaction;
+    }
+
+    @Test
+    void shouldForwardReactionFromSupportGroupToUser() {
+        // Operator adds a 👍 reaction on a message in the support group topic
+        int topicMessageId = 300;
+        Long userChatId = 100L;
+        int userMessageId = 42;
+        ReactionTypeEmoji thumbsUp = new ReactionTypeEmoji("👍");
+
+        MessageMapping mapping = messageMapping(topicMessageId, 200, userChatId, userMessageId);
+        when(messageMappingRepository.findByTopicMessageId(topicMessageId))
+                .thenReturn(Optional.of(mapping));
+
+        invokeHandleReactionUpdated(
+                reactionUpdated(SUPPORT_CHAT_ID, topicMessageId,
+                        new ReactionType[]{thumbsUp}, new ReactionType[]{}));
+
+        verify(messageSender).setReaction(
+                eq(String.valueOf(userChatId)),
+                eq(userMessageId),
+                eq(List.of(thumbsUp)));
+    }
+
+    @Test
+    void shouldForwardReactionFromUserToSupportGroup() {
+        // User adds a ❤️ reaction on a message in their private chat
+        long userChatId = 100L;
+        int userMessageId = 42;
+        int topicMessageId = 300;
+        int topicId = 200;
+        ReactionTypeEmoji heart = new ReactionTypeEmoji("❤️");
+
+        MessageMapping mapping = messageMapping(topicMessageId, topicId, userChatId, userMessageId);
+        when(messageMappingRepository.findByUserChatIdAndUserMessageId(
+                String.valueOf(userChatId), userMessageId))
+                .thenReturn(Optional.of(mapping));
+
+        invokeHandleReactionUpdated(
+                reactionUpdated(userChatId, userMessageId,
+                        new ReactionType[]{heart}, new ReactionType[]{}));
+
+        verify(messageSender).setReaction(
+                eq(String.valueOf(SUPPORT_CHAT_ID)),
+                eq(topicMessageId),
+                eq(List.of(heart)));
+    }
+
+    @Test
+    void shouldRemoveReactionWhenUserRemovesReaction() {
+        // User removes all reactions from a message in private chat
+        long userChatId = 100L;
+        int userMessageId = 42;
+        int topicMessageId = 300;
+        int topicId = 200;
+
+        MessageMapping mapping = messageMapping(topicMessageId, topicId, userChatId, userMessageId);
+        when(messageMappingRepository.findByUserChatIdAndUserMessageId(
+                String.valueOf(userChatId), userMessageId))
+                .thenReturn(Optional.of(mapping));
+
+        // Empty newReaction means removal
+        invokeHandleReactionUpdated(
+                reactionUpdated(userChatId, userMessageId,
+                        new ReactionType[]{}, new ReactionType[]{new ReactionTypeEmoji("👍")}));
+
+        verify(messageSender).setReaction(
+                eq(String.valueOf(SUPPORT_CHAT_ID)),
+                eq(topicMessageId),
+                eq(List.of()));
+    }
+
+    @Test
+    void shouldHandleNullNewReaction() {
+        // Null newReaction should be treated as empty (removal)
+        long userChatId = 100L;
+        int userMessageId = 42;
+        int topicMessageId = 300;
+        int topicId = 200;
+
+        MessageMapping mapping = messageMapping(topicMessageId, topicId, userChatId, userMessageId);
+        when(messageMappingRepository.findByUserChatIdAndUserMessageId(
+                String.valueOf(userChatId), userMessageId))
+                .thenReturn(Optional.of(mapping));
+
+        invokeHandleReactionUpdated(
+                reactionUpdated(userChatId, userMessageId, null, null));
+
+        verify(messageSender).setReaction(
+                eq(String.valueOf(SUPPORT_CHAT_ID)),
+                eq(topicMessageId),
+                eq(List.of()));
+    }
+
+    @Test
+    void shouldForwardPaidReaction() {
+        // User sends a paid reaction in private chat
+        long userChatId = 100L;
+        int userMessageId = 42;
+        int topicMessageId = 300;
+        int topicId = 200;
+        ReactionTypePaid paid = new ReactionTypePaid();
+
+        MessageMapping mapping = messageMapping(topicMessageId, topicId, userChatId, userMessageId);
+        when(messageMappingRepository.findByUserChatIdAndUserMessageId(
+                String.valueOf(userChatId), userMessageId))
+                .thenReturn(Optional.of(mapping));
+
+        invokeHandleReactionUpdated(
+                reactionUpdated(userChatId, userMessageId,
+                        new ReactionType[]{paid}, new ReactionType[]{}));
+
+        verify(messageSender).setReaction(
+                eq(String.valueOf(SUPPORT_CHAT_ID)),
+                eq(topicMessageId),
+                eq(List.of(paid)));
+    }
+
+    @Test
+    void shouldIgnoreUnknownSupportGroupReaction() {
+        // Operator reacts on a message with no mapping — should be silently ignored
+        int topicMessageId = 999;
+        ReactionTypeEmoji thumbsUp = new ReactionTypeEmoji("👍");
+
+        when(messageMappingRepository.findByTopicMessageId(topicMessageId))
+                .thenReturn(Optional.empty());
+
+        invokeHandleReactionUpdated(
+                reactionUpdated(SUPPORT_CHAT_ID, topicMessageId,
+                        new ReactionType[]{thumbsUp}, new ReactionType[]{}));
+
+        verifyNoInteractions(messageSender);
+    }
+
+    @Test
+    void shouldIgnoreUnknownUserReaction() {
+        // User reacts on a message with no mapping — should be silently ignored
+        long userChatId = 999L;
+        int userMessageId = 42;
+        ReactionTypeEmoji thumbsUp = new ReactionTypeEmoji("👍");
+
+        when(messageMappingRepository.findByUserChatIdAndUserMessageId(
+                String.valueOf(userChatId), userMessageId))
+                .thenReturn(Optional.empty());
+
+        invokeHandleReactionUpdated(
+                reactionUpdated(userChatId, userMessageId,
+                        new ReactionType[]{thumbsUp}, new ReactionType[]{}));
+
+        verifyNoInteractions(messageSender);
     }
 }

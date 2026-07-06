@@ -28,4 +28,14 @@ public interface MessageMappingRepository extends JpaRepository<MessageMapping, 
      */
     @Query("SELECT m FROM MessageMapping m WHERE m.userChatId = :userChatId AND m.userMessageId = :userMessageId")
     Optional<MessageMapping> findByUserChatIdAndUserMessageId(@Param("userChatId") String userChatId, @Param("userMessageId") int userMessageId);
+
+    /**
+     * Look up the mapping by topic message ID only. Message IDs are globally
+     * unique within a supergroup chat, so no topic ID is needed.
+     *
+     * @param topicMessageId the message ID as it appears in the topic/group
+     * @return the mapping holding the original user's chat ID and message ID, if found
+     */
+    @Query("SELECT m FROM MessageMapping m WHERE m.topicMessageId = :topicMessageId")
+    Optional<MessageMapping> findByTopicMessageId(@Param("topicMessageId") int topicMessageId);
 }
