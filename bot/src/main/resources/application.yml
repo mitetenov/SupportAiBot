@@ -39,6 +39,8 @@ openai:
 
 remnawave:
   mcp:
+    # When MCP_URL env var is set (e.g. http://mcp-remnawave:3100), uses HTTP transport.
+    # When unset, falls back to local stdio (command + script-path).
     command: node
     script-path: /mcp-remnawave/dist/index.js
     base-url: ${REMNAWAVE_BASE_URL}

@@ -4,6 +4,8 @@ services:
     container_name: vpn-support-bot
     restart: unless-stopped
     env_file: .env
+    environment:
+      MCP_URL: http://mcp-remnawave:3100
     depends_on:
       pgvector:
         condition: service_healthy
