@@ -3,9 +3,11 @@ package com.vpnsupport.bot;
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.UpdatesListener;
 import com.pengrad.telegrambot.model.Message;
+import com.pengrad.telegrambot.model.MessageReactionUpdated;
 import com.pengrad.telegrambot.model.PhotoSize;
 import com.pengrad.telegrambot.model.Update;
 import com.pengrad.telegrambot.model.User;
+import com.pengrad.telegrambot.model.reaction.ReactionType;
 import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.request.GetFile;
 import com.pengrad.telegrambot.response.GetFileResponse;
@@ -25,6 +27,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
@@ -104,6 +107,13 @@ public class VpnSupportBot {
     }
 
     private void processUpdate(Update update) {
+        // Handle reaction updates (propagate between user and support group)
+        MessageReactionUpdated reaction = update.messageReaction();
+        if (reaction != null) {
+            handleReactionUpdated(reaction);
+            return;
+        }
+
         Message message = update.message();
         if (message == null || message.from() == null) {
             return;
@@ -160,6 +170,39 @@ public class VpnSupportBot {
                     "Отправлено пользователю.");
             lastOperatorReply.put(mapping.getUserId(), System.currentTimeMillis());
         }, () -> log.debug("No user mapping found for topic {}", topicId));
+    }
+
+    /**
+     * Handles a MessageReactionUpdated update. Determines the direction
+     * (user→operator or operator→user) and forwards the reaction to the
+     * mapped chat using setReaction.
+     */
+    private void handleReactionUpdated(MessageReactionUpdated reaction) {
+        long chatId = reaction.chat().id();
+        int messageId = reaction.messageId();
+        ReactionType[] newReactions = reaction.newReaction();
+        List<ReactionType> reactions = newReactions != null
+                ? Arrays.asList(newReactions)
+                : List.of();
+
+        if (chatId == supportGroupChatId) {
+            // Operator reacted in the support group — forward to user
+            messageMappingRepository.findByTopicMessageId(messageId).ifPresent(mapping -> {
+                messageSender.setReaction(
+                        String.valueOf(mapping.getUserChatId()),
+                        mapping.getUserMessageId(),
+                        reactions);
+            });
+        } else {
+            // User reacted in private chat — forward to support group topic
+            messageMappingRepository.findByUserChatIdAndUserMessageId(
+                    String.valueOf(chatId), messageId).ifPresent(mapping -> {
+                messageSender.setReaction(
+                        String.valueOf(supportGroupChatId),
+                        mapping.getTopicMessageId(),
+                        reactions);
+            });
+        }
     }
 
     private void copyToUser(long userChatId, Message message) {
