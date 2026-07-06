@@ -6,7 +6,7 @@
 
     <groupId>com.vpnsupport</groupId>
     <artifactId>vpn-support-bot</artifactId>
-    <version>1.6.16</version>
+    <version>1.6.17</version>
     <packaging>pom</packaging>
 
     <parent>
