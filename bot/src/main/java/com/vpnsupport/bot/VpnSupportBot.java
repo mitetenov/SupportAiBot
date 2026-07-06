@@ -3,6 +3,7 @@ package com.vpnsupport.bot;
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.UpdatesListener;
 import com.pengrad.telegrambot.model.Message;
+import com.pengrad.telegrambot.request.GetUpdates;
 import com.pengrad.telegrambot.model.MessageReactionUpdated;
 import com.pengrad.telegrambot.model.PhotoSize;
 import com.pengrad.telegrambot.model.Update;
@@ -91,12 +92,14 @@ public class VpnSupportBot {
 
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
+        GetUpdates getUpdates = new GetUpdates()
+                .allowedUpdates("message", "message_reaction");
         telegramBot.setUpdatesListener(updates -> {
             for (Update update : updates) {
                 taskExecutor.execute(() -> processUpdate(update));
             }
             return UpdatesListener.CONFIRMED_UPDATES_ALL;
-        }, e -> log.error("Telegram updates listener error", e));
+        }, e -> log.error("Telegram updates listener error", e), getUpdates);
 
         log.info("VPN Support Bot started");
     }
