@@ -158,11 +158,22 @@ public class HttpMcpClient implements McpClientInterface {
             throw new RuntimeException("Empty response from MCP server");
         }
 
-        JsonNode message = objectMapper.readTree(responseBody);
+        String jsonPayload = extractJsonFromSse(responseBody);
+        JsonNode message = objectMapper.readTree(jsonPayload);
         if (message.has("error")) {
             throw new RuntimeException("MCP error: " + message.get("error"));
         }
         return message.get("result");
+    }
+
+    private static String extractJsonFromSse(String responseBody) {
+        String[] lines = responseBody.split("\n");
+        for (String line : lines) {
+            if (line.startsWith("data: ")) {
+                return line.substring(6);
+            }
+        }
+        return responseBody;
     }
 
     private void sendNotification(String method, Map<String, Object> params) {
