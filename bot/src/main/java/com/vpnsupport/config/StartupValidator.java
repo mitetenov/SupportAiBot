@@ -50,12 +50,7 @@ public class StartupValidator implements ApplicationRunner {
             throw new IllegalStateException("Unknown LLM provider: " + provider);
         }
 
-        // In containerized mode (MCP_URL set), the MCP server container
-        // handles the Remnawave API connection — no need for base-url here.
-        if (remnawaveMcpProperties.getUrl() == null || remnawaveMcpProperties.getUrl().isBlank()) {
-            requireText(remnawaveMcpProperties.getBaseUrl(), "REMNAWAVE_BASE_URL");
-            requireText(remnawaveMcpProperties.getApiToken(), "REMNAWAVE_API_TOKEN");
-        }
+        requireText(remnawaveMcpProperties.getUrl(), "REMNAWAVE_MCP_URL");
     }
 
     private static void requireText(String value, String name) {

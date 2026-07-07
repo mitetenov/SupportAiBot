@@ -5,29 +5,10 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "remnawave.mcp")
 public class RemnawaveMcpProperties {
 
-    private String command = "node";
-    private String scriptPath = "/mcp-remnawave/dist/index.js";
-    /** URL of the containerized MCP HTTP endpoint, e.g. http://mcp-remnawave:3100 */
     private String url;
     private String baseUrl;
     private String apiToken;
     private boolean readonly = true;
-
-    public String getCommand() {
-        return command;
-    }
-
-    public void setCommand(String command) {
-        this.command = command;
-    }
-
-    public String getScriptPath() {
-        return scriptPath;
-    }
-
-    public void setScriptPath(String scriptPath) {
-        this.scriptPath = scriptPath;
-    }
 
     public String getUrl() {
         return url;

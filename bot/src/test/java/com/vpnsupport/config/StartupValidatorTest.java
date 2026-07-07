@@ -24,8 +24,7 @@ class StartupValidatorTest {
         GeminiProperties gemini = new GeminiProperties();
         OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setBaseUrl("https://example.com");
-        remnawave.setApiToken("api-token");
+        remnawave.setUrl("http://mcp:3100");
 
         StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
@@ -48,8 +47,7 @@ class StartupValidatorTest {
 
         OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setBaseUrl("https://example.com");
-        remnawave.setApiToken("api-token");
+        remnawave.setUrl("http://mcp:3100");
 
         StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
@@ -72,8 +70,7 @@ class StartupValidatorTest {
         openAi.setModel("gpt-4");
 
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setBaseUrl("https://example.com");
-        remnawave.setApiToken("api-token");
+        remnawave.setUrl("http://mcp:3100");
 
         StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
@@ -95,8 +92,7 @@ class StartupValidatorTest {
         GeminiProperties gemini = new GeminiProperties();
         OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setBaseUrl("https://example.com");
-        remnawave.setApiToken("api-token");
+        remnawave.setUrl("http://mcp:3100");
 
         StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
@@ -119,8 +115,7 @@ class StartupValidatorTest {
         GeminiProperties gemini = new GeminiProperties();
         OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setBaseUrl("https://example.com");
-        remnawave.setApiToken("api-token");
+        remnawave.setUrl("http://mcp:3100");
 
         StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
@@ -143,8 +138,7 @@ class StartupValidatorTest {
         GeminiProperties gemini = new GeminiProperties();
         OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setBaseUrl("https://example.com");
-        remnawave.setApiToken("api-token");
+        remnawave.setUrl("http://mcp:3100");
 
         StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
@@ -167,8 +161,7 @@ class StartupValidatorTest {
         GeminiProperties gemini = new GeminiProperties();
         OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setBaseUrl("https://example.com");
-        remnawave.setApiToken("api-token");
+        remnawave.setUrl("http://mcp:3100");
 
         StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
@@ -191,8 +184,7 @@ class StartupValidatorTest {
         openAi.setModel("gpt-4");
 
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setBaseUrl("https://example.com");
-        remnawave.setApiToken("api-token");
+        remnawave.setUrl("http://mcp:3100");
 
         StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
@@ -215,8 +207,7 @@ class StartupValidatorTest {
         openAi.setApiKey("sk-openai-key");
 
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setBaseUrl("https://example.com");
-        remnawave.setApiToken("api-token");
+        remnawave.setUrl("http://mcp:3100");
 
         StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
@@ -225,7 +216,7 @@ class StartupValidatorTest {
     }
 
     @Test
-    void shouldThrowWhenRemnawaveBaseUrlMissing() {
+    void shouldThrowWhenRemnawaveMcpUrlMissing() {
         TelegramProperties telegram = new TelegramProperties();
         telegram.setBotToken("token123");
         telegram.setSupportGroupChatId(123L);
@@ -240,36 +231,11 @@ class StartupValidatorTest {
         GeminiProperties gemini = new GeminiProperties();
         OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setApiToken("api-token");
 
         StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
-        assertEquals("REMNAWAVE_BASE_URL is required", ex.getMessage());
-    }
-
-    @Test
-    void shouldThrowWhenRemnawaveApiTokenMissing() {
-        TelegramProperties telegram = new TelegramProperties();
-        telegram.setBotToken("token123");
-        telegram.setSupportGroupChatId(123L);
-
-        LlmProperties llm = new LlmProperties();
-        llm.setProvider("deepseek");
-
-        DeepSeekProperties deepSeek = new DeepSeekProperties();
-        deepSeek.setApiKey("sk-key");
-        deepSeek.setModel("deepseek-chat");
-
-        GeminiProperties gemini = new GeminiProperties();
-        OpenAiProperties openAi = new OpenAiProperties();
-        RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setBaseUrl("https://example.com");
-
-        StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
-
-        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
-        assertEquals("REMNAWAVE_API_TOKEN is required", ex.getMessage());
+        assertEquals("REMNAWAVE_MCP_URL is required", ex.getMessage());
     }
 
     @Test
@@ -285,8 +251,7 @@ class StartupValidatorTest {
         GeminiProperties gemini = new GeminiProperties();
         OpenAiProperties openAi = new OpenAiProperties();
         RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
-        remnawave.setBaseUrl("https://example.com");
-        remnawave.setApiToken("api-token");
+        remnawave.setUrl("http://mcp:3100");
 
         StartupValidator validator = new StartupValidator(telegram, llm, deepSeek, gemini, remnawave, openAi);
 

@@ -11,9 +11,9 @@ import com.pengrad.telegrambot.model.reaction.ReactionType;
 import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.request.GetFile;
 import com.pengrad.telegrambot.request.GetUpdates;
+import com.pengrad.telegrambot.request.SendChatAction;
 import com.pengrad.telegrambot.response.GetFileResponse;
 import com.pengrad.telegrambot.response.MessageIdResponse;
-import com.pengrad.telegrambot.request.SendChatAction;
 import com.vpnsupport.config.TelegramProperties;
 import com.vpnsupport.llm.LlmClient;
 import com.vpnsupport.rag.FaqEmbeddingService;
@@ -109,7 +109,6 @@ public class VpnSupportBot {
     }
 
     private void processUpdate(Update update) {
-        // Handle reaction updates (propagate between user and support group)
         MessageReactionUpdated reaction = update.messageReaction();
         if (reaction != null) {
             handleReactionUpdated(reaction);
@@ -132,6 +131,32 @@ public class VpnSupportBot {
             handleUserMessage(message, message.text().trim(), null, null);
         } else if (message.photo() != null && message.photo().length > 0) {
             handlePhotoMessage(message);
+        }
+    }
+
+    private void handleReactionUpdated(MessageReactionUpdated reaction) {
+        long chatId = reaction.chat().id();
+        int messageId = reaction.messageId();
+        ReactionType[] newReactions = reaction.newReaction();
+        List<ReactionType> reactions = newReactions != null
+                ? Arrays.asList(newReactions)
+                : List.of();
+
+        if (chatId == supportGroupChatId) {
+            messageMappingRepository.findByTopicMessageId(messageId).ifPresent(mapping -> {
+                messageSender.setReaction(
+                        String.valueOf(mapping.getUserChatId()),
+                        mapping.getUserMessageId(),
+                        reactions);
+            });
+        } else {
+            messageMappingRepository.findByUserChatIdAndUserMessageId(
+                    String.valueOf(chatId), messageId).ifPresent(mapping -> {
+                messageSender.setReaction(
+                        String.valueOf(supportGroupChatId),
+                        mapping.getTopicMessageId(),
+                        reactions);
+            });
         }
     }
 
@@ -172,39 +197,6 @@ public class VpnSupportBot {
                     "Отправлено пользователю.");
             lastOperatorReply.put(mapping.getUserId(), System.currentTimeMillis());
         }, () -> log.debug("No user mapping found for topic {}", topicId));
-    }
-
-    /**
-     * Handles a MessageReactionUpdated update. Determines the direction
-     * (user→operator or operator→user) and forwards the reaction to the
-     * mapped chat using setReaction.
-     */
-    private void handleReactionUpdated(MessageReactionUpdated reaction) {
-        long chatId = reaction.chat().id();
-        int messageId = reaction.messageId();
-        ReactionType[] newReactions = reaction.newReaction();
-        List<ReactionType> reactions = newReactions != null
-                ? Arrays.asList(newReactions)
-                : List.of();
-
-        if (chatId == supportGroupChatId) {
-            // Operator reacted in the support group — forward to user
-            messageMappingRepository.findByTopicMessageId(messageId).ifPresent(mapping -> {
-                messageSender.setReaction(
-                        String.valueOf(mapping.getUserChatId()),
-                        mapping.getUserMessageId(),
-                        reactions);
-            });
-        } else {
-            // User reacted in private chat — forward to support group topic
-            messageMappingRepository.findByUserChatIdAndUserMessageId(
-                    String.valueOf(chatId), messageId).ifPresent(mapping -> {
-                messageSender.setReaction(
-                        String.valueOf(supportGroupChatId),
-                        mapping.getTopicMessageId(),
-                        reactions);
-            });
-        }
     }
 
     private void copyToUser(long userChatId, Message message) {

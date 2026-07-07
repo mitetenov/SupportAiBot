@@ -9,10 +9,10 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
@@ -23,41 +23,32 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * MCP client that connects to a remote MCP server via HTTP using the Streamable HTTP transport.
- * Replaces StdioMcpClient when the MCP server runs as a separate container.
- */
 @Component
-@ConditionalOnProperty(name = "remnawave.mcp.url")
 public class HttpMcpClient implements McpClientInterface {
 
     private static final Logger log = LoggerFactory.getLogger(HttpMcpClient.class);
     private static final String PROTOCOL_VERSION = "2024-11-05";
-    private static final long REQUEST_TIMEOUT_MS = 30_000;
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
     private final RemnawaveMcpProperties properties;
     private final ObjectMapper objectMapper;
     private final AdminNotifier adminNotifier;
     private final WebClient webClient;
+    private final AtomicInteger requestId = new AtomicInteger(0);
 
     private volatile boolean initialized = false;
     private volatile List<McpTool> cachedTools = Collections.emptyList();
-    private final AtomicInteger requestId = new AtomicInteger(0);
-    private volatile String sessionId;
 
-    public HttpMcpClient(RemnawaveMcpProperties properties,
-                         ObjectMapper objectMapper,
+    public HttpMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper,
                          AdminNotifier adminNotifier) {
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.adminNotifier = adminNotifier;
-
-        HttpClient httpClient = HttpClient.create()
-                .responseTimeout(Duration.ofMillis(REQUEST_TIMEOUT_MS));
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getUrl())
                 .defaultHeader("Content-Type", "application/json")
-                .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(httpClient))
+                .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
+                        HttpClient.create().responseTimeout(REQUEST_TIMEOUT)))
                 .build();
     }
 
@@ -67,98 +58,46 @@ public class HttpMcpClient implements McpClientInterface {
             initializeProtocol();
             loadTools();
             initialized = true;
-            log.info("HTTP MCP client initialized with {} tools from {}", cachedTools.size(), properties.getUrl());
+            log.info("MCP HTTP client initialized with {} tools at {}", cachedTools.size(), properties.getUrl());
         } catch (Exception e) {
-            log.error("Failed to initialize HTTP MCP client — bot will run without Remnawave tools", e);
-            adminNotifier.notifyError("MCP init failed", e);
+            log.error("Failed to initialize MCP HTTP client — bot will run without Remnawave tools", e);
+            adminNotifier.notifyError("MCP HTTP init failed", e);
         }
     }
 
     @PreDestroy
     public void shutdown() {
         initialized = false;
-        log.info("HTTP MCP client shut down");
     }
 
-    /**
-     * Sends a JSON-RPC 2.0 request and returns the response.
-     */
-    private JsonNode sendJsonRpc(String method, Map<String, Object> params) throws Exception {
-        int id = requestId.updateAndGet(i -> (i + 1) & 0x7FFFFFFF);
-
-        Map<String, Object> request = new LinkedHashMap<>();
-        request.put("jsonrpc", "2.0");
-        request.put("id", id);
-        request.put("method", method);
-        request.put("params", params != null ? params : Map.of());
-
-        String json = objectMapper.writeValueAsString(request);
-        log.debug("MCP HTTP request [{}]: {} {}", id, method, params != null ? params.keySet() : "{}");
-
-        // Build request with session ID if available
-        WebClient.RequestHeadersSpec<?> spec = webClient.post()
-                .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(json);
-
-        if (sessionId != null) {
-            spec = spec.header("Mcp-Session-Id", sessionId);
-        }
-
-        String responseBody = spec.retrieve()
-                .toEntity(String.class)
-                .map(entity -> {
-                    // Capture session ID from header on first response
-                    List<String> sessionHeaders = entity.getHeaders().get("Mcp-Session-Id");
-                    if (sessionHeaders != null && !sessionHeaders.isEmpty() && sessionId == null) {
-                        sessionId = sessionHeaders.getFirst();
-                        log.debug("MCP session ID: {}", sessionId);
-                    }
-                    return entity.getBody();
-                })
-                .block(Duration.ofMillis(REQUEST_TIMEOUT_MS));
-
-        if (responseBody == null) {
-            throw new RuntimeException("Empty response from MCP server");
-        }
-
-        JsonNode response = objectMapper.readTree(responseBody);
-        if (response.has("error")) {
-            JsonNode error = response.get("error");
-            String message = error.has("message") ? error.get("message").asText() : "unknown error";
-            throw new RuntimeException("MCP error [" + method + "]: " + message);
-        }
-
-        return response.get("result");
+    @Override
+    public List<McpTool> listTools() {
+        return cachedTools;
     }
 
-    /**
-     * Sends a JSON-RPC notification (no id, fire-and-forget).
-     */
-    private void sendNotification(String method, Map<String, Object> params) {
+    @Override
+    public String callTool(String toolName, Map<String, Object> arguments) {
+        if (!initialized) {
+            return errorResponse("MCP client not initialized");
+        }
         try {
-            Map<String, Object> notification = new LinkedHashMap<>();
-            notification.put("jsonrpc", "2.0");
-            notification.put("method", method);
-            notification.put("params", params != null ? params : Map.of());
-
-            String json = objectMapper.writeValueAsString(notification);
-
-            WebClient.RequestHeadersSpec<?> spec = webClient.post()
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(json);
-
-            if (sessionId != null) {
-                spec = spec.header("Mcp-Session-Id", sessionId);
-            }
-
-            spec.retrieve()
-                    .toBodilessEntity()
-                    .subscribe(
-                            response -> log.debug("MCP notification sent: {}", method),
-                            error -> log.warn("MCP notification failed: {} — {}", method, error.getMessage())
-                    );
+            JsonNode response = sendRequest("tools/call", Map.of(
+                    "name", toolName,
+                    "arguments", arguments
+            ));
+            return objectMapper.writeValueAsString(response);
         } catch (Exception e) {
-            log.warn("Failed to send MCP notification: {}", method, e);
+            log.error("Failed to call tool: {}", toolName, e);
+            adminNotifier.notifyError("MCP tool call failed: " + toolName, e);
+            return errorResponse(e.getMessage() != null ? e.getMessage() : "unknown error");
+        }
+    }
+
+    private String errorResponse(String message) {
+        try {
+            return objectMapper.writeValueAsString(Map.of("error", message));
+        } catch (JsonProcessingException e) {
+            return "{\"error\":\"unknown error\"}";
         }
     }
 
@@ -168,16 +107,15 @@ public class HttpMcpClient implements McpClientInterface {
                 "capabilities", Map.of(),
                 "clientInfo", Map.of("name", "vpn-support-bot", "version", "1.0.0")
         );
-        JsonNode response = sendJsonRpc("initialize", params);
+        JsonNode response = sendRequest("initialize", params);
         log.info("MCP initialize response: {}", response);
 
-        // Send initialized notification
         sendNotification("notifications/initialized", Map.of());
-        log.info("MCP protocol initialized (session: {})", sessionId);
+        log.info("MCP protocol initialized");
     }
 
     private void loadTools() throws Exception {
-        JsonNode response = sendJsonRpc("tools/list", Map.of());
+        JsonNode response = sendRequest("tools/list", Map.of());
         JsonNode tools = response.get("tools");
         if (tools != null && tools.isArray()) {
             List<McpTool> toolList = new ArrayList<>();
@@ -194,38 +132,52 @@ public class HttpMcpClient implements McpClientInterface {
         }
     }
 
-    @Override
-    public List<McpTool> listTools() {
-        return cachedTools;
+    private JsonNode sendRequest(String method, Map<String, Object> params) throws Exception {
+        int id = requestId.updateAndGet(i -> (i + 1) & 0x7FFFFFFF);
+
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("jsonrpc", "2.0");
+        request.put("id", id);
+        request.put("method", method);
+        request.put("params", params != null ? params : Map.of());
+
+        log.debug("MCP request [{}]: {}", id, method);
+
+        String responseBody = webClient.post()
+                .bodyValue(request)
+                .retrieve()
+                .onStatus(HttpStatusCode::isError,
+                        clientResponse -> clientResponse.bodyToMono(String.class)
+                                .flatMap(err -> Mono.error(new RuntimeException(
+                                        "MCP HTTP error: " + clientResponse.statusCode() + " - " + err))))
+                .bodyToMono(String.class)
+                .block(REQUEST_TIMEOUT);
+
+        if (responseBody == null) {
+            throw new RuntimeException("Empty response from MCP server");
+        }
+
+        JsonNode message = objectMapper.readTree(responseBody);
+        if (message.has("error")) {
+            throw new RuntimeException("MCP error: " + message.get("error"));
+        }
+        return message.get("result");
     }
 
-    @Override
-    public String callTool(String toolName, Map<String, Object> arguments) {
-        if (!initialized) {
-            return errorResponse("MCP client not initialized");
-        }
+    private void sendNotification(String method, Map<String, Object> params) {
         try {
-            JsonNode response = sendJsonRpc("tools/call", Map.of(
-                    "name", toolName,
-                    "arguments", arguments
-            ));
-            return objectMapper.writeValueAsString(response);
+            Map<String, Object> notification = new LinkedHashMap<>();
+            notification.put("jsonrpc", "2.0");
+            notification.put("method", method);
+            notification.put("params", params);
+
+            webClient.post()
+                    .bodyValue(notification)
+                    .retrieve()
+                    .toBodilessEntity()
+                    .block(REQUEST_TIMEOUT);
         } catch (Exception e) {
-            log.error("Failed to call tool: {}", toolName, e);
-            adminNotifier.notifyError("MCP tool call failed: " + toolName, e);
-            try {
-                return objectMapper.writeValueAsString(Map.of("error", e.getMessage() != null ? e.getMessage() : "unknown error"));
-            } catch (JsonProcessingException ex) {
-                return "{\"error\":\"tool call failed\"}";
-            }
-        }
-    }
-
-    private String errorResponse(String message) {
-        try {
-            return objectMapper.writeValueAsString(Map.of("error", message));
-        } catch (JsonProcessingException e) {
-            return "{\"error\":\"unknown error\"}";
+            log.warn("Failed to send MCP notification: {}", method, e.getMessage());
         }
     }
 }

@@ -1,7 +1,12 @@
 package com.vpnsupport.bot;
 
+import com.vpnsupport.config.ChatHistoryProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.task.TaskExecutor;
 
 import java.util.List;
 import java.util.Map;
@@ -10,13 +15,23 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+@ExtendWith(MockitoExtension.class)
 class ChatHistoryServiceTest {
+
+    @Mock
+    private ChatMessageRepository chatMessageRepository;
+
+    @Mock
+    private TaskExecutor taskExecutor;
 
     private ChatHistoryService service;
 
     @BeforeEach
     void setUp() {
-        service = new ChatHistoryService();
+        ChatHistoryProperties properties = new ChatHistoryProperties();
+        properties.setMaxMessages(20);
+        properties.setTtlDays(7);
+        service = new ChatHistoryService(chatMessageRepository, taskExecutor, properties);
     }
 
     @Test

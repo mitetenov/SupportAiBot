@@ -13,6 +13,11 @@ spring:
   codec:
     max-in-memory-size: 10MB
 
+chat:
+  history:
+    max-messages: 20
+    ttl-days: 7
+
 llm:
   provider: ${LLM_PROVIDER:deepseek}
 
@@ -28,7 +33,7 @@ deepseek:
   model: ${DEEPSEEK_MODEL}
 
 gemini:
-  api-key: ""
+  api-key: ***
   base-url: https://generativelanguage.googleapis.com/v1beta
   model: ${GEMINI_MODEL}
 
@@ -39,10 +44,7 @@ openai:
 
 remnawave:
   mcp:
-    # When MCP_URL env var is set (e.g. http://mcp-remnawave:3100), uses HTTP transport.
-    # When unset, falls back to local stdio (command + script-path).
-    command: node
-    script-path: /mcp-remnawave/dist/index.js
+    url: ${REMNAWAVE_MCP_URL:http://localhost:3100}
     base-url: ${REMNAWAVE_BASE_URL}
     api-token: ${REMNAWAVE_API_TOKEN}
     readonly: ${REMNAWAVE_READONLY:true}

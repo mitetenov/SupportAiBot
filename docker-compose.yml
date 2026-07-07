@@ -20,6 +20,24 @@ services:
       retries: 3
       start_period: 120s
 
+  mcp-remnawave:
+    image: mitetenov/mcp-remnawave:${MCP_TAG:-latest}
+    container_name: vpn-support-mcp
+    restart: unless-stopped
+    environment:
+      REMNAWAVE_BASE_URL: ${REMNAWAVE_BASE_URL}
+      REMNAWAVE_API_TOKEN: ${REMNAWAVE_API_TOKEN}
+      REMNAWAVE_API_KEY: ${REMNAWAVE_API_KEY:-}
+      REMNAWAVE_READONLY: ${REMNAWAVE_READONLY:-true}
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3100/health', r => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   pgvector:
     image: pgvector/pgvector:pg17
     container_name: vpn-support-pg
