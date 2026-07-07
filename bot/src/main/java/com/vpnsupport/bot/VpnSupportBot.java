@@ -3,11 +3,14 @@ package com.vpnsupport.bot;
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.UpdatesListener;
 import com.pengrad.telegrambot.model.Message;
+import com.pengrad.telegrambot.model.MessageReactionUpdated;
 import com.pengrad.telegrambot.model.PhotoSize;
 import com.pengrad.telegrambot.model.Update;
 import com.pengrad.telegrambot.model.User;
+import com.pengrad.telegrambot.model.reaction.ReactionType;
 import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.request.GetFile;
+import com.pengrad.telegrambot.request.GetUpdates;
 import com.pengrad.telegrambot.request.SendChatAction;
 import com.pengrad.telegrambot.response.GetFileResponse;
 import com.pengrad.telegrambot.response.MessageIdResponse;
@@ -25,6 +28,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
@@ -88,12 +92,13 @@ public class VpnSupportBot {
 
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
+        GetUpdates getUpdates = new GetUpdates().allowedUpdates("message", "message_reaction");
         telegramBot.setUpdatesListener(updates -> {
             for (Update update : updates) {
                 taskExecutor.execute(() -> processUpdate(update));
             }
             return UpdatesListener.CONFIRMED_UPDATES_ALL;
-        }, e -> log.error("Telegram updates listener error", e));
+        }, e -> log.error("Telegram updates listener error", e), getUpdates);
 
         log.info("VPN Support Bot started");
     }
@@ -104,6 +109,12 @@ public class VpnSupportBot {
     }
 
     private void processUpdate(Update update) {
+        MessageReactionUpdated reaction = update.messageReaction();
+        if (reaction != null) {
+            handleReactionUpdated(reaction);
+            return;
+        }
+
         Message message = update.message();
         if (message == null || message.from() == null) {
             return;
@@ -120,6 +131,32 @@ public class VpnSupportBot {
             handleUserMessage(message, message.text().trim(), null, null);
         } else if (message.photo() != null && message.photo().length > 0) {
             handlePhotoMessage(message);
+        }
+    }
+
+    private void handleReactionUpdated(MessageReactionUpdated reaction) {
+        long chatId = reaction.chat().id();
+        int messageId = reaction.messageId();
+        ReactionType[] newReactions = reaction.newReaction();
+        List<ReactionType> reactions = newReactions != null
+                ? Arrays.asList(newReactions)
+                : List.of();
+
+        if (chatId == supportGroupChatId) {
+            messageMappingRepository.findByTopicMessageId(messageId).ifPresent(mapping -> {
+                messageSender.setReaction(
+                        String.valueOf(mapping.getUserChatId()),
+                        mapping.getUserMessageId(),
+                        reactions);
+            });
+        } else {
+            messageMappingRepository.findByUserChatIdAndUserMessageId(
+                    String.valueOf(chatId), messageId).ifPresent(mapping -> {
+                messageSender.setReaction(
+                        String.valueOf(supportGroupChatId),
+                        mapping.getTopicMessageId(),
+                        reactions);
+            });
         }
     }
 
