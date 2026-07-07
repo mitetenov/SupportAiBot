@@ -4,9 +4,13 @@ services:
     container_name: vpn-support-bot
     restart: unless-stopped
     env_file: .env
+    environment:
+      MCP_URL: http://mcp-remnawave:3100
     depends_on:
       pgvector:
         condition: service_healthy
+      mcp-remnawave:
+        condition: service_started
     networks:
       - internal
     healthcheck:
@@ -51,6 +55,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  mcp-remnawave:
+    image: mitetenov/mcp-remnawave:latest
+    container_name: mcp-remnawave
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - internal
+    ports:
+      - "3100:3100"
 
 networks:
   internal:
