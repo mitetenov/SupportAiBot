@@ -21,7 +21,7 @@ services:
       start_period: 120s
 
   mcp-remnawave:
-    image: mitetenov/mcp-remnawave:${MCP_TAG:-latest}
+    image: mitetenov/remnawave-mcp:${MCP_TAG:-latest}
     container_name: vpn-support-mcp
     restart: unless-stopped
     environment:
