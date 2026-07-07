@@ -47,6 +47,7 @@ public class HttpMcpClient implements McpClientInterface {
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getUrl())
                 .defaultHeader("Content-Type", "application/json")
+                .defaultHeader("Accept", "application/json, text/event-stream")
                 .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
                         HttpClient.create().responseTimeout(REQUEST_TIMEOUT)))
                 .build();
