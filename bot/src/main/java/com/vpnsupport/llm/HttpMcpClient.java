@@ -28,6 +28,7 @@ public class HttpMcpClient implements McpClientInterface {
 
     private static final Logger log = LoggerFactory.getLogger(HttpMcpClient.class);
     private static final String PROTOCOL_VERSION = "2024-11-05";
+    private static final String SESSION_HEADER = "Mcp-Session-Id";
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
     private final RemnawaveMcpProperties properties;
@@ -37,6 +38,7 @@ public class HttpMcpClient implements McpClientInterface {
     private final AtomicInteger requestId = new AtomicInteger(0);
 
     private volatile boolean initialized = false;
+    private volatile String sessionId;
     private volatile List<McpTool> cachedTools = Collections.emptyList();
 
     public HttpMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper,
@@ -56,7 +58,7 @@ public class HttpMcpClient implements McpClientInterface {
     @PostConstruct
     public void init() {
         try {
-            initializeProtocol();
+            initializeSession();
             loadTools();
             initialized = true;
             log.info("MCP HTTP client initialized with {} tools at {}", cachedTools.size(), properties.getUrl());
@@ -69,6 +71,7 @@ public class HttpMcpClient implements McpClientInterface {
     @PreDestroy
     public void shutdown() {
         initialized = false;
+        sessionId = null;
     }
 
     @Override
@@ -102,17 +105,57 @@ public class HttpMcpClient implements McpClientInterface {
         }
     }
 
-    private void initializeProtocol() throws Exception {
-        Map<String, Object> params = Map.of(
+    private void initializeSession() throws Exception {
+        int id = requestId.incrementAndGet();
+
+        Map<String, Object> req = new LinkedHashMap<>();
+        req.put("jsonrpc", "2.0");
+        req.put("id", id);
+        req.put("method", "initialize");
+        req.put("params", Map.of(
                 "protocolVersion", PROTOCOL_VERSION,
                 "capabilities", Map.of(),
                 "clientInfo", Map.of("name", "vpn-support-bot", "version", "1.0.0")
-        );
-        JsonNode response = sendRequest("initialize", params);
-        log.info("MCP initialize response: {}", response);
+        ));
 
-        sendNotification("notifications/initialized", Map.of());
-        log.info("MCP protocol initialized");
+        log.debug("MCP initialize request [{}]", id);
+
+        var response = webClient.post()
+                .bodyValue(req)
+                .exchangeToMono(clientResponse -> {
+                    List<String> sessionHeaders = clientResponse.headers().header(SESSION_HEADER);
+                    if (!sessionHeaders.isEmpty()) {
+                        sessionId = sessionHeaders.get(0);
+                        log.debug("MCP session established: {}", sessionId);
+                    }
+                    return clientResponse.bodyToMono(String.class)
+                            .flatMap(body -> {
+                                if (clientResponse.statusCode().isError()) {
+                                    return Mono.error(new RuntimeException(
+                                            "MCP HTTP error: " + clientResponse.statusCode() + " - " + body));
+                                }
+                                return Mono.just(body);
+                            });
+                })
+                .block(REQUEST_TIMEOUT);
+
+        if (response == null) {
+            throw new RuntimeException("Empty response from MCP initialize");
+        }
+
+        String jsonPayload = extractJsonFromSse(response);
+        JsonNode message = objectMapper.readTree(jsonPayload);
+        if (message.has("error")) {
+            throw new RuntimeException("MCP initialize error: " + message.get("error"));
+        }
+        log.info("MCP initialize response: {}", message.get("result"));
+
+        if (sessionId == null) {
+            log.warn("No MCP session ID in initialize response, subsequent calls may fail");
+        } else {
+            sendNotification("notifications/initialized", Map.of());
+            log.info("MCP protocol initialized");
+        }
     }
 
     private void loadTools() throws Exception {
@@ -134,7 +177,7 @@ public class HttpMcpClient implements McpClientInterface {
     }
 
     private JsonNode sendRequest(String method, Map<String, Object> params) throws Exception {
-        int id = requestId.updateAndGet(i -> (i + 1) & 0x7FFFFFFF);
+        int id = requestId.incrementAndGet();
 
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("jsonrpc", "2.0");
@@ -144,7 +187,12 @@ public class HttpMcpClient implements McpClientInterface {
 
         log.debug("MCP request [{}]: {}", id, method);
 
-        String responseBody = webClient.post()
+        WebClient.RequestBodySpec spec = webClient.post();
+        if (sessionId != null) {
+            spec = spec.header(SESSION_HEADER, sessionId);
+        }
+
+        String responseBody = spec
                 .bodyValue(request)
                 .retrieve()
                 .onStatus(HttpStatusCode::isError,
@@ -183,9 +231,13 @@ public class HttpMcpClient implements McpClientInterface {
             notification.put("method", method);
             notification.put("params", params);
 
-            webClient.post()
-                    .bodyValue(notification)
-                    .retrieve()
+            WebClient.RequestHeadersSpec<?> spec = webClient.post()
+                    .bodyValue(notification);
+            if (sessionId != null) {
+                spec = spec.header(SESSION_HEADER, sessionId);
+            }
+
+            spec.retrieve()
                     .toBodilessEntity()
                     .block(REQUEST_TIMEOUT);
         } catch (Exception e) {
