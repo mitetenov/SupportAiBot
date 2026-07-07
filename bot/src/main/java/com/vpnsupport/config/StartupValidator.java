@@ -50,8 +50,7 @@ public class StartupValidator implements ApplicationRunner {
             throw new IllegalStateException("Unknown LLM provider: " + provider);
         }
 
-        requireText(remnawaveMcpProperties.getBaseUrl(), "REMNAWAVE_BASE_URL");
-        requireText(remnawaveMcpProperties.getApiToken(), "REMNAWAVE_API_TOKEN");
+        requireText(remnawaveMcpProperties.getUrl(), "REMNAWAVE_MCP_URL");
     }
 
     private static void requireText(String value, String name) {

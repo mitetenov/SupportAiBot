@@ -114,7 +114,7 @@ public abstract class AbstractLlmClient implements LlmClient {
     protected abstract void addToolCallsToConversation(List<Map<String, Object>> conversation, LlmResponse response);
 
     protected abstract void addToolResultToConversation(List<Map<String, Object>> conversation,
-                                                         LlmResponse.ToolCall toolCall, String toolResult);
+                                                          LlmResponse.ToolCall toolCall, String toolResult);
 
     protected abstract void saveUsage(String rawResponse, long telegramUserId);
 

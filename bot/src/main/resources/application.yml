@@ -13,6 +13,11 @@ spring:
   codec:
     max-in-memory-size: 10MB
 
+chat:
+  history:
+    max-messages: 20
+    ttl-days: 7
+
 llm:
   provider: ${LLM_PROVIDER:deepseek}
 
@@ -39,8 +44,7 @@ openai:
 
 remnawave:
   mcp:
-    command: node
-    script-path: /mcp-remnawave/dist/index.js
+    url: ${REMNAWAVE_MCP_URL:http://localhost:3100}
     base-url: ${REMNAWAVE_BASE_URL}
     api-token: ${REMNAWAVE_API_TOKEN}
     readonly: ${REMNAWAVE_READONLY:true}

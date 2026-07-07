@@ -6,8 +6,6 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch:
-  repository_dispatch:
-    types: [mcp-release]
 
 permissions:
   contents: write
@@ -58,10 +56,6 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          build-args: |
-            MCP_OWNER=mitetenov
-            MCP_REPO=mcp-remnawave
-            MCP_VERSION=v1.2.2
           tags: |
             mitetenov/supportbot:latest
             mitetenov/supportbot:${{ steps.version.outputs.version }}
