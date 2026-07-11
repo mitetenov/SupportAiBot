@@ -25,9 +25,11 @@ public class FaqEmbeddingService {
     private static final int EMBEDDING_DIMENSION = 2000;
     private static final String EMBEDDING_MODEL = "gemini-embedding-001";
     private static final int SEARCH_LIMIT = 3;
-    private static final double MIN_SIMILARITY = 0.6;
+    private static final double MIN_SIMILARITY = 0.65;
     private static final String CONNECTION_FAQ_QUERY =
             "Не могу подключиться к VPN / не работает / не заходит";
+    private static final String REFERRAL_FAQ_QUERY =
+            "Реферальная программа, партнёрка, реферальная ссылка, пригласить друга, бонусы, рефералы";
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
@@ -170,8 +172,13 @@ public class FaqEmbeddingService {
 
     private List<FaqResult> searchWithFallback(String query) {
         List<FaqResult> results = search(query);
-        if (results.isEmpty() && looksLikeConnectionIssue(query)) {
-            results = search(CONNECTION_FAQ_QUERY);
+        if (results.isEmpty()) {
+            if (looksLikeConnectionIssue(query)) {
+                results = search(CONNECTION_FAQ_QUERY);
+            }
+            if (results.isEmpty() && looksLikeReferralQuery(query)) {
+                results = search(REFERRAL_FAQ_QUERY);
+            }
         }
         return results;
     }
@@ -215,6 +222,20 @@ public class FaqEmbeddingService {
                 || lower.contains("подписк")
                 || lower.contains("пинг")
                 || lower.contains("сервер");
+    }
+
+    private boolean looksLikeReferralQuery(String query) {
+        if (query == null || query.isBlank()) {
+            return false;
+        }
+        String lower = query.toLowerCase();
+        return lower.contains("реферал")
+                || lower.contains("партнёр")
+                || lower.contains("partner")
+                || lower.contains("приглас")
+                || lower.contains("приглаш")
+                || (lower.contains("друг") || lower.contains("друз"))
+                || lower.contains("бонус");
     }
 
 
