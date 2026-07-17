@@ -59,6 +59,9 @@ public class VpnSupportBot {
     private final UserRepository userRepository;
     private final TaskExecutor taskExecutor;
     private final ConcurrentHashMap<Long, Long> lastOperatorReply = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, String> lastUserQuery = new ConcurrentHashMap<>();
+
+    private final KnowledgeGapService knowledgeGapService;
 
     public VpnSupportBot(TelegramBot telegramBot, LlmClient llmClient,
                           FaqEmbeddingService faqEmbeddingService,
@@ -72,7 +75,8 @@ public class VpnSupportBot {
                           TelegramProperties telegramProperties,
                           LlmTokenUsageRepository tokenUsageRepository,
                           UserRepository userRepository,
-                          TaskExecutor taskExecutor) {
+                          TaskExecutor taskExecutor,
+                          KnowledgeGapService knowledgeGapService) {
         this.telegramBot = telegramBot;
         this.llmClient = llmClient;
         this.faqEmbeddingService = faqEmbeddingService;
@@ -88,6 +92,7 @@ public class VpnSupportBot {
         this.adminTelegramIds = telegramProperties.getSupportAdminTelegramIds();
         this.userRepository = userRepository;
         this.taskExecutor = taskExecutor;
+        this.knowledgeGapService = knowledgeGapService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -226,6 +231,10 @@ public class VpnSupportBot {
         }
 
         if (text.equals("/operator")) {
+            String lastQuery = lastUserQuery.get(user.id());
+            if (lastQuery != null) {
+                knowledgeGapService.evaluateOperatorRequest(lastQuery, user.id());
+            }
             messageSender.send(chatId, "Передаю ваш запрос оператору. Ожидайте ответа в этом чате.");
             forwarder.forwardToSupport(chatId, message.messageId(), user,
                     "[Запрос оператора] " + text, "Пользователь запросил живого оператора.", true);
@@ -237,8 +246,13 @@ public class VpnSupportBot {
             return;
         }
 
-        if (text.startsWith("/stats") || text.startsWith("/")) {
-            if (text.startsWith("/stats")) {
+        if (text.equals("/gaps") && adminTelegramIds.contains(user.id())) {
+            handleGaps(chatId);
+            return;
+        }
+
+        if (text.startsWith("/stats") || text.startsWith("/gaps") || text.startsWith("/")) {
+            if (text.startsWith("/stats") || text.startsWith("/gaps")) {
                 return; // silently ignore for non-admins
             }
             messageSender.send(chatId, "Неизвестная команда. Напишите вопрос или /operator для связи с оператором.");
@@ -259,6 +273,7 @@ public class VpnSupportBot {
         }
 
         try {
+            lastUserQuery.put(user.id(), text);
             telegramBot.execute(new SendChatAction(chatId, "typing"));
             String rawResponse;
             if (base64Image != null) {
@@ -287,6 +302,7 @@ public class VpnSupportBot {
             }
             forwarder.forwardToSupport(chatId, message.messageId(), user, forwardText, response,
                     llmEscalation || humanRequest);
+            knowledgeGapService.evaluate(text, user.id(), rawResponse);
         } catch (com.vpnsupport.llm.LlmProcessingException e) {
             log.error("LLM error processing message from user {}", chatId, e);
             messageSender.send(chatId, e.getUserFriendlyMessage());
@@ -366,6 +382,22 @@ public class VpnSupportBot {
             }
         }
         showTopStats(chatId, DEFAULT_STATS_LIMIT);
+    }
+
+    private void handleGaps(long chatId) {
+        List<GapStatsDto> gaps = knowledgeGapService.getTopGaps();
+        if (gaps.isEmpty()) {
+            messageSender.send(chatId, "Пробелы в знаниях пока не обнаружены.");
+            return;
+        }
+        StringBuilder sb = new StringBuilder("Топ пробелов в знаниях:\n");
+        int rank = 1;
+        for (GapStatsDto gap : gaps) {
+            sb.append(rank++).append(". [").append(gap.gapCount()).append(" раз] ")
+                    .append(gap.userQuery()).append("\n");
+            sb.append("   (").append(gap.triggerReason()).append(")\n");
+        }
+        messageSender.send(chatId, sb.toString());
     }
 
     private void showTopStats(long chatId, int limit) {

@@ -35,6 +35,8 @@ public class FaqEmbeddingService {
     private final ObjectMapper objectMapper;
     private final WebClient webClient;
     private volatile boolean ready = false;
+    private final ThreadLocal<Double> lastMaxSimilarity = ThreadLocal.withInitial(() -> 0.0);
+    private final ThreadLocal<String> lastBestQuestion = new ThreadLocal<>();
 
     public FaqEmbeddingService(JdbcTemplate jdbcTemplate,
                                 ObjectMapper objectMapper, GeminiProperties geminiProperties) {
@@ -186,8 +188,14 @@ public class FaqEmbeddingService {
     public String buildFaqContext(String userQuery) {
         List<FaqResult> results = searchWithFallback(userQuery);
         if (results.isEmpty()) {
+            lastMaxSimilarity.set(0.0);
+            lastBestQuestion.remove();
             return "";
         }
+
+        double maxSim = results.stream().mapToDouble(FaqResult::similarity).max().orElse(0.0);
+        lastMaxSimilarity.set(maxSim);
+        lastBestQuestion.set(results.get(0).question());
 
         StringBuilder sb = new StringBuilder(
                 "FAQ (скопируй инструкцию дословно в ответ, не добавляй своих шагов):\n");
@@ -200,6 +208,19 @@ public class FaqEmbeddingService {
             sb.append("\n");
         }
         return sb.toString();
+    }
+
+    public double getLastMaxSimilarity() {
+        return lastMaxSimilarity.get();
+    }
+
+    public String getLastFaqQuestion() {
+        return lastBestQuestion.get();
+    }
+
+    public String embedQueryAsVector(String text) {
+        float[] embedding = embed(text);
+        return embedding != null ? vectorToString(embedding) : null;
     }
 
     private boolean looksLikeConnectionIssue(String query) {
