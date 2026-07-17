@@ -41,6 +41,7 @@ class VpnSupportBotUserMessageTest {
     @Mock private LlmTokenUsageRepository tokenUsageRepository;
     @Mock private UserRepository userRepository;
     @Mock private TaskExecutor taskExecutor;
+    @Mock private KnowledgeGapService knowledgeGapService;
 
     private VpnSupportBot bot;
     private static final long SUPPORT_CHAT_ID = -100123L;
@@ -59,7 +60,7 @@ class VpnSupportBotUserMessageTest {
                 topicMappingRepository, messageMappingRepository,
                 messageSender, rateLimiter, chatHistoryService,
                 webClient, properties, tokenUsageRepository,
-                userRepository, taskExecutor);
+                userRepository, taskExecutor, knowledgeGapService);
     }
 
     private Message userMessage(String text, long userId, long chatId) {

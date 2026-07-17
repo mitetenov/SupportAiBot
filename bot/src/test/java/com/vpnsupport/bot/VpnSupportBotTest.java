@@ -72,6 +72,9 @@ class VpnSupportBotTest {
     @Mock
     private TaskExecutor taskExecutor;
 
+    @Mock
+    private KnowledgeGapService knowledgeGapService;
+
     private VpnSupportBot bot;
 
     private static final long SUPPORT_CHAT_ID = -100123L;
@@ -87,7 +90,7 @@ class VpnSupportBotTest {
                 topicMappingRepository, messageMappingRepository,
                 messageSender, rateLimiter, chatHistoryService,
                 webClient, properties, tokenUsageRepository,
-                userRepository, taskExecutor);
+                userRepository, taskExecutor, knowledgeGapService);
     }
 
     /**
