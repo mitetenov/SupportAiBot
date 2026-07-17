@@ -15,7 +15,10 @@ import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -25,6 +28,7 @@ public class FaqEmbeddingService {
     private static final int EMBEDDING_DIMENSION = 2000;
     private static final String EMBEDDING_MODEL = "gemini-embedding-001";
     private static final int SEARCH_LIMIT = 3;
+    private static final int MAX_RESULTS = 5;
     private static final double MIN_SIMILARITY = 0.65;
     private static final String CONNECTION_FAQ_QUERY =
             "Не могу подключиться к VPN / не работает / не заходит";
@@ -37,6 +41,7 @@ public class FaqEmbeddingService {
     private volatile boolean ready = false;
     private final ThreadLocal<Double> lastMaxSimilarity = ThreadLocal.withInitial(() -> 0.0);
     private final ThreadLocal<String> lastBestQuestion = new ThreadLocal<>();
+    private final ThreadLocal<Set<String>> shownQuestions = new ThreadLocal<>();
 
     public FaqEmbeddingService(JdbcTemplate jdbcTemplate,
                                 ObjectMapper objectMapper, GeminiProperties geminiProperties) {
@@ -173,25 +178,56 @@ public class FaqEmbeddingService {
     }
 
     private List<FaqResult> searchWithFallback(String query) {
-        List<FaqResult> results = search(query);
-        if (results.isEmpty()) {
-            if (looksLikeConnectionIssue(query)) {
-                results = search(CONNECTION_FAQ_QUERY);
-            }
-            if (results.isEmpty() && looksLikeReferralQuery(query)) {
-                results = search(REFERRAL_FAQ_QUERY);
-            }
+        List<FaqResult> results = new ArrayList<>(search(query));
+
+        if (looksLikeConnectionIssue(query)) {
+            mergeDeduped(results, search(CONNECTION_FAQ_QUERY));
+        }
+        if (looksLikeReferralQuery(query)) {
+            mergeDeduped(results, search(REFERRAL_FAQ_QUERY));
+        }
+
+        results.sort((a, b) -> Double.compare(b.similarity(), a.similarity()));
+        if (results.size() > MAX_RESULTS) {
+            results = new ArrayList<>(results.subList(0, MAX_RESULTS));
         }
         return results;
     }
 
+    private void mergeDeduped(List<FaqResult> target, List<FaqResult> source) {
+        Set<String> existing = new HashSet<>();
+        for (FaqResult r : target) {
+            existing.add(r.question());
+        }
+        for (FaqResult r : source) {
+            if (!existing.contains(r.question())) {
+                target.add(r);
+                existing.add(r.question());
+            }
+        }
+    }
+
     public String buildFaqContext(String userQuery) {
+        return buildFaqContext(userQuery, Set.of());
+    }
+
+    public String buildFaqContext(String userQuery, Set<String> excludeQuestions) {
         List<FaqResult> results = searchWithFallback(userQuery);
+        if (!excludeQuestions.isEmpty()) {
+            results = results.stream()
+                    .filter(r -> !excludeQuestions.contains(r.question()))
+                    .toList();
+        }
         if (results.isEmpty()) {
             lastMaxSimilarity.set(0.0);
             lastBestQuestion.remove();
+            shownQuestions.set(Set.of());
             return "";
         }
+
+        shownQuestions.set(results.stream()
+                .map(FaqResult::question)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)));
 
         double maxSim = results.stream().mapToDouble(FaqResult::similarity).max().orElse(0.0);
         lastMaxSimilarity.set(maxSim);
@@ -216,6 +252,26 @@ public class FaqEmbeddingService {
 
     public String getLastFaqQuestion() {
         return lastBestQuestion.get();
+    }
+
+    public Set<String> getShownQuestions() {
+        Set<String> questions = shownQuestions.get();
+        return questions != null ? questions : Set.of();
+    }
+
+    public boolean looksLikeRejection(String message) {
+        if (message == null || message.isBlank()) {
+            return false;
+        }
+        String lower = message.toLowerCase();
+        return lower.contains("не то")
+                || lower.contains("не подходит")
+                || lower.contains("не это")
+                || lower.contains("другой вариант")
+                || lower.contains("другая инструкция")
+                || lower.contains("не та")
+                || lower.contains("нет,")
+                || lower.contains("другое");
     }
 
     public String embedQueryAsVector(String text) {

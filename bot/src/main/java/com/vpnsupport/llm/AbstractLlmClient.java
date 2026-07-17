@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public abstract class AbstractLlmClient implements LlmClient {
 
@@ -37,9 +38,11 @@ public abstract class AbstractLlmClient implements LlmClient {
 
     @Override
     public String chat(String userMessage, long telegramUserId) {
+        chatHistoryService.clearRejectedFaqsIfNewTopic(telegramUserId, userMessage);
         String response = doChat(userMessage, telegramUserId, null, null);
         chatHistoryService.addUserMessage(telegramUserId, userMessage);
         chatHistoryService.addAssistantMessage(telegramUserId, response);
+        trackShownFaqs(telegramUserId);
         return response;
     }
 
@@ -49,16 +52,27 @@ public abstract class AbstractLlmClient implements LlmClient {
             throw new LlmProcessingException("Image not supported",
                     getProviderName() + " не поддерживает обработку изображений. Опишите проблему текстом.");
         }
+        chatHistoryService.clearRejectedFaqsIfNewTopic(telegramUserId, userMessage);
         String response = doChat(userMessage, telegramUserId, base64Image, mimeType);
         String historyMessage = userMessage != null && !userMessage.isBlank() ? userMessage : "[Скриншот]";
         chatHistoryService.addUserMessage(telegramUserId, historyMessage);
         chatHistoryService.addAssistantMessage(telegramUserId, response);
+        trackShownFaqs(telegramUserId);
         return response;
     }
 
     protected String doChat(String userMessage, long telegramUserId, String base64Image, String mimeType) {
         int iteration = 0;
-        String faqContext = faqEmbeddingService.buildFaqContext(userMessage);
+
+        boolean isRejection = faqEmbeddingService.looksLikeRejection(userMessage);
+        String searchQuery = isRejection
+                ? chatHistoryService.getLastUserMessage(telegramUserId)
+                : userMessage;
+        if (searchQuery == null || searchQuery.isBlank()) {
+            searchQuery = userMessage;
+        }
+        Set<String> rejectedFaqs = chatHistoryService.getRejectedFaqQuestions(telegramUserId);
+        String faqContext = faqEmbeddingService.buildFaqContext(searchQuery, rejectedFaqs);
         List<Map<String, Object>> conversation = buildInitialConversation(
                 userMessage, telegramUserId, faqContext, base64Image, mimeType);
 
@@ -122,5 +136,12 @@ public abstract class AbstractLlmClient implements LlmClient {
 
     protected static String truncate(String s) {
         return s != null && s.length() > TOOL_RESULT_MAX_LOG_LENGTH ? s.substring(0, TOOL_RESULT_MAX_LOG_LENGTH) + "..." : s;
+    }
+
+    private void trackShownFaqs(long telegramUserId) {
+        Set<String> shown = faqEmbeddingService.getShownQuestions();
+        if (!shown.isEmpty()) {
+            chatHistoryService.addRejectedFaqQuestions(telegramUserId, shown);
+        }
     }
 }

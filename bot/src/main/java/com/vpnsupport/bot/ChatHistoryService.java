@@ -11,8 +11,10 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
@@ -27,6 +29,7 @@ public class ChatHistoryService {
     private final ConcurrentHashMap<Long, Deque<Map<String, Object>>> histories = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Long> lastActivity = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Boolean> loadedFromDb = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Set<String>> rejectedFaqQuestions = new ConcurrentHashMap<>();
 
     private final ChatMessageRepository chatMessageRepository;
     private final TaskExecutor taskExecutor;
@@ -97,6 +100,7 @@ public class ChatHistoryService {
         histories.remove(userId);
         lastActivity.remove(userId);
         loadedFromDb.remove(userId);
+        rejectedFaqQuestions.remove(userId);
         taskExecutor.execute(() -> {
             try {
                 chatMessageRepository.deleteByTelegramId(userId);
@@ -159,5 +163,45 @@ public class ChatHistoryService {
                 log.debug("Evicted stale in-memory history for user {}", userId);
             }
         });
+    }
+
+    public Set<String> getRejectedFaqQuestions(long userId) {
+        return Set.copyOf(rejectedFaqQuestions.getOrDefault(userId, Set.of()));
+    }
+
+    public void addRejectedFaqQuestions(long userId, Set<String> questions) {
+        rejectedFaqQuestions.compute(userId, (k, v) -> {
+            if (v == null) v = new HashSet<>();
+            v.addAll(questions);
+            return v;
+        });
+    }
+
+    public void clearRejectedFaqsIfNewTopic(long userId, String userMessage) {
+        if (userMessage == null || userMessage.isBlank()) return;
+        String lower = userMessage.toLowerCase();
+        boolean isRejection = lower.contains("не то")
+                || lower.contains("не подходит")
+                || lower.contains("не это")
+                || lower.contains("другой вариант")
+                || lower.contains("другая инструкция")
+                || lower.contains("не та")
+                || lower.contains("другое");
+        if (!isRejection) {
+            rejectedFaqQuestions.remove(userId);
+        }
+    }
+
+    public String getLastUserMessage(long userId) {
+        Deque<Map<String, Object>> history = histories.get(userId);
+        if (history == null || history.isEmpty()) return null;
+        var it = history.descendingIterator();
+        while (it.hasNext()) {
+            Map<String, Object> msg = it.next();
+            if ("user".equals(msg.get("role"))) {
+                return (String) msg.get("content");
+            }
+        }
+        return null;
     }
 }
