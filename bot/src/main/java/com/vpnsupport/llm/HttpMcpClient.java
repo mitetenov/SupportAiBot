@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vpnsupport.bot.AdminNotifier;
 import com.vpnsupport.config.RemnawaveMcpProperties;
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +42,7 @@ public class HttpMcpClient implements McpClientInterface {
     private volatile String sessionId;
     private volatile List<McpTool> cachedTools = Collections.emptyList();
 
+    @Autowired
     public HttpMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper,
                          AdminNotifier adminNotifier) {
         this(properties, objectMapper, adminNotifier, WebClient.builder()
