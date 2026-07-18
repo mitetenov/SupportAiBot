@@ -43,4 +43,22 @@ class OpenAiPropertiesTest {
         properties.setApiKey(null);
         assertNull(properties.getApiKey());
     }
+
+    @Test
+    void shouldDefaultEmbeddingModelToNull() {
+        assertNull(properties.getEmbeddingModel());
+    }
+
+    @Test
+    void shouldAllowSettingEmbeddingModel() {
+        properties.setEmbeddingModel("text-embedding-3-large");
+        assertEquals("text-embedding-3-large", properties.getEmbeddingModel());
+    }
+
+    @Test
+    void shouldAllowSettingEmbeddingModelToNull() {
+        properties.setEmbeddingModel("text-embedding-3-small");
+        properties.setEmbeddingModel(null);
+        assertNull(properties.getEmbeddingModel());
+    }
 }

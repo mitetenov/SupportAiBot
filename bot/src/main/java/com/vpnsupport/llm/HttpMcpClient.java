@@ -43,16 +43,21 @@ public class HttpMcpClient implements McpClientInterface {
 
     public HttpMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper,
                          AdminNotifier adminNotifier) {
-        this.properties = properties;
-        this.objectMapper = objectMapper;
-        this.adminNotifier = adminNotifier;
-        this.webClient = WebClient.builder()
+        this(properties, objectMapper, adminNotifier, WebClient.builder()
                 .baseUrl(properties.getUrl())
                 .defaultHeader("Content-Type", "application/json")
                 .defaultHeader("Accept", "application/json, text/event-stream")
                 .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
                         HttpClient.create().responseTimeout(REQUEST_TIMEOUT)))
-                .build();
+                .build());
+    }
+
+    HttpMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper,
+                  AdminNotifier adminNotifier, WebClient webClient) {
+        this.properties = properties;
+        this.objectMapper = objectMapper;
+        this.adminNotifier = adminNotifier;
+        this.webClient = webClient;
     }
 
     @PostConstruct
@@ -131,10 +136,9 @@ public class HttpMcpClient implements McpClientInterface {
                     return clientResponse.bodyToMono(String.class)
                             .flatMap(body -> {
                                 if (clientResponse.statusCode().isError()) {
-                                    return Mono.error(new RuntimeException(
-                                            "MCP HTTP error: " + clientResponse.statusCode() + " - " + body));
+                                    return Mono.just(Map.of("error", true, "body", body));
                                 }
-                                return Mono.just(body);
+                                return Mono.just(Map.of("error", false, "body", body));
                             });
                 })
                 .block(REQUEST_TIMEOUT);
@@ -143,7 +147,22 @@ public class HttpMcpClient implements McpClientInterface {
             throw new RuntimeException("Empty response from MCP initialize");
         }
 
-        String jsonPayload = extractJsonFromSse(response);
+        String body = (String) response.get("body");
+
+        if (Boolean.TRUE.equals(response.get("error"))) {
+            if (body != null && body.contains("already initialized")) {
+                log.warn("MCP server already initialized, reusing existing session");
+                if (sessionId != null) {
+                    log.info("MCP session reused: {}", sessionId);
+                    return;
+                }
+                log.error("MCP server already initialized but provided no session ID — restart mcp-remnawave service");
+                throw new RuntimeException("MCP server already initialized without session ID — restart mcp-remnawave");
+            }
+            throw new RuntimeException("MCP HTTP error: " + body);
+        }
+
+        String jsonPayload = extractJsonFromSse(body);
         JsonNode message = objectMapper.readTree(jsonPayload);
         if (message.has("error")) {
             throw new RuntimeException("MCP initialize error: " + message.get("error"));

@@ -171,11 +171,16 @@ public class OpenAiClient extends AbstractLlmClient {
     protected void addToolCallsToConversation(List<Map<String, Object>> conversation, LlmResponse response) {
         List<Map<String, Object>> toolCallMaps = new ArrayList<>();
         for (LlmResponse.ToolCall tc : response.toolCalls()) {
+            String argsJson;
+            try {
+                argsJson = objectMapper.writeValueAsString(tc.arguments());
+            } catch (Exception e) {
+                argsJson = "{}";
+            }
             toolCallMaps.add(Map.of(
                     "id", tc.id(),
                     "type", "function",
-                    "function", Map.of("name", tc.name(), "arguments",
-                            objectMapper.convertValue(tc.arguments(), Map.class))
+                    "function", Map.of("name", tc.name(), "arguments", argsJson)
             ));
         }
         conversation.add(Map.of("role", "assistant", "tool_calls", toolCallMaps));
@@ -242,6 +247,7 @@ public class OpenAiClient extends AbstractLlmClient {
                 toolsArray.add(objectMapper.valueToTree(tool));
             }
             body.put("tool_choice", "auto");
+            body.put("reasoning_effort", "none");
         }
 
         body.put("temperature", TEMPERATURE);

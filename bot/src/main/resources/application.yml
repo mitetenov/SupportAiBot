@@ -21,6 +21,9 @@ chat:
 llm:
   provider: ${LLM_PROVIDER:deepseek}
 
+embedding:
+  provider: ${EMBEDDING_PROVIDER:gemini}
+
 telegram:
   bot-token: ${TELEGRAM_BOT_TOKEN}
   support-group-chat-id: ${TELEGRAM_SUPPORT_GROUP_CHAT_ID}
@@ -40,7 +43,8 @@ gemini:
 openai:
   api-key: ${OPENAI_API_KEY:}
   base-url: https://api.openai.com/v1
-  model: gpt-5.4-mini
+  model: ${OPENAI_MODEL:gpt-5.4-mini}
+  embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
 
 remnawave:
   mcp:

@@ -330,4 +330,134 @@ class OpenAiClientTest {
                 new OpenAiClient(props, objectMapper, mcpRouter,
                         chatHistoryService, faqEmbeddingService, tokenUsageRepository));
     }
+
+    @Test
+    void shouldIncludeReasoningEffortWhenToolsPresent() throws Exception {
+        when(mcpRouter.listTools()).thenReturn(List.of(
+                new McpTool("test_tool", "test description", Map.of())
+        ));
+
+        var method = OpenAiClient.class.getDeclaredMethod("buildRequestBody", List.class);
+        method.setAccessible(true);
+
+        List<Map<String, Object>> messages = List.of(Map.of("role", "user", "content", "hi"));
+        ObjectNode body = (ObjectNode) method.invoke(client, messages);
+
+        assertTrue(body.has("reasoning_effort"), "Should include reasoning_effort when tools are present");
+        assertEquals("none", body.get("reasoning_effort").asText());
+        assertTrue(body.has("tools"));
+        assertTrue(body.has("tool_choice"));
+        assertEquals("auto", body.get("tool_choice").asText());
+    }
+
+    @Test
+    void shouldNotIncludeReasoningEffortWhenNoTools() throws Exception {
+        when(mcpRouter.listTools()).thenReturn(List.of());
+
+        var method = OpenAiClient.class.getDeclaredMethod("buildRequestBody", List.class);
+        method.setAccessible(true);
+
+        List<Map<String, Object>> messages = List.of(Map.of("role", "user", "content", "hi"));
+        ObjectNode body = (ObjectNode) method.invoke(client, messages);
+
+        assertFalse(body.has("reasoning_effort"), "Should NOT include reasoning_effort without tools");
+        assertFalse(body.has("tools"));
+        assertFalse(body.has("tool_choice"));
+    }
+
+    @Test
+    void shouldIncludeTemperatureInRequestBody() throws Exception {
+        when(mcpRouter.listTools()).thenReturn(List.of());
+
+        var method = OpenAiClient.class.getDeclaredMethod("buildRequestBody", List.class);
+        method.setAccessible(true);
+
+        ObjectNode body = (ObjectNode) method.invoke(client, List.of(Map.of("role", "user", "content", "hi")));
+
+        assertTrue(body.has("temperature"));
+        assertEquals(0.3, body.get("temperature").asDouble(), 0.001);
+    }
+
+    @Test
+    void shouldIncludeModelInRequestBody() throws Exception {
+        when(mcpRouter.listTools()).thenReturn(List.of());
+
+        var method = OpenAiClient.class.getDeclaredMethod("buildRequestBody", List.class);
+        method.setAccessible(true);
+
+        ObjectNode body = (ObjectNode) method.invoke(client, List.of(Map.of("role", "user", "content", "hi")));
+
+        assertEquals("openai-test", body.get("model").asText());
+    }
+
+    @Test
+    void shouldSerializeToolCallArgumentsToJsonString() throws Exception {
+        Map<String, Object> complexArgs = Map.of(
+                "key1", "value1",
+                "key2", 42,
+                "nested", Map.of("inner", "data")
+        );
+
+        String expectedJson = objectMapper.writeValueAsString(complexArgs);
+
+        var method = OpenAiClient.class.getDeclaredMethod(
+                "addToolCallsToConversation", List.class, LlmResponse.class);
+        method.setAccessible(true);
+
+        List<Map<String, Object>> conversation = new java.util.ArrayList<>();
+        LlmResponse response = new LlmResponse("", List.of(
+                new LlmResponse.ToolCall("test_func", "call_123", complexArgs)
+        ));
+
+        method.invoke(client, conversation, response);
+
+        assertEquals(1, conversation.size());
+        assertEquals("assistant", conversation.get(0).get("role"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> toolCalls = (List<Map<String, Object>>) conversation.get(0).get("tool_calls");
+        assertEquals(1, toolCalls.size());
+        assertEquals("call_123", toolCalls.get(0).get("id"));
+        assertEquals("function", toolCalls.get(0).get("type"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> function = (Map<String, Object>) toolCalls.get(0).get("function");
+        assertEquals("test_func", function.get("name"));
+        assertEquals(expectedJson, function.get("arguments"));
+    }
+
+    @Test
+    void shouldHandleEmptyArgumentsInToolCall() throws Exception {
+        var method = OpenAiClient.class.getDeclaredMethod(
+                "addToolCallsToConversation", List.class, LlmResponse.class);
+        method.setAccessible(true);
+
+        List<Map<String, Object>> conversation = new java.util.ArrayList<>();
+        LlmResponse response = new LlmResponse("", List.of(
+                new LlmResponse.ToolCall("empty_func", "call_1", Map.of())
+        ));
+
+        method.invoke(client, conversation, response);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> toolCalls = (List<Map<String, Object>>) conversation.get(0).get("tool_calls");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> function = (Map<String, Object>) toolCalls.get(0).get("function");
+        assertEquals("{}", function.get("arguments"));
+    }
+
+    @Test
+    void shouldIncludeMessagesInRequestBody() throws Exception {
+        when(mcpRouter.listTools()).thenReturn(List.of());
+
+        var method = OpenAiClient.class.getDeclaredMethod("buildRequestBody", List.class);
+        method.setAccessible(true);
+
+        List<Map<String, Object>> messages = List.of(
+                Map.of("role", "system", "content", "You are helpful"),
+                Map.of("role", "user", "content", "hello")
+        );
+        ObjectNode body = (ObjectNode) method.invoke(client, messages);
+
+        assertTrue(body.has("messages"));
+        assertEquals(2, body.get("messages").size());
+    }
 }

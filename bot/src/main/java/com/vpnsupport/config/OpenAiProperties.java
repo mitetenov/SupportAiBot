@@ -8,6 +8,7 @@ public class OpenAiProperties {
     private String apiKey;
     private String baseUrl = "https://api.openai.com/v1";
     private String model;
+    private String embeddingModel;
 
     public String getApiKey() {
         return apiKey;
@@ -31,5 +32,13 @@ public class OpenAiProperties {
 
     public void setModel(String model) {
         this.model = model;
+    }
+
+    public String getEmbeddingModel() {
+        return embeddingModel;
+    }
+
+    public void setEmbeddingModel(String embeddingModel) {
+        this.embeddingModel = embeddingModel;
     }
 }
