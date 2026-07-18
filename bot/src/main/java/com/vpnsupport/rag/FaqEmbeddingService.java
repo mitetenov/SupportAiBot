@@ -1,19 +1,11 @@
 package com.vpnsupport.rag;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.vpnsupport.config.GeminiProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.netty.http.client.HttpClient;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -25,8 +17,6 @@ import java.util.UUID;
 public class FaqEmbeddingService {
 
     private static final Logger log = LoggerFactory.getLogger(FaqEmbeddingService.class);
-    private static final int EMBEDDING_DIMENSION = 2000;
-    private static final String EMBEDDING_MODEL = "gemini-embedding-001";
     private static final int SEARCH_LIMIT = 3;
     private static final int MAX_RESULTS = 5;
     private static final double MIN_SIMILARITY = 0.65;
@@ -37,22 +27,17 @@ public class FaqEmbeddingService {
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
-    private final WebClient webClient;
+    private final EmbeddingProvider embeddingProvider;
     private volatile boolean ready = false;
     private final ThreadLocal<Double> lastMaxSimilarity = ThreadLocal.withInitial(() -> 0.0);
     private final ThreadLocal<String> lastBestQuestion = new ThreadLocal<>();
     private final ThreadLocal<Set<String>> shownQuestions = new ThreadLocal<>();
 
     public FaqEmbeddingService(JdbcTemplate jdbcTemplate,
-                                ObjectMapper objectMapper, GeminiProperties geminiProperties) {
+                                ObjectMapper objectMapper, EmbeddingProvider embeddingProvider) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
-        this.webClient = WebClient.builder()
-                .baseUrl(geminiProperties.getBaseUrl())
-                .defaultHeader("x-goog-api-key", geminiProperties.getApiKey())
-                .clientConnector(new ReactorClientHttpConnector(
-                        HttpClient.create().responseTimeout(Duration.ofSeconds(60))))
-                .build();
+        this.embeddingProvider = embeddingProvider;
     }
 
     public void initSchema() {
@@ -67,7 +52,7 @@ public class FaqEmbeddingService {
                 """);
         jdbcTemplate.execute("ALTER TABLE faq DROP COLUMN IF EXISTS embedding");
         jdbcTemplate.execute("ALTER TABLE faq ADD COLUMN embedding vector(%d)"
-                .formatted(EMBEDDING_DIMENSION));
+                .formatted(embeddingProvider.getDimension()));
         jdbcTemplate.execute("ALTER TABLE faq DROP COLUMN IF EXISTS image");
         jdbcTemplate.execute("ALTER TABLE faq ADD COLUMN IF NOT EXISTS images VARCHAR(1000)");
         try {
@@ -113,8 +98,8 @@ public class FaqEmbeddingService {
     }
 
     public void indexFaq(String question, String answer, String images) {
-        float[] embedding = embed(question);
-        if (embedding == null || embedding.length != EMBEDDING_DIMENSION) {
+        float[] embedding = embeddingProvider.embed(question);
+        if (embedding == null || embedding.length != embeddingProvider.getDimension()) {
             log.warn("Failed to embed FAQ: {}", question);
             return;
         }
@@ -142,8 +127,8 @@ public class FaqEmbeddingService {
             return List.of();
         }
 
-        float[] queryEmbedding = embed(query);
-        if (queryEmbedding == null || queryEmbedding.length != EMBEDDING_DIMENSION) {
+        float[] queryEmbedding = embeddingProvider.embed(query);
+        if (queryEmbedding == null || queryEmbedding.length != embeddingProvider.getDimension()) {
             return List.of();
         }
 
@@ -275,7 +260,7 @@ public class FaqEmbeddingService {
     }
 
     public String embedQueryAsVector(String text) {
-        float[] embedding = embed(text);
+        float[] embedding = embeddingProvider.embed(text);
         return embedding != null ? vectorToString(embedding) : null;
     }
 
@@ -325,46 +310,6 @@ public class FaqEmbeddingService {
                 .filter(s -> !s.isBlank())
                 .distinct()
                 .toList();
-    }
-
-    private float[] embed(String text) {
-        try {
-            ObjectNode requestBody = objectMapper.createObjectNode();
-            ObjectNode content = requestBody.putObject("content");
-            ArrayNode parts = content.putArray("parts");
-            parts.addObject().put("text", text);
-            requestBody.put("outputDimensionality", EMBEDDING_DIMENSION);
-
-            String response = webClient.post()
-                    .uri("/models/{model}:embedContent", EMBEDDING_MODEL)
-                    .header("Content-Type", "application/json")
-                    .bodyValue(requestBody)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
-
-            JsonNode jsonResponse = objectMapper.readTree(response);
-            JsonNode embeddingNode = jsonResponse.get("embedding");
-            if (embeddingNode == null) {
-                log.error("No embedding in response: {}", response);
-                return null;
-            }
-            JsonNode values = embeddingNode.get("values");
-            if (values == null || !values.isArray()) {
-                log.error("Unexpected embedding response: {}", response);
-                return null;
-            }
-
-            float[] result = new float[values.size()];
-            for (int i = 0; i < values.size(); i++) {
-                result[i] = values.get(i).floatValue();
-            }
-            return result;
-
-        } catch (Exception e) {
-            log.error("Embedding request failed", e);
-            return null;
-        }
     }
 
     private String vectorToString(float[] vector) {

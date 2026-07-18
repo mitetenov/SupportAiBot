@@ -43,7 +43,7 @@ fi
 
 echo -e "${GREEN}Загрузка образа и запуск...${NC}"
 docker compose pull
-docker compose up -d
+docker compose up -d --force-recreate support-bot mcp-remnawave
 
 echo ""
 echo -e "${GREEN}Проверка состояния...${NC}"

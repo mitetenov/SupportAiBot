@@ -1,7 +1,6 @@
 package com.vpnsupport.rag;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.vpnsupport.config.GeminiProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,17 +20,18 @@ class FaqEmbeddingServiceTest {
     @Mock
     private JdbcTemplate jdbcTemplate;
 
+    @Mock
+    private EmbeddingProvider embeddingProvider;
+
     private ObjectMapper objectMapper;
     private FaqEmbeddingService service;
 
     @BeforeEach
     void setUp() {
-        GeminiProperties geminiProperties = new GeminiProperties();
-        geminiProperties.setBaseUrl("http://localhost:9999");
-        geminiProperties.setApiKey("test-key");
+        lenient().when(embeddingProvider.getDimension()).thenReturn(2000);
 
         objectMapper = new ObjectMapper();
-        service = new FaqEmbeddingService(jdbcTemplate, objectMapper, geminiProperties);
+        service = new FaqEmbeddingService(jdbcTemplate, objectMapper, embeddingProvider);
     }
 
     @Test
@@ -217,5 +217,77 @@ class FaqEmbeddingServiceTest {
         assertFalse((Boolean) method.invoke(service, (String) null));
         assertFalse((Boolean) method.invoke(service, "  "));
         assertFalse((Boolean) method.invoke(service, "как оплатить"));
+    }
+
+    @Test
+    void shouldCallEmbedProviderOnSearch() {
+        when(embeddingProvider.embed(anyString())).thenReturn(new float[]{0.1f, 0.2f});
+        when(embeddingProvider.getDimension()).thenReturn(2);
+
+        service.markReady();
+        service.search("test query");
+
+        verify(embeddingProvider).embed("test query");
+    }
+
+    @Test
+    void shouldPassSearchResultToJdbcWhenEmbedSucceeds() {
+        when(embeddingProvider.embed(anyString())).thenReturn(new float[]{0.5f, 0.3f});
+        when(embeddingProvider.getDimension()).thenReturn(2);
+
+        service.markReady();
+
+        var results = service.search("test");
+        assertTrue(results.isEmpty());
+
+        verify(embeddingProvider).embed("test");
+    }
+
+    @Test
+    void shouldIndexFaqWithEmbedding() {
+        when(embeddingProvider.embed(eq("test question"))).thenReturn(new float[]{1.0f});
+        when(embeddingProvider.getDimension()).thenReturn(1);
+
+        service.clearFaq();
+        service.indexFaq("test question", "test answer", null);
+
+        verify(jdbcTemplate).update(eq("INSERT INTO faq (id, question, answer, embedding, images) VALUES (?, ?, ?, ?::vector, ?)"),
+                anyString(), eq("test question"), eq("test answer"), anyString(), isNull());
+        verify(embeddingProvider).embed("test question");
+    }
+
+    @Test
+    void shouldSkipIndexFaqWhenEmbedReturnsNull() {
+        when(embeddingProvider.embed(anyString())).thenReturn(null);
+
+        service.clearFaq();
+        service.indexFaq("query", "answer", null);
+
+        verify(jdbcTemplate, never()).update(eq("INSERT INTO faq (id, question, answer, embedding, images) VALUES (?, ?, ?, ?::vector, ?)"),
+                anyString(), anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void shouldSkipIndexFaqWhenEmbedWrongDimension() {
+        when(embeddingProvider.embed(anyString())).thenReturn(new float[]{1.0f, 2.0f});
+        when(embeddingProvider.getDimension()).thenReturn(3);
+
+        service.clearFaq();
+        service.indexFaq("query", "answer", null);
+
+        verify(jdbcTemplate, never()).update(eq("INSERT INTO faq (id, question, answer, embedding, images) VALUES (?, ?, ?, ?::vector, ?)"),
+                anyString(), anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void shouldEmbedQueryAsVector() {
+        when(embeddingProvider.embed(eq("my query"))).thenReturn(new float[]{0.8f, 0.2f});
+
+        String result = service.embedQueryAsVector("my query");
+
+        assertNotNull(result);
+        assertTrue(result.startsWith("["));
+        assertTrue(result.contains("0.8"));
+        verify(embeddingProvider).embed("my query");
     }
 }
