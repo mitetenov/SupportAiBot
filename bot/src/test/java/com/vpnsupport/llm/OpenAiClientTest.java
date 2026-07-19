@@ -111,8 +111,13 @@ class OpenAiClientTest {
         assertNotNull(parts);
         assertEquals(2, parts.size());
         @SuppressWarnings("unchecked")
+        Map<String, Object> textPart = (Map<String, Object>) parts.get(0);
+        assertEquals("input_text", textPart.get("type"));
+        assertEquals("Describe this", textPart.get("text"));
+        @SuppressWarnings("unchecked")
         Map<String, Object> imagePart = (Map<String, Object>) parts.get(1);
-        assertEquals("image_url", imagePart.get("type"));
+        assertEquals("input_image", imagePart.get("type"));
+        assertEquals("data:image/png;base64,base64data", imagePart.get("image_url"));
     }
 
     @Test
@@ -133,6 +138,10 @@ class OpenAiClientTest {
         @SuppressWarnings("unchecked")
         List<Object> parts = (List<Object>) userMsg.get("content");
         assertEquals(1, parts.size(), "Should only have image part when text is blank");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> imagePart = (Map<String, Object>) parts.get(0);
+        assertEquals("input_image", imagePart.get("type"));
+        assertEquals("data:image/jpeg;base64,base64data", imagePart.get("image_url"));
     }
 
     @Test
