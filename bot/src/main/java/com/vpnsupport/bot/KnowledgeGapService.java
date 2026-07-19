@@ -1,12 +1,15 @@
 package com.vpnsupport.bot;
 
+import com.vpnsupport.rag.EmbeddingProvider;
 import com.vpnsupport.rag.FaqEmbeddingService;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.PreparedStatementSetter;
 import org.springframework.stereotype.Service;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,10 +25,13 @@ public class KnowledgeGapService {
 
     private final JdbcTemplate jdbcTemplate;
     private final FaqEmbeddingService faqEmbeddingService;
+    private final EmbeddingProvider embeddingProvider;
 
-    public KnowledgeGapService(JdbcTemplate jdbcTemplate, FaqEmbeddingService faqEmbeddingService) {
+    public KnowledgeGapService(JdbcTemplate jdbcTemplate, FaqEmbeddingService faqEmbeddingService,
+                                EmbeddingProvider embeddingProvider) {
         this.jdbcTemplate = jdbcTemplate;
         this.faqEmbeddingService = faqEmbeddingService;
+        this.embeddingProvider = embeddingProvider;
     }
 
     @PostConstruct
@@ -36,11 +42,12 @@ public class KnowledgeGapService {
     public void initSchema() {
         log.info("Initializing knowledge_gaps schema");
         jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS vector");
+        int dim = embeddingProvider.getDimension();
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS knowledge_gaps (
                     id BIGSERIAL PRIMARY KEY,
                     user_query VARCHAR(2000) NOT NULL,
-                    embedding VECTOR(2000),
+                    embedding VECTOR(%d),
                     best_faq_question VARCHAR(2000),
                     max_similarity DOUBLE PRECISION,
                     faq_count INTEGER DEFAULT 0,
@@ -51,7 +58,10 @@ public class KnowledgeGapService {
                     last_seen TIMESTAMP NOT NULL,
                     telegram_id BIGINT
                 )
-                """);
+                """.formatted(dim));
+        jdbcTemplate.execute("ALTER TABLE knowledge_gaps DROP COLUMN IF EXISTS embedding");
+        jdbcTemplate.execute("ALTER TABLE knowledge_gaps ADD COLUMN embedding vector(%d)"
+                .formatted(dim));
         try {
             jdbcTemplate.execute("""
                     CREATE INDEX IF NOT EXISTS knowledge_gaps_embedding_idx
@@ -147,7 +157,7 @@ public class KnowledgeGapService {
         if (existingId != null) {
             jdbcTemplate.update(
                     "UPDATE knowledge_gaps SET gap_count = gap_count + 1, last_seen = ? WHERE id = ?",
-                    Instant.now(), existingId);
+                    Timestamp.from(Instant.now()), existingId);
             log.debug("Incremented gap count for existing gap id={}", existingId);
         } else {
             insertGap(userQuery, vectorStr, telegramUserId, bestFaqQuestion, maxSimilarity,
@@ -158,21 +168,37 @@ public class KnowledgeGapService {
     private void insertGap(String userQuery, String vectorStr, long telegramUserId,
                            String bestFaqQuestion, double maxSimilarity, int faqCount,
                            String triggerReason, String botResponse) {
-        Instant now = Instant.now();
-        jdbcTemplate.update(
-                "INSERT INTO knowledge_gaps (user_query, embedding, telegram_id, best_faq_question, " +
-                "max_similarity, faq_count, trigger_reason, bot_response, first_seen, last_seen) " +
-                "VALUES (?, ?::vector, ?, ?, ?, ?, ?, ?, ?, ?)",
-                userQuery,
-                vectorStr,
-                telegramUserId,
-                bestFaqQuestion,
-                maxSimilarity,
-                faqCount,
-                triggerReason,
-                botResponse,
-                now,
-                now);
+        Timestamp now = Timestamp.from(Instant.now());
+        if (vectorStr == null || vectorStr.isBlank()) {
+            jdbcTemplate.update(
+                    "INSERT INTO knowledge_gaps (user_query, embedding, telegram_id, best_faq_question, " +
+                    "max_similarity, faq_count, trigger_reason, bot_response, first_seen, last_seen) " +
+                    "VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    userQuery,
+                    telegramUserId,
+                    bestFaqQuestion,
+                    maxSimilarity,
+                    faqCount,
+                    triggerReason,
+                    botResponse,
+                    now,
+                    now);
+        } else {
+            jdbcTemplate.update(
+                    "INSERT INTO knowledge_gaps (user_query, embedding, telegram_id, best_faq_question, " +
+                    "max_similarity, faq_count, trigger_reason, bot_response, first_seen, last_seen) " +
+                    "VALUES (?, CAST(? AS vector), ?, ?, ?, ?, ?, ?, ?, ?)",
+                    userQuery,
+                    vectorStr,
+                    telegramUserId,
+                    bestFaqQuestion,
+                    maxSimilarity,
+                    faqCount,
+                    triggerReason,
+                    botResponse,
+                    now,
+                    now);
+        }
         log.debug("Inserted new knowledge gap: trigger={}, query='{}'", triggerReason, userQuery);
     }
 
@@ -180,9 +206,9 @@ public class KnowledgeGapService {
         try {
             List<Long> ids = new ArrayList<>();
             jdbcTemplate.query(
-                    "SELECT id, 1 - (embedding <=> ?::vector) AS similarity FROM knowledge_gaps " +
-                    "WHERE embedding IS NOT NULL ORDER BY embedding <=> ?::vector LIMIT 1",
-                    ps -> {
+                    "SELECT id, 1 - (embedding <=> CAST(? AS vector)) AS similarity FROM knowledge_gaps " +
+                    "WHERE embedding IS NOT NULL ORDER BY embedding <=> CAST(? AS vector) LIMIT 1",
+                    (PreparedStatementSetter) ps -> {
                         ps.setString(1, vectorStr);
                         ps.setString(2, vectorStr);
                     },

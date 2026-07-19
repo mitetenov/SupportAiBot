@@ -45,6 +45,7 @@ openai:
   base-url: https://api.openai.com/v1
   model: ${OPENAI_MODEL:gpt-5.4-mini}
   embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+  temperature: ${OPENAI_TEMPERATURE:}
 
 remnawave:
   mcp:

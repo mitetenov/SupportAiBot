@@ -1,5 +1,6 @@
 package com.vpnsupport.bot;
 
+import com.vpnsupport.rag.EmbeddingProvider;
 import com.vpnsupport.rag.FaqEmbeddingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,19 +24,25 @@ class KnowledgeGapServiceTest {
     @Mock
     private FaqEmbeddingService faqEmbeddingService;
 
+    @Mock
+    private EmbeddingProvider embeddingProvider;
+
     private KnowledgeGapService service;
 
     @BeforeEach
     void setUp() {
-        service = new KnowledgeGapService(jdbcTemplate, faqEmbeddingService);
+        lenient().when(embeddingProvider.getDimension()).thenReturn(1536);
+        service = new KnowledgeGapService(jdbcTemplate, faqEmbeddingService, embeddingProvider);
     }
 
     @Test
     void shouldInitSchema() {
         service.initSchema();
 
+        verify(embeddingProvider, atLeastOnce()).getDimension();
         verify(jdbcTemplate).execute("CREATE EXTENSION IF NOT EXISTS vector");
         verify(jdbcTemplate).execute(contains("CREATE TABLE IF NOT EXISTS knowledge_gaps"));
+        verify(jdbcTemplate).execute(contains("VECTOR(1536)"));
     }
 
     @Test
@@ -56,7 +63,8 @@ class KnowledgeGapServiceTest {
 
         service.evaluate("Странный вопрос без FAQ", 12345L, "Я не знаю ответа");
 
-        verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
+                any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -67,7 +75,8 @@ class KnowledgeGapServiceTest {
 
         service.evaluate("Сложный вопрос", 12345L, "Попробуйте обновить подписку");
 
-        verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
+                any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -78,7 +87,8 @@ class KnowledgeGapServiceTest {
 
         service.evaluate("Оплатил но не продлилось", 12345L, "Обратитесь в @PeipivoSalesBot [ESCALATE]");
 
-        verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
+                any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -89,7 +99,8 @@ class KnowledgeGapServiceTest {
 
         service.evaluate("Вопрос про другое", 12345L, "К сожалению, я не знаю ответа на этот вопрос");
 
-        verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
+                any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -100,7 +111,8 @@ class KnowledgeGapServiceTest {
 
         service.evaluateOperatorRequest("Нужен оператор", 12345L);
 
-        verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"), any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
+        verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
+                any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

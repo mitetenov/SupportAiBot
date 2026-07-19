@@ -28,10 +28,11 @@ import java.util.Map;
 public class OpenAiClient extends AbstractLlmClient {
 
     private static final Logger log = LoggerFactory.getLogger(OpenAiClient.class);
-    private static final double TEMPERATURE = 0.3;
+    private static final double DEFAULT_TEMPERATURE = 0.3;
 
     private final WebClient webClient;
     private final String model;
+    private final Double temperature;
     private volatile List<Map<String, Object>> cachedToolDefinitions;
 
     public OpenAiClient(OpenAiProperties properties, ObjectMapper objectMapper,
@@ -44,6 +45,7 @@ public class OpenAiClient extends AbstractLlmClient {
             throw new IllegalArgumentException("OpenAI API key must not be null or blank");
         }
         this.model = properties.getModel();
+        this.temperature = properties.getTemperature();
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getBaseUrl())
                 .defaultHeader("Authorization", "Bearer " + apiKey)
@@ -117,8 +119,17 @@ public class OpenAiClient extends AbstractLlmClient {
                 .retrieve()
                 .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
                         clientResponse -> clientResponse.bodyToMono(String.class)
-                                .flatMap(err -> Mono.error(new RuntimeException(
-                                        "OpenAI API error: " + clientResponse.statusCode() + " - " + err))))
+                                .flatMap(err -> {
+                                    if (clientResponse.statusCode().value() == 401) {
+                                        return Mono.error(new RuntimeException(
+                                                "OpenAI API error (model=" + model + "): "
+                                                + clientResponse.statusCode() + " - " + err
+                                                + " | Проверьте OPENAI_API_KEY и OPENAI_MODEL в .env"));
+                                    }
+                                    return Mono.error(new RuntimeException(
+                                            "OpenAI API error (model=" + model + "): "
+                                            + clientResponse.statusCode() + " - " + err));
+                                }))
                 .bodyToMono(String.class)
                 .block();
     }
@@ -250,7 +261,9 @@ public class OpenAiClient extends AbstractLlmClient {
             body.put("reasoning_effort", "none");
         }
 
-        body.put("temperature", TEMPERATURE);
+        if (temperature != null) {
+            body.put("temperature", temperature);
+        }
         return body;
     }
 }

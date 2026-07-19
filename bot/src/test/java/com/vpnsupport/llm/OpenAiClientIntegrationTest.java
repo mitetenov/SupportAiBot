@@ -69,6 +69,7 @@ class OpenAiClientIntegrationTest {
         properties.setBaseUrl(baseUrl);
         properties.setModel("gpt-5.4-mini");
         properties.setApiKey("sk-test-integration");
+        properties.setTemperature(0.3);
 
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
