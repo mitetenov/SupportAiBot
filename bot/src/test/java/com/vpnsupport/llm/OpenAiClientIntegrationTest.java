@@ -58,7 +58,7 @@ class OpenAiClientIntegrationTest {
 
         // Start a mock HTTP server on a random port
         mockServer = HttpServer.create(new InetSocketAddress(0), 0);
-        mockServer.createContext("/chat/completions", this::handleChatCompletions);
+        mockServer.createContext("/responses", this::handleResponses);
         mockServer.setExecutor(null);
         mockServer.start();
 
@@ -84,7 +84,7 @@ class OpenAiClientIntegrationTest {
         }
     }
 
-    private void handleChatCompletions(HttpExchange exchange) throws IOException {
+    private void handleResponses(HttpExchange exchange) throws IOException {
         // Read the request body
         capturedRequestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
 
@@ -112,15 +112,13 @@ class OpenAiClientIntegrationTest {
     void shouldSendCorrectRequestFormat() throws Exception {
         responseToReturn = """
                 {
-                    "choices": [{
-                        "message": {
-                            "content": "Test response",
-                            "tool_calls": null
-                        }
+                    "output": [{
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "Test response"}]
                     }],
                     "usage": {
-                        "prompt_tokens": 10,
-                        "completion_tokens": 5,
+                        "input_tokens": 10,
+                        "output_tokens": 5,
                         "total_tokens": 15
                     }
                 }
@@ -139,12 +137,9 @@ class OpenAiClientIntegrationTest {
         var requestJson = objectMapper.readTree(capturedRequestBody);
 
         assertEquals("gpt-5.4-mini", requestJson.get("model").asText());
-        assertTrue(requestJson.has("messages"), "Request must have messages array");
-        assertEquals(3, requestJson.get("messages").size());
-        assertEquals(0.3, requestJson.get("temperature").asDouble(), 0.001);
+        assertTrue(requestJson.has("input"), "Request must have input array");
         assertFalse(requestJson.has("tools"), "Tools key should be absent when mcpRouter has no tools");
 
-        // Verify response was parsed
         assertTrue(result.contains("Test response"));
     }
 
@@ -152,22 +147,15 @@ class OpenAiClientIntegrationTest {
     void shouldIncludeToolsInRequestWhenAvailable() throws Exception {
         responseToReturn = """
                 {
-                    "choices": [{
-                        "message": {
-                            "content": null,
-                            "tool_calls": [{
-                                "id": "call_int_1",
-                                "type": "function",
-                                "function": {
-                                    "name": "nodes_list",
-                                    "arguments": "{}"
-                                }
-                            }]
-                        }
+                    "output": [{
+                        "type": "function_call",
+                        "call_id": "call_int_1",
+                        "name": "nodes_list",
+                        "arguments": "{}"
                     }],
                     "usage": {
-                        "prompt_tokens": 20,
-                        "completion_tokens": 10,
+                        "input_tokens": 20,
+                        "output_tokens": 10,
                         "total_tokens": 30
                     }
                 }
@@ -189,10 +177,10 @@ class OpenAiClientIntegrationTest {
         assertEquals("gpt-5.4-mini", requestJson.get("model").asText());
         assertTrue(requestJson.has("tools"));
         assertEquals(1, requestJson.get("tools").size());
-        assertEquals("nodes_list", requestJson.get("tools").get(0).get("function").get("name").asText());
+        assertEquals("nodes_list", requestJson.get("tools").get(0).get("name").asText());
         assertEquals("auto", requestJson.get("tool_choice").asText());
+        assertEquals("none", requestJson.get("reasoning").get("effort").asText());
 
-        // Verify tool call was parsed
         assertTrue(result.contains("call_int_1"));
         assertTrue(result.contains("nodes_list"));
     }
@@ -217,15 +205,13 @@ class OpenAiClientIntegrationTest {
     void shouldSendValidRequestBody() throws Exception {
         responseToReturn = """
                 {
-                    "choices": [{
-                        "message": {
-                            "content": "OK",
-                            "tool_calls": null
-                        }
+                    "output": [{
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "OK"}]
                     }],
                     "usage": {
-                        "prompt_tokens": 10,
-                        "completion_tokens": 5,
+                        "input_tokens": 10,
+                        "output_tokens": 5,
                         "total_tokens": 15
                     }
                 }
@@ -240,17 +226,13 @@ class OpenAiClientIntegrationTest {
 
         client.callApi(conversation, null, 123L);
 
-        // Validate the request body is valid JSON with correct structure
         var requestJson = objectMapper.readTree(capturedRequestBody);
 
-        // Check messages have correct roles
-        var messages = requestJson.get("messages");
-        assertEquals("system", messages.get(0).get("role").asText());
-        assertEquals("system", messages.get(1).get("role").asText());
-        assertEquals("user", messages.get(2).get("role").asText());
-        assertEquals("Hello", messages.get(2).get("content").asText());
+        var input = requestJson.get("input");
+        assertEquals("system", input.get(0).get("role").asText());
+        assertEquals("user", input.get(input.size() - 1).get("role").asText());
+        assertEquals("Hello", input.get(input.size() - 1).get("content").asText());
 
-        // Check temperature
         assertEquals(0.3, requestJson.get("temperature").asDouble(), 0.001);
     }
 }
