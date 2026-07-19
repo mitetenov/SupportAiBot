@@ -22,6 +22,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
@@ -54,7 +55,7 @@ public class HttpMcpClient implements McpClientInterface {
                 .build());
     }
 
-    HttpMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper,
+    public HttpMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper,
                   AdminNotifier adminNotifier, WebClient webClient) {
         this.properties = properties;
         this.objectMapper = objectMapper;
@@ -65,18 +66,35 @@ public class HttpMcpClient implements McpClientInterface {
     @PostConstruct
     public void init() {
         try {
-            initializeSession();
+            boolean hasSession = initializeSession();
+            if (!hasSession) {
+                log.info("MCP retrying initialize at {}", properties.getUrl());
+                hasSession = initializeSession();
+            }
+            if (!hasSession) {
+                log.warn("MCP server at {} has stale session (no session ID). "
+                        + "Restart the MCP server to clear. Bot will run without tools from this server.",
+                        properties.getUrl());
+                return;
+            }
             loadTools();
             initialized = true;
             log.info("MCP HTTP client initialized with {} tools at {}", cachedTools.size(), properties.getUrl());
         } catch (Exception e) {
-            log.error("Failed to initialize MCP HTTP client — bot will run without Remnawave tools", e);
-            adminNotifier.notifyError("MCP HTTP init failed", e);
+            log.error("Failed to initialize MCP HTTP client — bot will run without tools from {}", properties.getUrl(), e);
+            adminNotifier.notifyError("MCP HTTP init failed for " + properties.getUrl(), e);
         }
     }
 
     @PreDestroy
     public void shutdown() {
+        if (initialized) {
+            try {
+                sendNotification("notifications/cancelled", Map.of("reason", "bot shutdown"));
+            } catch (Exception e) {
+                log.debug("MCP shutdown notification failed (ignored): {}", e.getMessage());
+            }
+        }
         initialized = false;
         sessionId = null;
     }
@@ -112,7 +130,7 @@ public class HttpMcpClient implements McpClientInterface {
         }
     }
 
-    private void initializeSession() throws Exception {
+    private boolean initializeSession() throws Exception {
         int id = requestId.incrementAndGet();
 
         Map<String, Object> req = new LinkedHashMap<>();
@@ -122,7 +140,11 @@ public class HttpMcpClient implements McpClientInterface {
         req.put("params", Map.of(
                 "protocolVersion", PROTOCOL_VERSION,
                 "capabilities", Map.of(),
-                "clientInfo", Map.of("name", "vpn-support-bot", "version", "1.0.0")
+                "clientInfo", Map.of(
+                        "name", "vpn-support-bot",
+                        "version", "1.0.0",
+                        "instance", java.util.UUID.randomUUID().toString().substring(0, 8)
+                )
         ));
 
         log.debug("MCP initialize request [{}]", id);
@@ -153,13 +175,13 @@ public class HttpMcpClient implements McpClientInterface {
 
         if (Boolean.TRUE.equals(response.get("error"))) {
             if (body != null && body.contains("already initialized")) {
-                log.warn("MCP server already initialized, reusing existing session");
                 if (sessionId != null) {
                     log.info("MCP session reused: {}", sessionId);
-                    return;
+                    return true;
                 }
-                log.error("MCP server already initialized but provided no session ID — restart mcp-remnawave service");
-                throw new RuntimeException("MCP server already initialized without session ID — restart mcp-remnawave");
+                log.warn("MCP server returned 'already initialized' without session ID — retrying");
+                sessionId = null;
+                return false;
             }
             throw new RuntimeException("MCP HTTP error: " + body);
         }
@@ -173,10 +195,11 @@ public class HttpMcpClient implements McpClientInterface {
 
         if (sessionId == null) {
             log.warn("No MCP session ID in initialize response, subsequent calls may fail");
-        } else {
-            sendNotification("notifications/initialized", Map.of());
-            log.info("MCP protocol initialized");
+            return false;
         }
+        sendNotification("notifications/initialized", Map.of());
+        log.info("MCP protocol initialized");
+        return true;
     }
 
     private void loadTools() throws Exception {

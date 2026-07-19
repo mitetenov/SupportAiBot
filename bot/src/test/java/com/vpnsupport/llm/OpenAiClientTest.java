@@ -43,6 +43,7 @@ class OpenAiClientTest {
         properties.setBaseUrl("http://localhost:9999");
         properties.setModel("openai-test");
         properties.setApiKey("test-key");
+        properties.setTemperature(0.3);
 
         objectMapper = new ObjectMapper();
         client = new OpenAiClient(properties, objectMapper, mcpRouter,

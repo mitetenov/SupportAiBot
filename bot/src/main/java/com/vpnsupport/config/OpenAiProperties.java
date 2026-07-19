@@ -9,6 +9,7 @@ public class OpenAiProperties {
     private String baseUrl = "https://api.openai.com/v1";
     private String model;
     private String embeddingModel;
+    private Double temperature;
 
     public String getApiKey() {
         return apiKey;
@@ -40,5 +41,13 @@ public class OpenAiProperties {
 
     public void setEmbeddingModel(String embeddingModel) {
         this.embeddingModel = embeddingModel;
+    }
+
+    public Double getTemperature() {
+        return temperature;
+    }
+
+    public void setTemperature(Double temperature) {
+        this.temperature = temperature;
     }
 }

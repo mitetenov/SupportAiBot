@@ -201,7 +201,7 @@ class HttpMcpClientTest {
     }
 
     @Test
-    void shouldThrowWhenAlreadyInitializedWithoutSessionId() {
+    void shouldNotThrowWhenAlreadyInitializedWithoutSessionId() {
         HttpMcpClient client = createClient();
 
         server.enqueue(new MockResponse()
@@ -209,8 +209,11 @@ class HttpMcpClientTest {
                 .setBody("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Server already initialized\"},\"id\":null}")
                 .addHeader("Content-Type", "application/json"));
 
-        assertThrows(RuntimeException.class, () ->
+        assertDoesNotThrow(() ->
                 ReflectionTestUtils.invokeMethod(client, "initializeSession"));
+
+        String sessionId = (String) ReflectionTestUtils.getField(client, "sessionId");
+        assertNull(sessionId);
     }
 
     private static String invokeExtractJsonFromSse(String input) {
