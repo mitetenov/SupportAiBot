@@ -92,12 +92,12 @@ public class OpenAiClient extends AbstractLlmClient {
         if (base64Image != null && !base64Image.isEmpty()) {
             List<Object> parts = new ArrayList<>();
             if (userMessage != null && !userMessage.isBlank()) {
-                parts.add(Map.of("type", "text", "text", userMessage));
+                parts.add(Map.of("type", "input_text", "text", userMessage));
             }
             String dataUri = "data:" + (mimeType != null ? mimeType : "image/jpeg") + ";base64," + base64Image;
             parts.add(Map.of(
-                    "type", "image_url",
-                    "image_url", Map.of("url", dataUri)
+                    "type", "input_image",
+                    "image_url", dataUri
             ));
             messages.add(Map.of("role", "user", "content", parts));
         } else {
