@@ -110,11 +110,33 @@ public class OpenAiClient extends AbstractLlmClient {
     @Override
     @SuppressWarnings("unused")
     protected String callApi(List<Map<String, Object>> conversation, String faqContext, long telegramUserId) {
-        ObjectNode requestBody = buildRequestBody(conversation);
-        log.debug("OpenAI request ({} tools available)", getToolDefinitions().size());
+        ObjectNode requestBody = objectMapper.createObjectNode();
+        requestBody.put("model", model);
 
-        return webClient.post()
-                .uri("/chat/completions")
+        ArrayNode inputArray = requestBody.putArray("input");
+        for (Map<String, Object> item : conversation) {
+            inputArray.add(objectMapper.valueToTree(item));
+        }
+
+        List<Map<String, Object>> tools = getToolDefinitions();
+        if (!tools.isEmpty()) {
+            ArrayNode toolsArray = requestBody.putArray("tools");
+            for (Map<String, Object> tool : tools) {
+                toolsArray.add(objectMapper.valueToTree(tool));
+            }
+            requestBody.put("tool_choice", "auto");
+            ObjectNode reasoning = requestBody.putObject("reasoning");
+            reasoning.put("effort", "none");
+        }
+
+        if (temperature != null) {
+            requestBody.put("temperature", temperature);
+        }
+
+        log.debug("OpenAI Responses API request ({} tools available)", getToolDefinitions().size());
+
+        String rawResponse = webClient.post()
+                .uri("/responses")
                 .bodyValue(requestBody)
                 .retrieve()
                 .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
@@ -132,55 +154,70 @@ public class OpenAiClient extends AbstractLlmClient {
                                 }))
                 .bodyToMono(String.class)
                 .block();
+
+        if (rawResponse == null) {
+            throw new RuntimeException("OpenAI Responses API returned null/empty body");
+        }
+
+        return rawResponse;
     }
 
     @Override
     protected LlmResponse parseResponse(String rawResponse) {
         try {
             JsonNode jsonResponse = objectMapper.readTree(rawResponse);
-            JsonNode choices = jsonResponse.get("choices");
-            if (choices == null || !choices.isArray() || choices.isEmpty()) {
-                log.error("Empty choices in OpenAI response: {}", rawResponse);
-                throw new LlmProcessingException("Empty choices",
+            JsonNode output = jsonResponse.get("output");
+            if (output == null || !output.isArray()) {
+                log.error("No output array in OpenAI Responses API response: {}", rawResponse);
+                throw new LlmProcessingException("Empty output",
                         "Не удалось получить ответ от модели. Попробуйте позже.");
             }
 
-            JsonNode message = choices.get(0).get("message");
-            if (message == null) {
-                throw new LlmProcessingException("No message in response",
-                        "Не удалось получить ответ от модели. Попробуйте позже.");
-            }
-
-            String content = message.has("content") && !message.get("content").isNull()
-                    ? message.get("content").asText() : null;
-
+            StringBuilder text = new StringBuilder();
             List<LlmResponse.ToolCall> toolCalls = new ArrayList<>();
-            JsonNode toolCallsNode = message.get("tool_calls");
-            if (toolCallsNode != null && toolCallsNode.isArray()) {
-                for (JsonNode tc : toolCallsNode) {
-                    String fnName = tc.get("function").get("name").asText();
-                    String fnArgsStr = tc.get("function").get("arguments").asText();
-                    String tcId = tc.get("id").asText();
+
+            for (JsonNode item : output) {
+                String type = item.has("type") ? item.get("type").asText() : "";
+                if ("function_call".equals(type)) {
+                    String fnName = item.get("name").asText();
+                    String fnArgsStr = item.get("arguments").asText();
+                    String callId = item.get("call_id").asText();
                     @SuppressWarnings("unchecked")
                     Map<String, Object> args = fnArgsStr.isEmpty()
                             ? Map.of()
                             : objectMapper.readValue(fnArgsStr, Map.class);
-                    toolCalls.add(new LlmResponse.ToolCall(fnName, tcId, args));
+                    toolCalls.add(new LlmResponse.ToolCall(fnName, callId, args));
+                } else if ("message".equals(type)) {
+                    JsonNode content = item.get("content");
+                    if (content != null && content.isArray()) {
+                        for (JsonNode part : content) {
+                            if ("output_text".equals(part.get("type").asText())
+                                    && part.has("text") && !part.get("text").isNull()) {
+                                text.append(part.get("text").asText());
+                            }
+                        }
+                    }
                 }
             }
 
-            return new LlmResponse(content != null ? content : "", toolCalls);
+            if (text.isEmpty() && toolCalls.isEmpty()) {
+                log.warn("No text or tool calls in OpenAI response. output={}", rawResponse);
+                throw new LlmProcessingException("Empty response",
+                        "Модель не вернула ответа. Попробуйте переформулировать вопрос.");
+            }
+
+            return new LlmResponse(text.toString(), toolCalls);
         } catch (LlmProcessingException e) {
             throw e;
         } catch (Exception e) {
-            throw new LlmProcessingException("Parse error",
+            log.error("Failed to parse OpenAI response: {} — response: {}", e.getMessage(), rawResponse);
+            throw new LlmProcessingException("Parse error: " + e.getMessage(),
                     "Ошибка обработки ответа модели.");
         }
     }
 
     @Override
     protected void addToolCallsToConversation(List<Map<String, Object>> conversation, LlmResponse response) {
-        List<Map<String, Object>> toolCallMaps = new ArrayList<>();
         for (LlmResponse.ToolCall tc : response.toolCalls()) {
             String argsJson;
             try {
@@ -188,19 +225,23 @@ public class OpenAiClient extends AbstractLlmClient {
             } catch (Exception e) {
                 argsJson = "{}";
             }
-            toolCallMaps.add(Map.of(
-                    "id", tc.id(),
-                    "type", "function",
-                    "function", Map.of("name", tc.name(), "arguments", argsJson)
+            conversation.add(Map.of(
+                    "type", "function_call",
+                    "call_id", tc.id(),
+                    "name", tc.name(),
+                    "arguments", argsJson
             ));
         }
-        conversation.add(Map.of("role", "assistant", "tool_calls", toolCallMaps));
     }
 
     @Override
     protected void addToolResultToConversation(List<Map<String, Object>> conversation,
                                                 LlmResponse.ToolCall toolCall, String toolResult) {
-        conversation.add(Map.of("role", "tool", "tool_call_id", toolCall.id(), "content", toolResult));
+        conversation.add(Map.of(
+                "type", "function_call_output",
+                "call_id", toolCall.id(),
+                "output", toolResult
+        ));
     }
 
     @Override
@@ -209,9 +250,12 @@ public class OpenAiClient extends AbstractLlmClient {
             JsonNode jsonResponse = objectMapper.readTree(rawResponse);
             JsonNode usage = jsonResponse.get("usage");
             if (usage != null) {
-                long promptTokens = usage.get("prompt_tokens").asLong();
-                long completionTokens = usage.get("completion_tokens").asLong();
-                long totalTokens = usage.get("total_tokens").asLong();
+                long promptTokens = usage.has("input_tokens") ? usage.get("input_tokens").asLong()
+                        : usage.has("prompt_tokens") ? usage.get("prompt_tokens").asLong() : 0;
+                long completionTokens = usage.has("output_tokens") ? usage.get("output_tokens").asLong()
+                        : usage.has("completion_tokens") ? usage.get("completion_tokens").asLong() : 0;
+                long totalTokens = usage.has("total_tokens") ? usage.get("total_tokens").asLong()
+                        : promptTokens + completionTokens;
                 tokenUsageRepository.save(new LlmTokenUsage(
                         telegramUserId, promptTokens, completionTokens, totalTokens));
             }
@@ -229,15 +273,16 @@ public class OpenAiClient extends AbstractLlmClient {
         List<McpTool> tools = mcpRouter.listTools();
         List<Map<String, Object>> functions = new ArrayList<>();
         for (McpTool tool : tools) {
-            Map<String, Object> function = new LinkedHashMap<>();
-            function.put("name", tool.name());
-            function.put("description", tool.description());
+            Map<String, Object> fn = new LinkedHashMap<>();
+            fn.put("type", "function");
+            fn.put("name", tool.name());
+            fn.put("description", tool.description());
             Map<String, Object> parameters = tool.inputSchema();
             if (parameters == null || parameters.isEmpty()) {
                 parameters = Map.of("type", "object", "properties", Map.of());
             }
-            function.put("parameters", parameters);
-            functions.add(Map.of("type", "function", "function", function));
+            fn.put("parameters", parameters);
+            functions.add(fn);
         }
         return List.copyOf(functions);
     }

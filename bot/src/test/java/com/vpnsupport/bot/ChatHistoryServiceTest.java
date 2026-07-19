@@ -11,6 +11,7 @@ import org.springframework.core.task.TaskExecutor;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -164,7 +165,8 @@ class ChatHistoryServiceTest {
     }
 
     @Test
-    void shouldThrowNpeForNullContent() {
-        assertThrows(NullPointerException.class, () -> service.addUserMessage(1L, null));
+    void shouldNotThrowForNullContent() {
+        assertDoesNotThrow(() -> service.addUserMessage(1L, null));
+        assertDoesNotThrow(() -> service.addAssistantMessage(1L, null));
     }
 }

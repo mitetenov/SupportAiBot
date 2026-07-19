@@ -56,10 +56,16 @@ public class ChatHistoryService {
     }
 
     public void addUserMessage(long userId, String text) {
+        if (text == null) {
+            return;
+        }
         append(userId, Map.of("role", "user", "content", text));
     }
 
     public void addAssistantMessage(long userId, String text) {
+        if (text == null) {
+            return;
+        }
         append(userId, Map.of("role", "assistant", "content", text));
     }
 

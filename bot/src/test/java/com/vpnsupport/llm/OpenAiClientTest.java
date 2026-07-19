@@ -139,15 +139,16 @@ class OpenAiClientTest {
     void shouldParseTextResponse() throws Exception {
         String jsonResponse = """
                 {
-                    "choices": [{
-                        "message": {
-                            "content": "Hello, how can I help?",
-                            "tool_calls": null
-                        }
+                    "output": [{
+                        "type": "message",
+                        "content": [{
+                            "type": "output_text",
+                            "text": "Hello, how can I help?"
+                        }]
                     }],
                     "usage": {
-                        "prompt_tokens": 100,
-                        "completion_tokens": 50,
+                        "input_tokens": 100,
+                        "output_tokens": 50,
                         "total_tokens": 150
                     }
                 }
@@ -165,22 +166,15 @@ class OpenAiClientTest {
     void shouldParseToolCallResponse() throws Exception {
         String jsonResponse = """
                 {
-                    "choices": [{
-                        "message": {
-                            "content": null,
-                            "tool_calls": [{
-                                "id": "call_1",
-                                "type": "function",
-                                "function": {
-                                    "name": "nodes_list",
-                                    "arguments": "{}"
-                                }
-                            }]
-                        }
+                    "output": [{
+                        "type": "function_call",
+                        "call_id": "call_1",
+                        "name": "nodes_list",
+                        "arguments": "{}"
                     }],
                     "usage": {
-                        "prompt_tokens": 100,
-                        "completion_tokens": 50,
+                        "input_tokens": 100,
+                        "output_tokens": 50,
                         "total_tokens": 150
                     }
                 }
@@ -266,9 +260,9 @@ class OpenAiClientTest {
         method.invoke(client, conversation, tc, "{\"nodes\": []}");
 
         assertEquals(1, conversation.size());
-        assertEquals("tool", conversation.get(0).get("role"));
-        assertEquals("call_1", conversation.get(0).get("tool_call_id"));
-        assertEquals("{\"nodes\": []}", conversation.get(0).get("content"));
+        assertEquals("function_call_output", conversation.get(0).get("type"));
+        assertEquals("call_1", conversation.get(0).get("call_id"));
+        assertEquals("{\"nodes\": []}", conversation.get(0).get("output"));
     }
 
     @Test
@@ -413,16 +407,10 @@ class OpenAiClientTest {
         method.invoke(client, conversation, response);
 
         assertEquals(1, conversation.size());
-        assertEquals("assistant", conversation.get(0).get("role"));
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> toolCalls = (List<Map<String, Object>>) conversation.get(0).get("tool_calls");
-        assertEquals(1, toolCalls.size());
-        assertEquals("call_123", toolCalls.get(0).get("id"));
-        assertEquals("function", toolCalls.get(0).get("type"));
-        @SuppressWarnings("unchecked")
-        Map<String, Object> function = (Map<String, Object>) toolCalls.get(0).get("function");
-        assertEquals("test_func", function.get("name"));
-        assertEquals(expectedJson, function.get("arguments"));
+        assertEquals("function_call", conversation.get(0).get("type"));
+        assertEquals("call_123", conversation.get(0).get("call_id"));
+        assertEquals("test_func", conversation.get(0).get("name"));
+        assertEquals(expectedJson, conversation.get(0).get("arguments"));
     }
 
     @Test
@@ -438,11 +426,11 @@ class OpenAiClientTest {
 
         method.invoke(client, conversation, response);
 
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> toolCalls = (List<Map<String, Object>>) conversation.get(0).get("tool_calls");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> function = (Map<String, Object>) toolCalls.get(0).get("function");
-        assertEquals("{}", function.get("arguments"));
+        assertEquals(1, conversation.size());
+        assertEquals("function_call", conversation.get(0).get("type"));
+        assertEquals("call_1", conversation.get(0).get("call_id"));
+        assertEquals("empty_func", conversation.get(0).get("name"));
+        assertEquals("{}", conversation.get(0).get("arguments"));
     }
 
     @Test
