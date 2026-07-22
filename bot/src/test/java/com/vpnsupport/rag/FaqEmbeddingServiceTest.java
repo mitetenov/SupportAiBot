@@ -245,15 +245,15 @@ class FaqEmbeddingServiceTest {
 
     @Test
     void shouldIndexFaqWithEmbedding() {
-        when(embeddingProvider.embed(eq("test question"))).thenReturn(new float[]{1.0f});
+        when(embeddingProvider.embed(contains("test question"))).thenReturn(new float[]{1.0f});
         when(embeddingProvider.getDimension()).thenReturn(1);
 
         service.clearFaq();
         service.indexFaq("test question", "test answer", null);
 
-        verify(jdbcTemplate).update(eq("INSERT INTO faq (id, question, answer, embedding, images) VALUES (?, ?, ?, ?::vector, ?)"),
-                anyString(), eq("test question"), eq("test answer"), anyString(), isNull());
-        verify(embeddingProvider).embed("test question");
+        verify(jdbcTemplate).update(eq("INSERT INTO faq (id, question, answer, embedding, images, keywords) VALUES (?, ?, ?, ?::vector, ?, ?)"),
+                anyString(), eq("test question"), eq("test answer"), anyString(), isNull(), isNull());
+        verify(embeddingProvider).embed(contains("test question"));
     }
 
     @Test
@@ -263,8 +263,8 @@ class FaqEmbeddingServiceTest {
         service.clearFaq();
         service.indexFaq("query", "answer", null);
 
-        verify(jdbcTemplate, never()).update(eq("INSERT INTO faq (id, question, answer, embedding, images) VALUES (?, ?, ?, ?::vector, ?)"),
-                anyString(), anyString(), anyString(), anyString(), any());
+        verify(jdbcTemplate, never()).update(eq("INSERT INTO faq (id, question, answer, embedding, images, keywords) VALUES (?, ?, ?, ?::vector, ?, ?)"),
+                anyString(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test
@@ -275,8 +275,8 @@ class FaqEmbeddingServiceTest {
         service.clearFaq();
         service.indexFaq("query", "answer", null);
 
-        verify(jdbcTemplate, never()).update(eq("INSERT INTO faq (id, question, answer, embedding, images) VALUES (?, ?, ?, ?::vector, ?)"),
-                anyString(), anyString(), anyString(), anyString(), any());
+        verify(jdbcTemplate, never()).update(eq("INSERT INTO faq (id, question, answer, embedding, images, keywords) VALUES (?, ?, ?, ?::vector, ?, ?)"),
+                anyString(), anyString(), anyString(), anyString(), any(), any());
     }
 
     @Test

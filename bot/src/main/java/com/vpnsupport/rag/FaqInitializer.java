@@ -65,7 +65,8 @@ public class FaqInitializer implements ApplicationRunner {
                 String answer = (String) entry.get("answer");
                 if (question != null && answer != null) {
                     String images = extractImages(entry.get("images"));
-                    embeddingService.indexFaq(question, answer, images);
+                    String keywords = extractKeywords(entry.get("keywords"));
+                    embeddingService.indexFaq(question, answer, images, keywords);
                 }
             }
 
@@ -107,6 +108,17 @@ public class FaqInitializer implements ApplicationRunner {
             return list.stream()
                     .map(Object::toString)
                     .collect(java.util.stream.Collectors.joining(","));
+        }
+        return null;
+    }
+
+    private static String extractKeywords(Object keywordsValue) {
+        if (keywordsValue instanceof List<?> list && !list.isEmpty()) {
+            return list.stream()
+                    .map(Object::toString)
+                    .collect(java.util.stream.Collectors.joining(", "));
+        } else if (keywordsValue instanceof String str && !str.isBlank()) {
+            return str.trim();
         }
         return null;
     }

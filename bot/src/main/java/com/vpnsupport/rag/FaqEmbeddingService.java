@@ -55,10 +55,15 @@ public class FaqEmbeddingService {
                 .formatted(embeddingProvider.getDimension()));
         jdbcTemplate.execute("ALTER TABLE faq DROP COLUMN IF EXISTS image");
         jdbcTemplate.execute("ALTER TABLE faq ADD COLUMN IF NOT EXISTS images VARCHAR(1000)");
+        jdbcTemplate.execute("ALTER TABLE faq ADD COLUMN IF NOT EXISTS keywords VARCHAR(2000)");
         try {
             jdbcTemplate.execute("""
                     CREATE INDEX IF NOT EXISTS faq_embedding_idx
                     ON faq USING hnsw (embedding vector_cosine_ops)
+                    """);
+            jdbcTemplate.execute("""
+                    CREATE INDEX IF NOT EXISTS faq_fts_idx
+                    ON faq USING gin (to_tsvector('russian', question || ' ' || COALESCE(keywords, '') || ' ' || answer))
                     """);
         } catch (Exception e) {
             log.warn("Could not create FAQ index: {}", e.getMessage());
@@ -98,7 +103,12 @@ public class FaqEmbeddingService {
     }
 
     public void indexFaq(String question, String answer, String images) {
-        float[] embedding = embeddingProvider.embed(question);
+        indexFaq(question, answer, images, null);
+    }
+
+    public void indexFaq(String question, String answer, String images, String keywords) {
+        String embedText = question + (keywords != null && !keywords.isBlank() ? " " + keywords : "") + "\n" + answer;
+        float[] embedding = embeddingProvider.embed(embedText);
         if (embedding == null || embedding.length != embeddingProvider.getDimension()) {
             log.warn("Failed to embed FAQ: {}", question);
             return;
@@ -107,9 +117,9 @@ public class FaqEmbeddingService {
         String id = UUID.randomUUID().toString();
         String vectorStr = vectorToString(embedding);
         jdbcTemplate.update(
-                "INSERT INTO faq (id, question, answer, embedding, images) VALUES (?, ?, ?, ?::vector, ?)",
-                id, question, answer, vectorStr, images);
-        log.debug("Indexed FAQ: {} images={}", question, images);
+                "INSERT INTO faq (id, question, answer, embedding, images, keywords) VALUES (?, ?, ?, ?::vector, ?, ?)",
+                id, question, answer, vectorStr, images, keywords);
+        log.debug("Indexed FAQ: {} images={} keywords={}", question, images, keywords);
     }
 
     public void clearFaq() {
@@ -123,7 +133,7 @@ public class FaqEmbeddingService {
     }
 
     public List<FaqResult> search(String query) {
-        if (!ready) {
+        if (!ready || query == null || query.isBlank()) {
             return List.of();
         }
 
@@ -132,8 +142,55 @@ public class FaqEmbeddingService {
             return List.of();
         }
 
-        String vectorStr = vectorToString(queryEmbedding);
+        final String vectorStr = vectorToString(queryEmbedding);
+        String rawClean = query.replaceAll("[^a-zA-Zа-яА-Я0-9\\s]", " ").trim();
+        final String cleanQuery = rawClean.isBlank() ? query : rawClean;
 
+        String sql = """
+                SELECT question, answer, images,
+                       (1 - (embedding <=> ?::vector)) AS vector_sim,
+                       ts_rank(to_tsvector('russian', question || ' ' || COALESCE(keywords, '') || ' ' || answer),
+                               websearch_to_tsquery('russian', ?)) AS fts_rank
+                FROM faq
+                WHERE embedding IS NOT NULL
+                ORDER BY (0.7 * (1 - (embedding <=> ?::vector)) + 0.3 * LEAST(ts_rank(to_tsvector('russian', question || ' ' || COALESCE(keywords, '') || ' ' || answer), websearch_to_tsquery('russian', ?)), 1.0)) DESC
+                LIMIT ?
+                """;
+
+        List<FaqResult> results = new ArrayList<>();
+        try {
+            jdbcTemplate.query(
+                    sql,
+                    ps -> {
+                        ps.setString(1, vectorStr);
+                        ps.setString(2, cleanQuery);
+                        ps.setString(3, vectorStr);
+                        ps.setString(4, cleanQuery);
+                        ps.setInt(5, SEARCH_LIMIT);
+                    },
+                    rs -> {
+                        double vectorSim = rs.getDouble("vector_sim");
+                        double ftsRank = rs.getDouble("fts_rank");
+                        double combinedScore = 0.7 * vectorSim + 0.3 * Math.min(ftsRank, 1.0);
+                        if (combinedScore >= MIN_SIMILARITY || vectorSim >= MIN_SIMILARITY) {
+                            results.add(new FaqResult(
+                                    rs.getString("question"),
+                                    rs.getString("answer"),
+                                    splitImages(rs.getString("images")),
+                                    combinedScore
+                            ));
+                        }
+                    }
+            );
+        } catch (Exception e) {
+            log.warn("FAQ hybrid search failed, falling back to vector search: {}", e.getMessage());
+            return searchPureVector(vectorStr);
+        }
+
+        return results;
+    }
+
+    private List<FaqResult> searchPureVector(String vectorStr) {
         List<FaqResult> results = new ArrayList<>();
         try {
             jdbcTemplate.query(
@@ -156,9 +213,8 @@ public class FaqEmbeddingService {
                     }
             );
         } catch (Exception e) {
-            log.warn("FAQ search failed: {}", e.getMessage());
+            log.warn("FAQ pure vector search failed: {}", e.getMessage());
         }
-
         return results;
     }
 

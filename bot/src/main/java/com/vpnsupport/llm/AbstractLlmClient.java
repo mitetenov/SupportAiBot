@@ -67,7 +67,7 @@ public abstract class AbstractLlmClient implements LlmClient {
         boolean isRejection = faqEmbeddingService.looksLikeRejection(userMessage);
         String searchQuery = isRejection
                 ? chatHistoryService.getLastUserMessage(telegramUserId)
-                : userMessage;
+                : buildContextualSearchQuery(telegramUserId, userMessage);
         if (searchQuery == null || searchQuery.isBlank()) {
             searchQuery = userMessage;
         }
@@ -143,5 +143,34 @@ public abstract class AbstractLlmClient implements LlmClient {
         if (!shown.isEmpty()) {
             chatHistoryService.addRejectedFaqQuestions(telegramUserId, shown);
         }
+    }
+
+    protected String buildContextualSearchQuery(long telegramUserId, String userMessage) {
+        if (userMessage == null || userMessage.isBlank()) {
+            return userMessage;
+        }
+        String lastMsg = chatHistoryService.getLastUserMessage(telegramUserId);
+        if (lastMsg == null || lastMsg.isBlank() || lastMsg.equalsIgnoreCase(userMessage)) {
+            return userMessage;
+        }
+
+        String lower = userMessage.toLowerCase().trim();
+        boolean isShortOrFollowup = userMessage.length() < 35
+                || lower.startsWith("а ")
+                || lower.startsWith("как ")
+                || lower.startsWith("а на ")
+                || lower.startsWith("и ")
+                || lower.contains("айфон")
+                || lower.contains("андроид")
+                || lower.contains("винд")
+                || lower.contains("маке")
+                || lower.contains("не работ")
+                || lower.contains("не груз");
+
+        if (isShortOrFollowup) {
+            return lastMsg + " " + userMessage;
+        }
+
+        return userMessage;
     }
 }
