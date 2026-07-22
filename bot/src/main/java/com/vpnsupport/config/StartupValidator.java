@@ -108,12 +108,12 @@ public class StartupValidator implements ApplicationRunner {
                         "GEMINI_API_KEY не задан. Получите ключ в Google AI Studio: "
                         + "https://aistudio.google.com/apikey и добавьте в .env: GEMINI_API_KEY=...");
                 requireText(geminiProperties.getModel(),
-                        "GEMINI_MODEL не задан. Укажите модель, например: GEMINI_MODEL=gemini-2.5-flash");
+                        "GEMINI_MODEL не задан. Укажите модель, например: GEMINI_MODEL=gemini-3.5-flash-light");
                 break;
             case "openai":
                 validateOpenAiApiKey();
                 requireText(openAiProperties.getModel(),
-                        "OPENAI_MODEL не задан. Укажите модель, например: OPENAI_MODEL=gpt-5.4-mini");
+                        "OPENAI_MODEL не задан. Укажите модель, например: OPENAI_MODEL=gpt-5.6-luna");
                 break;
         }
     }
