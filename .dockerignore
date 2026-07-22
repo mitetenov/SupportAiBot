@@ -12,6 +12,5 @@ target/
 DataExport_*/
 .git/
 .gitignore
-run.sh
 docker-compose.yml
 README.md
