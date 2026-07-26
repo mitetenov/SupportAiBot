@@ -28,10 +28,12 @@ git clone https://github.com/mitetenov/SupportAiBot.git && cd SupportAiBot
 cp .env.example .env   # заполнить переменные
 docker compose pull
 docker compose up -d
-docker compose exec support-bot curl -f http://localhost:8080/actuator/health
+docker compose exec support-bot wget -qO- http://localhost:8080/actuator/health
 ```
 
-Образ: [`mitetenov/supportbot`](https://hub.docker.com/r/mitetenov/supportbot) — включает JRE, MCP-сервер и FAQ-базу. Не требует Java/Maven/Node.js на хосте.
+Образ: [`mitetenov/supportbot`](https://hub.docker.com/r/mitetenov/supportbot) — 237 МБ, включает FAQ-базу и урезанный через `jlink` Java-рантайм только с нужными модулями. Не требует Java/Maven на хосте. MCP-сервер — отдельный сервис `mcp-remnawave` в compose.
+
+Образ собирается послойно: зависимости (63 МБ) лежат отдельно от кода приложения (700 КБ), поэтому пересборка после правки кода занимает секунды и заливает в реестр меньше мегабайта.
 
 **Важно**: перед запуском отключите privacy mode бота в BotFather (`/setprivacy` → Disable), иначе бот не будет видеть сообщения в группе.
 
