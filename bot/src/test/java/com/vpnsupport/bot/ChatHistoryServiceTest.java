@@ -15,6 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class ChatHistoryServiceTest {
@@ -168,5 +169,36 @@ class ChatHistoryServiceTest {
     void shouldNotThrowForNullContent() {
         assertDoesNotThrow(() -> service.addUserMessage(1L, null));
         assertDoesNotThrow(() -> service.addAssistantMessage(1L, null));
+    }
+
+    @Test
+    void shouldLoadTheMostRecentMessagesFromDatabase() {
+        // The repository returns newest-first; the service must hand the model
+        // a chronological transcript, not a reversed one.
+        when(chatMessageRepository.findTop20ByTelegramIdOrderByCreatedAtDesc(7L))
+                .thenReturn(List.of(
+                        new ChatMessage(7L, "assistant", "newest"),
+                        new ChatMessage(7L, "user", "middle"),
+                        new ChatMessage(7L, "assistant", "oldest")));
+
+        List<Map<String, Object>> history = service.getHistory(7L);
+
+        assertEquals(3, history.size());
+        assertEquals("oldest", history.get(0).get("content"));
+        assertEquals("middle", history.get(1).get("content"));
+        assertEquals("newest", history.get(2).get("content"));
+    }
+
+    @Test
+    void lastUserMessageShouldComeFromTheEndOfTheLoadedHistory() {
+        when(chatMessageRepository.findTop20ByTelegramIdOrderByCreatedAtDesc(7L))
+                .thenReturn(List.of(
+                        new ChatMessage(7L, "user", "latest question"),
+                        new ChatMessage(7L, "assistant", "an older answer"),
+                        new ChatMessage(7L, "user", "an older question")));
+
+        service.getHistory(7L);
+
+        assertEquals("latest question", service.getLastUserMessage(7L));
     }
 }

@@ -3,6 +3,7 @@ package com.vpnsupport.bot;
 import com.vpnsupport.config.ChatHistoryProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
@@ -35,7 +37,7 @@ public class ChatHistoryService {
     private final TaskExecutor taskExecutor;
 
     public ChatHistoryService(ChatMessageRepository chatMessageRepository,
-                              TaskExecutor taskExecutor,
+                              @Qualifier("persistenceExecutor") TaskExecutor taskExecutor,
                               ChatHistoryProperties properties) {
         this.chatMessageRepository = chatMessageRepository;
         this.taskExecutor = taskExecutor;
@@ -120,11 +122,15 @@ public class ChatHistoryService {
 
     private Deque<Map<String, Object>> loadFromDatabase(long userId) {
         try {
-            List<ChatMessage> messages = chatMessageRepository.findTop20ByTelegramIdOrderByCreatedAtAsc(userId);
+            List<ChatMessage> messages =
+                    new ArrayList<>(chatMessageRepository.findTop20ByTelegramIdOrderByCreatedAtDesc(userId));
             if (messages.isEmpty()) {
                 loadedFromDb.put(userId, true);
                 return null;
             }
+            // The query returns newest-first so it picks up the live conversation;
+            // the model needs it chronological.
+            Collections.reverse(messages);
 
             Deque<Map<String, Object>> history = new ConcurrentLinkedDeque<>();
             for (ChatMessage msg : messages) {
@@ -176,6 +182,9 @@ public class ChatHistoryService {
     }
 
     public void addRejectedFaqQuestions(long userId, Set<String> questions) {
+        if (questions == null || questions.isEmpty()) {
+            return;
+        }
         rejectedFaqQuestions.compute(userId, (k, v) -> {
             if (v == null) v = new HashSet<>();
             v.addAll(questions);
@@ -183,17 +192,17 @@ public class ChatHistoryService {
         });
     }
 
+    /**
+     * Keeps the already-shown FAQ entries excluded while the user is still
+     * rejecting answers, and resets once they move on to something else.
+     * Shares {@link RejectionDetector} with the retriever — when the two had
+     * their own phrase lists they drifted apart, and a rejection the retriever
+     * recognised but this method did not would clear the exclusions and serve
+     * the user the same instruction again.
+     */
     public void clearRejectedFaqsIfNewTopic(long userId, String userMessage) {
         if (userMessage == null || userMessage.isBlank()) return;
-        String lower = userMessage.toLowerCase();
-        boolean isRejection = lower.contains("не то")
-                || lower.contains("не подходит")
-                || lower.contains("не это")
-                || lower.contains("другой вариант")
-                || lower.contains("другая инструкция")
-                || lower.contains("не та")
-                || lower.contains("другое");
-        if (!isRejection) {
+        if (!RejectionDetector.isRejection(userMessage)) {
             rejectedFaqQuestions.remove(userId);
         }
     }

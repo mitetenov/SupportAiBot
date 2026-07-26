@@ -150,11 +150,22 @@ public class DeepSeekClient extends AbstractLlmClient {
             toolCallMaps.add(Map.of(
                     "id", tc.id(),
                     "type", "function",
-                    "function", Map.of("name", tc.name(), "arguments",
-                            objectMapper.convertValue(tc.arguments(), Map.class))
+                    // The OpenAI-compatible schema types function.arguments as a
+                    // JSON *string*; sending an object breaks the second turn of
+                    // the tool loop.
+                    "function", Map.of("name", tc.name(), "arguments", serializeArguments(tc.arguments()))
             ));
         }
         conversation.add(Map.of("role", "assistant", "tool_calls", toolCallMaps));
+    }
+
+    private String serializeArguments(Map<String, Object> arguments) {
+        try {
+            return objectMapper.writeValueAsString(arguments != null ? arguments : Map.of());
+        } catch (Exception e) {
+            log.warn("Failed to serialize tool arguments, sending empty object: {}", e.getMessage());
+            return "{}";
+        }
     }
 
     @Override
@@ -228,7 +239,7 @@ public class DeepSeekClient extends AbstractLlmClient {
 
     @Override
     @SuppressWarnings("unused")
-    public String chatWithImage(String userMessage, long telegramUserId, String base64Image, String mimeType) {
+    public LlmReply chatWithImage(String userMessage, long telegramUserId, String base64Image, String mimeType) {
         throw new LlmProcessingException("Image not supported",
                 "DeepSeek не поддерживает обработку изображений. Переключите провайдера на Gemini (LLM_PROVIDER=gemini) или опишите проблему текстом.");
     }

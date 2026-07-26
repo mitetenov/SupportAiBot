@@ -22,7 +22,6 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Component
@@ -285,7 +284,7 @@ public class HttpMcpClient implements McpClientInterface {
                     .toBodilessEntity()
                     .block(REQUEST_TIMEOUT);
         } catch (Exception e) {
-            log.warn("Failed to send MCP notification: {}", method, e.getMessage());
+            log.warn("Failed to send MCP notification {}: {}", method, e.getMessage());
         }
     }
 }

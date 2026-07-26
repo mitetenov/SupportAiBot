@@ -5,7 +5,7 @@ Telegram-бот техподдержки VPN-сервиса. Принимает 
 ## Архитектура
 
 ```
-Пользователь → Telegram Bot → LLM (DeepSeek/Gemini/OpenAI) ↔ MCP Client (stdio) → Remnawave
+Пользователь → Telegram Bot → LLM (DeepSeek/Gemini/OpenAI) ↔ MCP Client (HTTP) → Remnawave
                                  ↕
                             PGVector + FTS (RAG/FAQ)
                                  ↓
@@ -13,9 +13,13 @@ Telegram-бот техподдержки VPN-сервиса. Принимает 
 ```
 
 - **LLM**: DeepSeek V4 Flash, Gemini 2.5 Flash или OpenAI (переключается через `LLM_PROVIDER`)
-- **MCP**: 153 инструмента Remnawave через [mcp-remnawave](https://github.com/TrackLine/mcp-remnawave) (stdio-транспорт)
-- **RAG**: гибридный поиск по FAQ-базе (векторные эмбеддинги Gemini/OpenAI + полнотекстовый поиск PostgreSQL `tsvector` по русскому словарю с поддержкой ключевых слов и алиасов)
+- **MCP**: [mcp-remnawave](https://github.com/TrackLine/mcp-remnawave) по HTTP-транспорту. Модели доступны только 5 allow-list инструментов: `users_get_by_telegram_id`, `nodes_list`, `nodes_get`, `hwid_devices_list` и — при `REMNAWAVE_READONLY=false` — `hwid_device_delete`. Остальные инструменты сервера боту не видны и не вызываемы.
+- **RAG**: гибридный поиск по FAQ-базе — векторные эмбеддинги (Gemini/OpenAI) и полнотекстовый поиск PostgreSQL `tsvector` по русскому словарю объединяются через Reciprocal Rank Fusion
 - **Форвардинг**: каждому пользователю — отдельный топик в форум-группе
+
+### Защита персональных данных
+
+Аргумент с Telegram ID подставляется маршрутизатором принудительно из ID реального отправителя, а не из того, что вернула модель. Запрос вида «покажи данные для ID 12345» в любом виде — включая промпт-инъекцию — вернёт данные самого спрашивающего.
 
 ## Быстрый старт
 
@@ -24,7 +28,7 @@ git clone https://github.com/mitetenov/SupportAiBot.git && cd SupportAiBot
 cp .env.example .env   # заполнить переменные
 docker compose pull
 docker compose up -d
-docker compose exec bot curl -f http://localhost:8080/actuator/health
+docker compose exec support-bot curl -f http://localhost:8080/actuator/health
 ```
 
 Образ: [`mitetenov/supportbot`](https://hub.docker.com/r/mitetenov/supportbot) — включает JRE, MCP-сервер и FAQ-базу. Не требует Java/Maven/Node.js на хосте.
@@ -50,7 +54,7 @@ docker compose exec bot curl -f http://localhost:8080/actuator/health
 | `OPENAI_EMBEDDING_MODEL` | при embedding=openai | `text-embedding-3-small` | Модель эмбеддингов OpenAI |
 | `REMNAWAVE_BASE_URL` | да | — | URL панели Remnawave |
 | `REMNAWAVE_API_TOKEN` | да | — | JWT API-токен Remnawave |
-| `REMNAWAVE_READONLY` | — | `true` | `false` — разрешить удаление HWID-устройств |
+| `REMNAWAVE_READONLY` | — | `false` | `true` — скрыть от модели все write-операции (удаление HWID-устройств станет недоступно) |
 | `PGVECTOR_HOST` | — | `pgvector` | Хост pgvector |
 | `PGVECTOR_PORT` | — | `5432` | Порт pgvector |
 | `PGVECTOR_USER` | — | `bot` | Пользователь pgvector |
@@ -62,7 +66,10 @@ docker compose exec bot curl -f http://localhost:8080/actuator/health
 
 ## Команды бота
 
+Команды регистрируются в меню Telegram при старте (`setMyCommands`).
+
 - `/start` — приветствие, сброс истории диалога
+- `/help` — что умеет бот и список команд
 - `/operator` — эскалация: запрос живого оператора, в группу приходит тег админа
 - `/stats` — **только для админов**: топ-10 пользователей по токенам LLM
 - `/stats N` — топ-N (N от 1 до 100)
@@ -71,40 +78,58 @@ docker compose exec bot curl -f http://localhost:8080/actuator/health
 
 ## Автоэскалация
 
-Бот автоматически тегает админа в форум-группе при обнаружении в сообщении пользователя или ответе бота ключевых слов:
+Админ тегается в форум-группе в двух случаях:
 
-| Триггер в сообщении | Триггер в ответе |
-|---|---|
-| `отмен*`, `верни*`, `возврат`, `refund`, `жалоб*` | `не удалось`, `ошибк*` |
-| `оператор`, `человек`, `жив*` | `не найден`, `попробуйте позже` |
-| | `обратитесь` |
+1. **Маркер `[ESCALATE]` от модели** — основной механизм. Модель видит весь диалог и получает в системном промпте явный список поводов: возвраты и отмена подписки, «оплатил, но не продлилось», повторное обращение с той же нерешённой проблемой, явное недовольство, массовая проблема на стороне сервиса, пинг всех серверов `n/a`. Маркер удаляется из текста перед отправкой пользователю.
+2. **Прямая просьба о человеке** в сообщении пользователя — слова `оператор`, `человек`, `живой` и их формы. Совпадение идёт по границам слов, поэтому «я живу в Германии» и «болит живот» эскалацию не вызывают.
+
+Команда `/operator` эскалирует всегда и дополнительно фиксирует пробел в знаниях (`USER_OPERATOR`) — сигнал, что предыдущий ответ бота не сработал.
 
 ## RAG / База знаний
 
-FAQ хранится в `bot/src/main/resources/faq/faq.json` и вшит в JAR при сборке. При старте бот индексирует вопросы и ответы с алиасами ключевых слов через гибридный поиск в PGVector (`gemini-embedding-001`, 2000 измерений или OpenAI + PostgreSQL `tsvector` FTS).
+FAQ хранится в `bot/src/main/resources/faq/faq.json` и вшит в JAR при сборке. Каждая запись — `question`, `answer` и `keywords`. При старте бот индексирует их в PGVector (`gemini-embedding-001`, 2000 измерений, либо OpenAI) и в `tsvector`-индекс PostgreSQL.
+
+Поиск гибридный: векторный и полнотекстовый каналы ранжируются независимо и объединяются через **Reciprocal Rank Fusion**. Это существенно: при взвешенной сумме баллов реальные значения `ts_rank` (~0.05) никогда не перевешивали порог, и запись, найденная только по ключевому слову, до модели не доходила.
+
+Эмбеддинги запросов кэшируются (LRU на 256 записей), поэтому повторные и однотипные вопросы не порождают новых обращений к провайдеру.
 
 При использовании готового образа `mitetenov/supportbot` FAQ уже внутри. Для обновления FAQ:
 
 ```bash
 docker build -t mitetenov/supportbot:latest .
-docker compose up -d --force-recreate bot
+docker compose up -d --force-recreate support-bot
 ```
 
 ## Gemini / OpenAI Vision
 
 При использовании провайдеров с поддержкой модальности изображений (`gemini` или `openai`) бот умеет обрабатывать скриншоты: фото скачивается, конвертируется в base64 и отправляется в LLM вместе с текстовым вопросом.
 
+Вложения других типов (голосовые, видео, документы, стикеры) бот не обрабатывает, но отвечает на них подсказкой и пересылает в топик поддержки — оператор видит обращение целиком.
+
+## Склейка сообщений
+
+Сообщения, отправленные подряд, копятся `telegram.buffer.window` (2.5 с) и уходят в модель одним запросом — человек, который печатает мысль в три сообщения, получает один связный ответ. Буфер сбрасывается досрочно по `telegram.buffer.max-messages` (5). Ограничение частоты применяется к склеенной пачке, а не к каждому сообщению, и при срабатывании обращение всё равно уходит оператору в топик, а не теряется.
+
 ## Локальная разработка
 
+Требуется **JDK 21**. На JDK 22+ inline mock maker Mockito не может инструментировать классы и весь набор тестов падает, поэтому версия проверяется в фазе `validate` с понятным сообщением.
+
 ```bash
+export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 export $(grep -v '^#' .env | xargs)
 mvn -pl bot spring-boot:run
+```
+
+Тесты:
+
+```bash
+JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn -pl bot test
 ```
 
 ## Хранилище
 
 - PostgreSQL 17 + PGVector — маппинг пользователь↔топик, гибридный FAQ-поиск (векторы + FTS)
-- Docker volume `pg-data` для персистентности
+- Docker volume `pgvector-data` для персистентности
 
 ## Выбор LLM
 

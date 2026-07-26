@@ -4,15 +4,16 @@ import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.Chat;
 import com.pengrad.telegrambot.model.Message;
 import com.pengrad.telegrambot.model.MessageReactionUpdated;
+import com.pengrad.telegrambot.model.PhotoSize;
+import com.pengrad.telegrambot.model.Update;
 import com.pengrad.telegrambot.model.User;
 import com.pengrad.telegrambot.model.reaction.ReactionType;
 import com.pengrad.telegrambot.model.reaction.ReactionTypeEmoji;
-import com.pengrad.telegrambot.model.reaction.ReactionTypePaid;
 import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.response.MessageIdResponse;
+import com.vpnsupport.config.MessageBufferProperties;
 import com.vpnsupport.config.TelegramProperties;
 import com.vpnsupport.llm.LlmClient;
-import com.vpnsupport.rag.FaqEmbeddingService;
 import com.vpnsupport.support.SupportGroupForwarder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -20,64 +21,50 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.task.TaskExecutor;
-import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.reactive.function.client.WebClient;
 
-import java.util.Optional;
+import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Optional;
 
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
+/**
+ * Covers update routing: which component an incoming update is handed to.
+ * The answer pipeline itself is exercised in {@link UserMessagePipelineTest}.
+ */
 @ExtendWith(MockitoExtension.class)
 class VpnSupportBotTest {
 
-    @Mock
-    private TelegramBot telegramBot;
-
-    @Mock
-    private TelegramMessageSender messageSender;
-
-    @Mock
-    private TopicMappingRepository topicMappingRepository;
-
-    @Mock
-    private MessageMappingRepository messageMappingRepository;
-
-    @Mock
-    private SupportGroupForwarder forwarder;
-
-    @Mock
-    private LlmClient llmClient;
-
-    @Mock
-    private FaqEmbeddingService faqEmbeddingService;
-
-    @Mock
-    private UserRateLimiter rateLimiter;
-
-    @Mock
-    private ChatHistoryService chatHistoryService;
-
-    @Mock
-    private WebClient webClient;
-
-    @Mock
-    private LlmTokenUsageRepository tokenUsageRepository;
-
-    @Mock
-    private UserRepository userRepository;
-
-    @Mock
-    private TaskExecutor taskExecutor;
-
-    @Mock
-    private KnowledgeGapService knowledgeGapService;
-
-    private VpnSupportBot bot;
-
     private static final long SUPPORT_CHAT_ID = -100123L;
+    private static final long USER_CHAT_ID = 100L;
+
+    @Mock private TelegramBot telegramBot;
+    @Mock private TelegramMessageSender messageSender;
+    @Mock private TopicMappingRepository topicMappingRepository;
+    @Mock private MessageMappingRepository messageMappingRepository;
+    @Mock private SupportGroupForwarder forwarder;
+    @Mock private LlmClient llmClient;
+    @Mock private ChatHistoryService chatHistoryService;
+    @Mock private KnowledgeGapService knowledgeGapService;
+    @Mock private SupportCommandHandler commandHandler;
+    @Mock private PhotoDownloader photoDownloader;
+    @Mock private UserMessagePipeline pipeline;
+    @Mock private BotMessages messages;
+    @Mock private UserRepository userRepository;
+
+    private UserMessageBuffer messageBuffer;
+    private ConversationState conversationState;
+    private VpnSupportBot bot;
 
     @BeforeEach
     void setUp() {
@@ -85,247 +72,34 @@ class VpnSupportBotTest {
         properties.setSupportGroupChatId(SUPPORT_CHAT_ID);
         properties.setSupportAdminTelegramIds("");
 
+        MessageBufferProperties bufferProperties = new MessageBufferProperties();
+        bufferProperties.setWindow(Duration.ofMillis(20));
+        messageBuffer = new UserMessageBuffer(bufferProperties);
+        conversationState = new ConversationState(new com.vpnsupport.config.ConversationProperties());
+
+        // Run submitted work inline so routing assertions stay deterministic.
+        TaskExecutor inlineExecutor = Runnable::run;
+
+        lenient().when(messages.get(anyString())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(messages.get(anyString(), any())).thenAnswer(inv -> inv.getArgument(0));
+
         bot = new VpnSupportBot(
-                telegramBot, llmClient, faqEmbeddingService, forwarder,
-                topicMappingRepository, messageMappingRepository,
-                messageSender, rateLimiter, chatHistoryService,
-                webClient, properties, tokenUsageRepository,
-                userRepository, taskExecutor, knowledgeGapService);
+                telegramBot, llmClient, forwarder, topicMappingRepository,
+                messageMappingRepository, messageSender, chatHistoryService,
+                knowledgeGapService, commandHandler, photoDownloader,
+                messageBuffer, pipeline, conversationState, messages,
+                userRepository, inlineExecutor, properties);
     }
 
-    /**
-     * Helper: invoke the private handleSupportGroupMessage method via reflection.
-     */
-    private void invokeHandleSupportGroupMessage(Message message) {
-        ReflectionTestUtils.invokeMethod(bot, "handleSupportGroupMessage", message);
-    }
+    // ------------------------------------------------------------- test helpers
 
-    /**
-     * Helper: create a mock Message from the support group with given parameters.
-     */
-    @SuppressWarnings("unchecked")
-    private Message supportGroupMessage(Integer topicId, String text,
-                                         Message replyToMessage, Integer messageId) {
+    private Message userMessage(String text, Integer messageId) {
         Chat chat = mock(Chat.class);
-        lenient().when(chat.id()).thenReturn(SUPPORT_CHAT_ID);
-
-        Message msg = mock(Message.class);
-        lenient().when(msg.chat()).thenReturn(chat);
-        lenient().when(msg.messageThreadId()).thenReturn(topicId);
-        lenient().when(msg.text()).thenReturn(text);
-        lenient().when(msg.messageId()).thenReturn(messageId != null ? messageId : 999);
-        lenient().when(msg.replyToMessage()).thenReturn(replyToMessage);
-        return msg;
-    }
-
-    /**
-     * Helper: create a TopicMapping for a given user.
-     */
-    private TopicMapping topicMapping(Long userId, Integer topicId) {
-        return new TopicMapping(userId, topicId, "testuser");
-    }
-
-    /**
-     * Helper: create a MessageMapping for a given topic message → user message.
-     */
-    private MessageMapping messageMapping(Integer topicMessageId, Integer topicId,
-                                           Long userChatId, Integer userMessageId) {
-        return new MessageMapping(topicMessageId, topicId, userChatId, userMessageId);
-    }
-
-    // ───── Tests for handleSupportGroupMessage ─────
-
-    @Test
-    void shouldSendNewMessageWhenOperatorDoesNotReply() {
-        // Operator writes a new message (not a reply) in a topic
-        Integer topicId = 42;
-        Long userId = 100L;
-        String text = "Ваш вопрос решён.";
-        Message message = supportGroupMessage(topicId, text, null, 900);
-
-        when(topicMappingRepository.findByTopicId(topicId))
-                .thenReturn(Optional.of(topicMapping(userId, topicId)));
-
-        invokeHandleSupportGroupMessage(message);
-
-        verify(messageSender).send(userId, "Поддержка: " + text);
-        verify(messageSender).sendReply(SUPPORT_CHAT_ID, 900, "Отправлено пользователю.");
-        verifyNoInteractions(messageMappingRepository);
-    }
-
-    @Test
-    void shouldSendReplyWhenOperatorRepliesToUserMessage() {
-        // Operator replies to a user's message in the topic
-        Integer topicId = 42;
-        Long userId = 100L;
-        int userMessageId = 555;
-        int repliedTopicMessageId = 777;
-        String replyText = "Вот инструкция...";
-
-        Message repliedToMessage = mock(Message.class);
-        when(repliedToMessage.messageId()).thenReturn(repliedTopicMessageId);
-
-        Message message = supportGroupMessage(topicId, replyText, repliedToMessage, 900);
-
-        when(topicMappingRepository.findByTopicId(topicId))
-                .thenReturn(Optional.of(topicMapping(userId, topicId)));
-        when(messageMappingRepository.findByTopicMessageIdAndTopicId(repliedTopicMessageId, topicId))
-                .thenReturn(Optional.of(messageMapping(repliedTopicMessageId, topicId, userId, userMessageId)));
-
-        invokeHandleSupportGroupMessage(message);
-
-        // Should send as reply to the original user message, without the "Поддержка: " prefix
-        verify(messageSender).sendReply(userId, userMessageId, replyText);
-        verify(messageSender).sendReply(SUPPORT_CHAT_ID, 900, "Отправлено пользователю.");
-        verify(messageSender, never()).send(eq(userId), anyString());
-    }
-
-    @Test
-    void shouldFallbackToNewMessageWhenOperatorRepliesButMappingNotFound() {
-        // Operator replies, but the replied-to message has no mapping saved
-        Integer topicId = 42;
-        Long userId = 100L;
-        int repliedTopicMessageId = 777;
-        String replyText = "Текст ответа";
-
-        Message repliedToMessage = mock(Message.class);
-        when(repliedToMessage.messageId()).thenReturn(repliedTopicMessageId);
-
-        Message message = supportGroupMessage(topicId, replyText, repliedToMessage, 900);
-
-        when(topicMappingRepository.findByTopicId(topicId))
-                .thenReturn(Optional.of(topicMapping(userId, topicId)));
-        when(messageMappingRepository.findByTopicMessageIdAndTopicId(repliedTopicMessageId, topicId))
-                .thenReturn(Optional.empty());
-
-        invokeHandleSupportGroupMessage(message);
-
-        // Should fall back to sending as a new message with the prefix
-        verify(messageSender).send(userId, "Поддержка: " + replyText);
-        verify(messageSender, never()).sendReply(eq(userId), anyInt(), anyString());
-    }
-
-    @Test
-    void shouldIgnoreMessageWhenTopicIdIsNull() {
-        Message message = supportGroupMessage(null, "text", null, 900);
-
-        invokeHandleSupportGroupMessage(message);
-
-        verifyNoInteractions(topicMappingRepository, messageMappingRepository, messageSender);
-    }
-
-    @Test
-    void shouldCopyMediaWhenTextIsEmpty() {
-        // Message with no text (e.g. photo) — should use copyToUser
-        Integer topicId = 42;
-        Long userId = 100L;
-        Message message = supportGroupMessage(topicId, "", null, 900);
-
-        when(topicMappingRepository.findByTopicId(topicId))
-                .thenReturn(Optional.of(topicMapping(userId, topicId)));
-
-        // Make copyToUser succeed so it doesn't fall back to send()
-        MessageIdResponse okResponse = mock(MessageIdResponse.class);
-        when(okResponse.isOk()).thenReturn(true);
-        when(telegramBot.execute(any(CopyMessage.class))).thenReturn(okResponse);
-
-        invokeHandleSupportGroupMessage(message);
-
-        verify(telegramBot).execute(any(CopyMessage.class));
-        verify(messageSender, never()).send(anyLong(), anyString());
-        verify(messageSender).sendReply(SUPPORT_CHAT_ID, 900, "Отправлено пользователю.");
-    }
-
-    @Test
-    void shouldCopyMediaWhenOperatorRepliesWithEmptyText() {
-        // Operator replies to a message but with empty text (media-only)
-        Integer topicId = 42;
-        Long userId = 100L;
-
-        Message message = supportGroupMessage(topicId, "", null, 900);
-
-        when(topicMappingRepository.findByTopicId(topicId))
-                .thenReturn(Optional.of(topicMapping(userId, topicId)));
-
-        // Make copyToUser succeed
-        MessageIdResponse okResponse = mock(MessageIdResponse.class);
-        when(okResponse.isOk()).thenReturn(true);
-        when(telegramBot.execute(any(CopyMessage.class))).thenReturn(okResponse);
-
-        invokeHandleSupportGroupMessage(message);
-
-        // Empty text should take the copyToUser path regardless of replyToMessage
-        verify(telegramBot).execute(any(CopyMessage.class));
-        verify(messageSender, never()).send(anyLong(), anyString());
-        // Confirmation reply should still be sent back to the topic
-        verify(messageSender).sendReply(SUPPORT_CHAT_ID, 900, "Отправлено пользователю.");
-    }
-
-    // ───── Tests for lastOperatorReply recording ─────
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void shouldRecordTimestampWhenOperatorSendsNewMessage() {
-        Integer topicId = 42;
-        Long userId = 100L;
-        Message message = supportGroupMessage(topicId, "Решено.", null, 900);
-
-        when(topicMappingRepository.findByTopicId(topicId))
-                .thenReturn(Optional.of(topicMapping(userId, topicId)));
-
-        invokeHandleSupportGroupMessage(message);
-
-        ConcurrentHashMap<Long, Long> map = (ConcurrentHashMap<Long, Long>)
-                ReflectionTestUtils.getField(bot, "lastOperatorReply");
-        assert map != null;
-        Long timestamp = map.get(userId);
-        assert timestamp != null : "Timestamp should be recorded for userId";
-        assert Math.abs(System.currentTimeMillis() - timestamp) < 5000
-                : "Timestamp should be within 5 seconds of now";
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void shouldRecordTimestampWhenOperatorRepliesToMessage() {
-        Integer topicId = 42;
-        Long userId = 100L;
-        int repliedTopicMessageId = 777;
-
-        Message repliedToMessage = mock(Message.class);
-        when(repliedToMessage.messageId()).thenReturn(repliedTopicMessageId);
-
-        Message message = supportGroupMessage(topicId, "Вот инструкция.", repliedToMessage, 900);
-
-        when(topicMappingRepository.findByTopicId(topicId))
-                .thenReturn(Optional.of(topicMapping(userId, topicId)));
-        when(messageMappingRepository.findByTopicMessageIdAndTopicId(repliedTopicMessageId, topicId))
-                .thenReturn(Optional.of(messageMapping(repliedTopicMessageId, topicId, userId, 555)));
-
-        invokeHandleSupportGroupMessage(message);
-
-        ConcurrentHashMap<Long, Long> map = (ConcurrentHashMap<Long, Long>)
-                ReflectionTestUtils.getField(bot, "lastOperatorReply");
-        assert map != null;
-        Long timestamp = map.get(userId);
-        assert timestamp != null : "Timestamp should be recorded for userId";
-        assert Math.abs(System.currentTimeMillis() - timestamp) < 5000
-                : "Timestamp should be within 5 seconds of now";
-    }
-
-    // ───── Tests for AI suppression in handleUserMessage ─────
-
-    /**
-     * Helper: create a mock Message from a user DM with given parameters.
-     */
-    private Message userMessage(long chatId, long userId, String text, Integer messageId) {
-        Chat chat = mock(Chat.class);
-        lenient().when(chat.id()).thenReturn(chatId);
+        lenient().when(chat.id()).thenReturn(USER_CHAT_ID);
 
         User from = mock(User.class);
-        lenient().when(from.id()).thenReturn(userId);
+        lenient().when(from.id()).thenReturn(USER_CHAT_ID);
         lenient().when(from.username()).thenReturn("testuser");
-        lenient().when(from.firstName()).thenReturn("Test");
-        lenient().when(from.lastName()).thenReturn("User");
         lenient().when(from.isBot()).thenReturn(false);
 
         Message msg = mock(Message.class);
@@ -336,113 +110,242 @@ class VpnSupportBotTest {
         return msg;
     }
 
-    /**
-     * Helper: invoke the private handleUserMessage method via reflection.
-     */
-    private void invokeHandleUserMessage(Message message, String text) {
-        ReflectionTestUtils.invokeMethod(bot, "handleUserMessage", message, text, null, null);
+    private Update update(Message message) {
+        Update update = mock(Update.class);
+        lenient().when(update.message()).thenReturn(message);
+        lenient().when(update.messageReaction()).thenReturn(null);
+        return update;
+    }
+
+    private Message supportGroupMessage(Integer topicId, String text,
+                                        Message replyToMessage, Integer messageId) {
+        Chat chat = mock(Chat.class);
+        lenient().when(chat.id()).thenReturn(SUPPORT_CHAT_ID);
+
+        User from = mock(User.class);
+        lenient().when(from.isBot()).thenReturn(false);
+        lenient().when(from.id()).thenReturn(7L);
+
+        Message msg = mock(Message.class);
+        lenient().when(msg.chat()).thenReturn(chat);
+        lenient().when(msg.from()).thenReturn(from);
+        lenient().when(msg.messageThreadId()).thenReturn(topicId);
+        lenient().when(msg.text()).thenReturn(text);
+        lenient().when(msg.messageId()).thenReturn(messageId != null ? messageId : 999);
+        lenient().when(msg.replyToMessage()).thenReturn(replyToMessage);
+        return msg;
+    }
+
+    private TopicMapping topicMapping(Long userId, Integer topicId) {
+        return new TopicMapping(userId, topicId, "testuser");
+    }
+
+    private MessageMapping messageMapping(Integer topicMessageId, Integer topicId,
+                                          Long userChatId, Integer userMessageId) {
+        return new MessageMapping(topicMessageId, topicId, userChatId, userMessageId);
+    }
+
+    // ------------------------------------------------------- unsupported media
+
+    @Test
+    void shouldAnswerAndForwardWhenUserSendsUnsupportedMedia() {
+        // A voice note: no text, no photo. This used to produce total silence.
+        Message voice = userMessage(null, 222);
+        when(voice.photo()).thenReturn(null);
+
+        bot.processUpdate(update(voice));
+
+        verify(messageSender).send(eq(USER_CHAT_ID), eq("bot.media.unsupported"));
+        verify(forwarder).forwardToSupport(eq(USER_CHAT_ID), eq(List.of(222)), any(),
+                eq("support.media.received"), eq(false));
     }
 
     @Test
-    @SuppressWarnings("unchecked")
-    void shouldSuppressAiReplyWhenOperatorRepliedRecently() {
-        long chatId = 100L;
-        long userId = 100L;
-        String text = "Есть вопрос";
-        Message message = userMessage(chatId, userId, text, 111);
+    void shouldNotSendUnsupportedMediaNoticeForPlainText() {
+        bot.processUpdate(update(userMessage("Не работает VPN", 111)));
 
-        when(rateLimiter.tryAcquire(userId)).thenReturn(true);
-        // Pretend the user was seen before
-        when(userRepository.findById(userId)).thenReturn(Optional.empty());
-
-        // Inject a recent operator reply timestamp (10 seconds ago)
-        ConcurrentHashMap<Long, Long> map = (ConcurrentHashMap<Long, Long>)
-                ReflectionTestUtils.getField(bot, "lastOperatorReply");
-        assert map != null;
-        map.put(chatId, System.currentTimeMillis() - 10_000);
-
-        invokeHandleUserMessage(message, text);
-
-        // Should forward to support without AI reply
-        verify(forwarder).forwardToSupport(eq(chatId), eq(111), any(), eq(text),
-                eq("[AI suppressed — operator recently active]"), eq(false));
-        verify(llmClient, never()).chat(anyString(), anyLong());
-        verify(llmClient, never()).chatWithImage(anyString(), anyLong(), anyString(), anyString());
+        verify(messageSender, never()).send(anyLong(), eq("bot.media.unsupported"));
     }
 
     @Test
-    void shouldNotSuppressWhenNoOperatorReplyRecorded() {
-        long chatId = 100L;
-        long userId = 100L;
-        String text = "Есть вопрос";
-        Message message = userMessage(chatId, userId, text, 111);
+    void shouldTellUserWhenProviderCannotSeeImages() {
+        Message photo = userMessage(null, 333);
+        when(photo.photo()).thenReturn(new PhotoSize[]{mock(PhotoSize.class)});
+        when(llmClient.supportsImages()).thenReturn(false);
 
-        when(rateLimiter.tryAcquire(userId)).thenReturn(true);
-        when(userRepository.findById(userId)).thenReturn(Optional.empty());
-        when(llmClient.chat(text, userId)).thenReturn("Ответ бота");
+        bot.processUpdate(update(photo));
 
-        invokeHandleUserMessage(message, text);
-
-        // AI reply should be generated
-        verify(llmClient).chat(text, userId);
+        verify(messageSender).send(eq(USER_CHAT_ID), eq("bot.photo.notsupported"));
+        verify(forwarder).forwardToSupport(eq(USER_CHAT_ID), eq(List.of(333)), any(),
+                eq("support.media.received"), eq(false));
+        verifyNoInteractions(photoDownloader);
     }
 
     @Test
-    @SuppressWarnings("unchecked")
-    void shouldNotSuppressWhenOperatorReplyIsOlderThan30Minutes() {
-        long chatId = 100L;
-        long userId = 100L;
-        String text = "Есть вопрос";
-        Message message = userMessage(chatId, userId, text, 111);
+    void shouldReportDownloadFailureToTheUser() {
+        Message photo = userMessage(null, 333);
+        when(photo.photo()).thenReturn(new PhotoSize[]{mock(PhotoSize.class)});
+        when(llmClient.supportsImages()).thenReturn(true);
+        when(photoDownloader.download(any()))
+                .thenReturn(new PhotoDownloader.Result(null, null, "bot.photo.download.error"));
 
-        when(rateLimiter.tryAcquire(userId)).thenReturn(true);
-        when(userRepository.findById(userId)).thenReturn(Optional.empty());
-        when(llmClient.chat(text, userId)).thenReturn("Ответ бота");
+        bot.processUpdate(update(photo));
 
-        // Inject a stale operator reply timestamp (35 minutes ago)
-        ConcurrentHashMap<Long, Long> map = (ConcurrentHashMap<Long, Long>)
-                ReflectionTestUtils.getField(bot, "lastOperatorReply");
-        assert map != null;
-        map.put(chatId, System.currentTimeMillis() - 35 * 60 * 1000L);
+        verify(messageSender).send(eq(USER_CHAT_ID), eq("bot.photo.download.error"));
+    }
 
-        invokeHandleUserMessage(message, text);
+    // ------------------------------------------------------------------ commands
 
-        // AI reply should still be generated
-        verify(llmClient).chat(text, userId);
+    @Test
+    void shouldClearHistoryOnStart() {
+        when(commandHandler.isCommand("/start")).thenReturn(true);
+
+        bot.processUpdate(update(userMessage("/start", 111)));
+
+        verify(chatHistoryService).clear(USER_CHAT_ID);
+        verify(messageSender).send(eq(USER_CHAT_ID), eq("bot.start.welcome"));
+        verifyNoInteractions(pipeline);
     }
 
     @Test
-    void shouldNotSuppressForStartCommand() {
-        long chatId = 100L;
-        long userId = 100L;
-        String text = "/start";
-        Message message = userMessage(chatId, userId, text, 111);
+    void shouldSendHelp() {
+        when(commandHandler.isCommand("/help")).thenReturn(true);
 
-        // Even with a recent operator reply, /start should not trigger suppression
-        // because it returns before the suppression check
+        bot.processUpdate(update(userMessage("/help", 111)));
 
-        invokeHandleUserMessage(message, text);
-
-        verify(chatHistoryService).clear(userId);
-        verify(messageSender).send(eq(chatId), anyString());
-        verifyNoInteractions(rateLimiter);
-        verify(llmClient, never()).chat(anyString(), anyLong());
+        verify(commandHandler).sendHelp(USER_CHAT_ID);
     }
 
-    // ───── Tests for reaction forwarding ─────
+    @Test
+    void shouldEscalateOnOperatorCommand() {
+        when(commandHandler.isCommand("/operator")).thenReturn(true);
 
-    /**
-     * Helper: invoke the private handleReactionUpdated method via reflection.
-     */
-    private void invokeHandleReactionUpdated(MessageReactionUpdated reaction) {
-        ReflectionTestUtils.invokeMethod(bot, "handleReactionUpdated", reaction);
+        bot.processUpdate(update(userMessage("/operator", 111)));
+
+        verify(messageSender).send(eq(USER_CHAT_ID), eq("bot.operator.transfer"));
+        verify(forwarder).forwardToSupport(eq(USER_CHAT_ID), eq(List.of(111)), any(),
+                eq("support.operator.request"), eq(true));
     }
 
-    /**
-     * Helper: create a mock MessageReactionUpdated with given parameters.
-     */
-    private MessageReactionUpdated reactionUpdated(long chatId, int messageId,
-                                                    ReactionType[] newReactions, ReactionType[] oldReactions) {
+    @Test
+    void shouldFallBackToUnknownCommandWhenNotAnAdminCommand() {
+        when(commandHandler.isCommand("/whatever")).thenReturn(true);
+        when(commandHandler.handleAdminCommand(anyLong(), anyLong(), eq("/whatever"))).thenReturn(false);
+
+        bot.processUpdate(update(userMessage("/whatever", 111)));
+
+        verify(commandHandler).sendUnknownCommand(USER_CHAT_ID);
+    }
+
+    @Test
+    void shouldNotAnswerUnknownCommandWhenAdminCommandHandledIt() {
+        when(commandHandler.isCommand("/stats")).thenReturn(true);
+        when(commandHandler.handleAdminCommand(anyLong(), anyLong(), eq("/stats"))).thenReturn(true);
+
+        bot.processUpdate(update(userMessage("/stats", 111)));
+
+        verify(commandHandler, never()).sendUnknownCommand(anyLong());
+    }
+
+    @Test
+    void shouldNotRouteCommandsIntoTheAnswerPipeline() {
+        when(commandHandler.isCommand("/start")).thenReturn(true);
+
+        bot.processUpdate(update(userMessage("/start", 111)));
+
+        verifyNoInteractions(pipeline);
+    }
+
+    // -------------------------------------------------------------- support side
+
+    @Test
+    void shouldSendNewMessageWhenOperatorDoesNotReply() {
+        Message message = supportGroupMessage(42, "Ваш вопрос решён.", null, 900);
+        when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
+
+        bot.processUpdate(update(message));
+
+        verify(messageSender).send(eq(100L), eq("support.operator.prefix"));
+    }
+
+    @Test
+    void shouldAcknowledgeOperatorMessageWithAReactionNotAReply() {
+        Message message = supportGroupMessage(42, "Готово", null, 900);
+        when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
+
+        bot.processUpdate(update(message));
+
+        verify(messageSender).setReaction(eq(String.valueOf(SUPPORT_CHAT_ID)), eq(900),
+                eq(List.of(new ReactionTypeEmoji("👍"))));
+        verify(messageSender, never()).sendReply(eq(SUPPORT_CHAT_ID), anyInt(), anyString());
+    }
+
+    @Test
+    void shouldSendReplyWhenOperatorRepliesToUserMessage() {
+        Message repliedTo = mock(Message.class);
+        when(repliedTo.messageId()).thenReturn(777);
+        Message message = supportGroupMessage(42, "Вот инструкция...", repliedTo, 900);
+
+        when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
+        when(messageMappingRepository.findByTopicMessageIdAndTopicId(777, 42))
+                .thenReturn(Optional.of(messageMapping(777, 42, 100L, 555)));
+
+        bot.processUpdate(update(message));
+
+        verify(messageSender).sendReply(100L, 555, "Вот инструкция...");
+        verify(messageSender, never()).send(eq(100L), anyString());
+    }
+
+    @Test
+    void shouldFallbackToNewMessageWhenReplyMappingIsMissing() {
+        Message repliedTo = mock(Message.class);
+        when(repliedTo.messageId()).thenReturn(777);
+        Message message = supportGroupMessage(42, "Текст ответа", repliedTo, 900);
+
+        when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
+        when(messageMappingRepository.findByTopicMessageIdAndTopicId(777, 42)).thenReturn(Optional.empty());
+
+        bot.processUpdate(update(message));
+
+        verify(messageSender).send(eq(100L), eq("support.operator.prefix"));
+        verify(messageSender, never()).sendReply(eq(100L), anyInt(), anyString());
+    }
+
+    @Test
+    void shouldIgnoreSupportMessageWithoutTopic() {
+        bot.processUpdate(update(supportGroupMessage(null, "text", null, 900)));
+
+        verifyNoInteractions(topicMappingRepository, messageMappingRepository);
+    }
+
+    @Test
+    void shouldCopyMediaWhenOperatorSendsNoText() {
+        Message message = supportGroupMessage(42, "", null, 900);
+        when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
+
+        MessageIdResponse okResponse = mock(MessageIdResponse.class);
+        when(okResponse.isOk()).thenReturn(true);
+        when(telegramBot.execute(any(CopyMessage.class))).thenReturn(okResponse);
+
+        bot.processUpdate(update(message));
+
+        verify(telegramBot).execute(any(CopyMessage.class));
+        verify(messageSender, never()).send(anyLong(), anyString());
+    }
+
+    @Test
+    void shouldRecordOperatorActivityOnReply() {
+        Message message = supportGroupMessage(42, "Решено.", null, 900);
+        when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
+
+        bot.processUpdate(update(message));
+
+        org.junit.jupiter.api.Assertions.assertTrue(conversationState.isOperatorRecentlyActive(100L));
+    }
+
+    // ----------------------------------------------------------------- reactions
+
+    private MessageReactionUpdated reactionUpdated(long chatId, int messageId, ReactionType[] newReactions) {
         Chat chat = mock(Chat.class);
         lenient().when(chat.id()).thenReturn(chatId);
 
@@ -450,157 +353,56 @@ class VpnSupportBotTest {
         lenient().when(reaction.chat()).thenReturn(chat);
         lenient().when(reaction.messageId()).thenReturn(messageId);
         lenient().when(reaction.newReaction()).thenReturn(newReactions);
-        lenient().when(reaction.oldReaction()).thenReturn(oldReactions);
         return reaction;
+    }
+
+    private Update reactionUpdate(MessageReactionUpdated reaction) {
+        Update update = mock(Update.class);
+        lenient().when(update.messageReaction()).thenReturn(reaction);
+        return update;
     }
 
     @Test
     void shouldForwardReactionFromSupportGroupToUser() {
-        // Operator adds a 👍 reaction on a message in the support group topic
-        int topicMessageId = 300;
-        Long userChatId = 100L;
-        int userMessageId = 42;
         ReactionTypeEmoji thumbsUp = new ReactionTypeEmoji("👍");
+        when(messageMappingRepository.findByTopicMessageId(300))
+                .thenReturn(Optional.of(messageMapping(300, 200, 100L, 42)));
 
-        MessageMapping mapping = messageMapping(topicMessageId, 200, userChatId, userMessageId);
-        when(messageMappingRepository.findByTopicMessageId(topicMessageId))
-                .thenReturn(Optional.of(mapping));
+        bot.processUpdate(reactionUpdate(
+                reactionUpdated(SUPPORT_CHAT_ID, 300, new ReactionType[]{thumbsUp})));
 
-        invokeHandleReactionUpdated(
-                reactionUpdated(SUPPORT_CHAT_ID, topicMessageId,
-                        new ReactionType[]{thumbsUp}, new ReactionType[]{}));
-
-        verify(messageSender).setReaction(
-                eq(String.valueOf(userChatId)),
-                eq(userMessageId),
-                eq(List.of(thumbsUp)));
+        verify(messageSender).setReaction(eq("100"), eq(42), eq(List.of(thumbsUp)));
     }
 
     @Test
     void shouldForwardReactionFromUserToSupportGroup() {
-        // User adds a ❤️ reaction on a message in their private chat
-        long userChatId = 100L;
-        int userMessageId = 42;
-        int topicMessageId = 300;
-        int topicId = 200;
         ReactionTypeEmoji heart = new ReactionTypeEmoji("❤️");
+        when(messageMappingRepository.findByUserChatIdAndUserMessageId("100", 42))
+                .thenReturn(Optional.of(messageMapping(300, 200, 100L, 42)));
 
-        MessageMapping mapping = messageMapping(topicMessageId, topicId, userChatId, userMessageId);
-        when(messageMappingRepository.findByUserChatIdAndUserMessageId(
-                String.valueOf(userChatId), userMessageId))
-                .thenReturn(Optional.of(mapping));
+        bot.processUpdate(reactionUpdate(
+                reactionUpdated(100L, 42, new ReactionType[]{heart})));
 
-        invokeHandleReactionUpdated(
-                reactionUpdated(userChatId, userMessageId,
-                        new ReactionType[]{heart}, new ReactionType[]{}));
-
-        verify(messageSender).setReaction(
-                eq(String.valueOf(SUPPORT_CHAT_ID)),
-                eq(topicMessageId),
-                eq(List.of(heart)));
+        verify(messageSender).setReaction(eq(String.valueOf(SUPPORT_CHAT_ID)), eq(300), eq(List.of(heart)));
     }
 
     @Test
-    void shouldRemoveReactionWhenUserRemovesReaction() {
-        // User removes all reactions from a message in private chat
-        long userChatId = 100L;
-        int userMessageId = 42;
-        int topicMessageId = 300;
-        int topicId = 200;
+    void shouldClearReactionsWhenUserRemovesThem() {
+        when(messageMappingRepository.findByUserChatIdAndUserMessageId("100", 42))
+                .thenReturn(Optional.of(messageMapping(300, 200, 100L, 42)));
 
-        MessageMapping mapping = messageMapping(topicMessageId, topicId, userChatId, userMessageId);
-        when(messageMappingRepository.findByUserChatIdAndUserMessageId(
-                String.valueOf(userChatId), userMessageId))
-                .thenReturn(Optional.of(mapping));
+        bot.processUpdate(reactionUpdate(reactionUpdated(100L, 42, new ReactionType[]{})));
 
-        // Empty newReaction means removal
-        invokeHandleReactionUpdated(
-                reactionUpdated(userChatId, userMessageId,
-                        new ReactionType[]{}, new ReactionType[]{new ReactionTypeEmoji("👍")}));
-
-        verify(messageSender).setReaction(
-                eq(String.valueOf(SUPPORT_CHAT_ID)),
-                eq(topicMessageId),
-                eq(List.of()));
+        verify(messageSender).setReaction(eq(String.valueOf(SUPPORT_CHAT_ID)), eq(300), eq(List.of()));
     }
 
     @Test
-    void shouldHandleNullNewReaction() {
-        // Null newReaction should be treated as empty (removal)
-        long userChatId = 100L;
-        int userMessageId = 42;
-        int topicMessageId = 300;
-        int topicId = 200;
+    void shouldIgnoreMessagesFromBots() {
+        Message message = userMessage("hi", 111);
+        when(message.from().isBot()).thenReturn(true);
 
-        MessageMapping mapping = messageMapping(topicMessageId, topicId, userChatId, userMessageId);
-        when(messageMappingRepository.findByUserChatIdAndUserMessageId(
-                String.valueOf(userChatId), userMessageId))
-                .thenReturn(Optional.of(mapping));
+        bot.processUpdate(update(message));
 
-        invokeHandleReactionUpdated(
-                reactionUpdated(userChatId, userMessageId, null, null));
-
-        verify(messageSender).setReaction(
-                eq(String.valueOf(SUPPORT_CHAT_ID)),
-                eq(topicMessageId),
-                eq(List.of()));
-    }
-
-    @Test
-    void shouldForwardPaidReaction() {
-        // User sends a paid reaction in private chat
-        long userChatId = 100L;
-        int userMessageId = 42;
-        int topicMessageId = 300;
-        int topicId = 200;
-        ReactionTypePaid paid = new ReactionTypePaid();
-
-        MessageMapping mapping = messageMapping(topicMessageId, topicId, userChatId, userMessageId);
-        when(messageMappingRepository.findByUserChatIdAndUserMessageId(
-                String.valueOf(userChatId), userMessageId))
-                .thenReturn(Optional.of(mapping));
-
-        invokeHandleReactionUpdated(
-                reactionUpdated(userChatId, userMessageId,
-                        new ReactionType[]{paid}, new ReactionType[]{}));
-
-        verify(messageSender).setReaction(
-                eq(String.valueOf(SUPPORT_CHAT_ID)),
-                eq(topicMessageId),
-                eq(List.of(paid)));
-    }
-
-    @Test
-    void shouldIgnoreUnknownSupportGroupReaction() {
-        // Operator reacts on a message with no mapping — should be silently ignored
-        int topicMessageId = 999;
-        ReactionTypeEmoji thumbsUp = new ReactionTypeEmoji("👍");
-
-        when(messageMappingRepository.findByTopicMessageId(topicMessageId))
-                .thenReturn(Optional.empty());
-
-        invokeHandleReactionUpdated(
-                reactionUpdated(SUPPORT_CHAT_ID, topicMessageId,
-                        new ReactionType[]{thumbsUp}, new ReactionType[]{}));
-
-        verifyNoInteractions(messageSender);
-    }
-
-    @Test
-    void shouldIgnoreUnknownUserReaction() {
-        // User reacts on a message with no mapping — should be silently ignored
-        long userChatId = 999L;
-        int userMessageId = 42;
-        ReactionTypeEmoji thumbsUp = new ReactionTypeEmoji("👍");
-
-        when(messageMappingRepository.findByUserChatIdAndUserMessageId(
-                String.valueOf(userChatId), userMessageId))
-                .thenReturn(Optional.empty());
-
-        invokeHandleReactionUpdated(
-                reactionUpdated(userChatId, userMessageId,
-                        new ReactionType[]{thumbsUp}, new ReactionType[]{}));
-
-        verifyNoInteractions(messageSender);
+        verifyNoInteractions(pipeline, messageSender);
     }
 }

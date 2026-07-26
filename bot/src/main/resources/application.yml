@@ -18,6 +18,11 @@ chat:
     max-messages: 20
     ttl-days: 7
 
+conversation:
+  # How long the AI stays quiet after an operator replies in the topic.
+  operator-suppression-window: 30m
+  last-query-ttl: 6h
+
 llm:
   provider: ${LLM_PROVIDER:deepseek}
 
@@ -25,6 +30,10 @@ embedding:
   provider: ${EMBEDDING_PROVIDER:gemini}
 
 telegram:
+  buffer:
+    # Wait this long for the user to finish typing, then answer all of it at once.
+    window: 2500ms
+    max-messages: 5
   bot-token: ${TELEGRAM_BOT_TOKEN}
   support-group-chat-id: ${TELEGRAM_SUPPORT_GROUP_CHAT_ID}
   support-admin-username: ${TELEGRAM_SUPPORT_ADMIN_USERNAME}
@@ -52,7 +61,7 @@ remnawave:
     url: ${REMNAWAVE_MCP_URL:http://localhost:3100}
     base-url: ${REMNAWAVE_BASE_URL}
     api-token: ${REMNAWAVE_API_TOKEN}
-    readonly: ${REMNAWAVE_READONLY:true}
+    readonly: ${REMNAWAVE_READONLY:false}
 
 management:
   endpoints:

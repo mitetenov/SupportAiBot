@@ -4,6 +4,7 @@ import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.User;
 import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.response.MessageIdResponse;
+import com.vpnsupport.bot.BotMessages;
 import com.vpnsupport.bot.MessageMapping;
 import com.vpnsupport.bot.MessageMappingRepository;
 import com.vpnsupport.bot.TelegramMessageSender;
@@ -12,6 +13,8 @@ import com.vpnsupport.config.TelegramProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 @Component
 public class SupportGroupForwarder {
@@ -24,24 +27,34 @@ public class SupportGroupForwarder {
     private final TelegramMessageSender messageSender;
     private final TopicManager topicManager;
     private final MessageMappingRepository messageMappingRepository;
+    private final BotMessages messages;
     private final long supportGroupChatId;
     private final String adminUsername;
 
     public SupportGroupForwarder(TelegramBot telegramBot, TelegramMessageSender messageSender,
                                   TopicManager topicManager,
                                   MessageMappingRepository messageMappingRepository,
+                                  BotMessages messages,
                                   TelegramProperties properties) {
         this.telegramBot = telegramBot;
         this.messageSender = messageSender;
         this.topicManager = topicManager;
         this.messageMappingRepository = messageMappingRepository;
+        this.messages = messages;
         this.supportGroupChatId = properties.getSupportGroupChatId();
         this.adminUsername = properties.getSupportAdminUsername();
     }
 
-    public void forwardToSupport(long userChatId, int userMessageId, User user,
-                                  String userMessageText, String botResponse,
-                                  boolean needsEscalation) {
+    /**
+     * Copies every message of a batch into the user's topic and appends the
+     * bot's answer once.
+     *
+     * @param userMessageIds all messages that made up this exchange — a user who
+     *                       typed a thought across three messages must have all
+     *                       three visible to the operator
+     */
+    public void forwardToSupport(long userChatId, List<Integer> userMessageIds, User user,
+                                  String botResponse, boolean needsEscalation) {
         String userName = resolveUserName(user);
         Integer topicId = topicManager.resolveTopicId(user.id(), userName);
 
@@ -50,7 +63,14 @@ public class SupportGroupForwarder {
             return;
         }
 
-        boolean ok = forwardUserMessage(userChatId, userMessageId, topicId);
+        if (userMessageIds == null || userMessageIds.isEmpty()) {
+            sendBotResponse(topicId, userName, botResponse, needsEscalation);
+            return;
+        }
+
+        // Recreate the topic on the first failure only: if it is gone, one retry
+        // settles it, and retrying per message would spawn a topic per message.
+        boolean ok = forwardUserMessage(userChatId, userMessageIds.get(0), topicId);
         if (!ok) {
             log.warn("Failed to forward to topic {}, recreating for user {}", topicId, user.id());
             topicId = topicManager.recreateStaleTopic(user.id(), userName, topicId);
@@ -58,11 +78,15 @@ public class SupportGroupForwarder {
                 log.error("Failed to recreate topic for user {}", user.id());
                 return;
             }
-            ok = forwardUserMessage(userChatId, userMessageId, topicId);
+            ok = forwardUserMessage(userChatId, userMessageIds.get(0), topicId);
             if (!ok) {
                 log.error("Still failed to forward after topic recreation for user {}", user.id());
                 return;
             }
+        }
+
+        for (Integer messageId : userMessageIds.subList(1, userMessageIds.size())) {
+            forwardUserMessage(userChatId, messageId, topicId);
         }
 
         sendBotResponse(topicId, userName, botResponse, needsEscalation);
@@ -97,9 +121,9 @@ public class SupportGroupForwarder {
                 ? "@" + adminUsername + " "
                 : "";
 
-        String header = adminTag + "Ответ бота для " + userName + ":\n\n";
+        String header = adminTag + messages.get("admin.response.prefix") + " " + userName + ":\n\n";
         String truncated = botResponse.length() > SUPPORT_PREVIEW_MAX_LENGTH
-                ? botResponse.substring(0, SUPPORT_PREVIEW_MAX_LENGTH) + "...\n\n(сообщение обрезано)"
+                ? botResponse.substring(0, SUPPORT_PREVIEW_MAX_LENGTH) + "...\n\n" + messages.get("admin.response.truncated")
                 : botResponse;
 
         messageSender.sendToTopic(supportGroupChatId, topicId, header + truncated);
@@ -133,13 +157,14 @@ public class SupportGroupForwarder {
                 : userMessage;
 
         messageSender.sendToTopic(supportGroupChatId, topicId,
-                "[ОШИБКА БОТА] " + userName + ": " + truncatedUserMsg + "\n\nБот ответил:\n" + userVisibleMessage);
+                messages.get("admin.error.prefix") + " " + userName + ": " + truncatedUserMsg
+                        + "\n\nБот ответил:\n" + userVisibleMessage);
 
         String truncated = errorDetails.length() > SUPPORT_PREVIEW_MAX_LENGTH
                 ? errorDetails.substring(0, SUPPORT_PREVIEW_MAX_LENGTH) + "..."
                 : errorDetails;
 
         messageSender.sendToTopic(supportGroupChatId, topicId,
-                adminTag + "Детали ошибки:\n\n" + truncated);
+                adminTag + messages.get("admin.error.details") + "\n\n" + truncated);
     }
 }

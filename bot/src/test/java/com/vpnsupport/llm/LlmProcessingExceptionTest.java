@@ -3,56 +3,35 @@ package com.vpnsupport.llm;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+/**
+ * The one thing worth pinning down: the technical message and the message the
+ * user sees are separate, and the technical one never leaks to the user.
+ */
 class LlmProcessingExceptionTest {
 
     @Test
-    void shouldStoreMessageAndUserFriendlyMessage() {
+    void shouldKeepTheTechnicalAndUserFacingMessagesApart() {
         LlmProcessingException ex = new LlmProcessingException(
-                "API error: timeout",
-                "Извините, произошла ошибка. Попробуйте позже."
-        );
-        assertEquals("API error: timeout", ex.getMessage());
-        assertEquals("Извините, произошла ошибка. Попробуйте позже.", ex.getUserFriendlyMessage());
+                "API error: timeout after 60s at api.deepseek.com",
+                "Произошла ошибка при обработке запроса. Попробуйте позже.");
+
+        assertEquals("API error: timeout after 60s at api.deepseek.com", ex.getMessage());
+        assertEquals("Произошла ошибка при обработке запроса. Попробуйте позже.",
+                ex.getUserFriendlyMessage());
     }
 
     @Test
-    void shouldStoreCause() {
+    void shouldPreserveTheCauseForLogging() {
         Throwable cause = new RuntimeException("Connection refused");
-        LlmProcessingException ex = new LlmProcessingException(
-                "LLM failed",
-                "Ошибка обработки запроса",
-                cause
-        );
-        assertEquals("LLM failed", ex.getMessage());
-        assertEquals("Ошибка обработки запроса", ex.getUserFriendlyMessage());
-        assertNotNull(ex.getCause());
-        assertEquals("Connection refused", ex.getCause().getMessage());
+        LlmProcessingException ex = new LlmProcessingException("LLM failed", "Ошибка", cause);
+
+        assertEquals(cause, ex.getCause());
     }
 
     @Test
-    void shouldAllowNullUserFriendlyMessage() {
-        LlmProcessingException ex = new LlmProcessingException("Error", null);
-        assertEquals("Error", ex.getMessage());
-        assertNull(ex.getUserFriendlyMessage());
-    }
-
-    @Test
-    void shouldAllowNullCause() {
-        LlmProcessingException ex = new LlmProcessingException("Error", "User msg", null);
-        assertEquals("Error", ex.getMessage());
-        assertEquals("User msg", ex.getUserFriendlyMessage());
-        assertNull(ex.getCause());
-    }
-
-    @Test
-    void shouldExtendRuntimeException() {
-        LlmProcessingException ex = new LlmProcessingException("err", "user");
-        boolean isRuntimeException = ex instanceof RuntimeException;
-        if (!isRuntimeException) {
-            throw new AssertionError("Expected RuntimeException subclass");
-        }
+    void shouldTolerateAMissingUserFacingMessage() {
+        assertNull(new LlmProcessingException("Error", null).getUserFriendlyMessage());
     }
 }

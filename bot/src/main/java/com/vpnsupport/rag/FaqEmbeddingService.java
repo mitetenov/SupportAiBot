@@ -1,15 +1,16 @@
 package com.vpnsupport.rag;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -17,26 +18,98 @@ import java.util.UUID;
 public class FaqEmbeddingService {
 
     private static final Logger log = LoggerFactory.getLogger(FaqEmbeddingService.class);
+
     private static final int SEARCH_LIMIT = 3;
     private static final int MAX_RESULTS = 5;
-    private static final double MIN_SIMILARITY = 0.65;
+
+    /** Cosine-similarity floor for the vector channel. */
+    private static final double MIN_VECTOR_SIMILARITY = 0.65;
+
+    /**
+     * {@code ts_rank} floor for the lexical channel. {@code websearch_to_tsquery}
+     * ANDs its terms, so any non-trivial rank means every term of the query is
+     * present in the entry — a strong signal even when the phrasing is nothing
+     * like the FAQ question.
+     */
+    private static final double MIN_FTS_RANK = 0.05;
+
+    /** RRF damping constant; 60 is the value from the original Cormack et al. paper. */
+    private static final int RRF_K = 60;
+
+    private static final int EMBEDDING_CACHE_SIZE = 256;
+
     private static final String CONNECTION_FAQ_QUERY =
             "Не могу подключиться к VPN / не работает / не заходит";
     private static final String REFERRAL_FAQ_QUERY =
             "Реферальная программа, партнёрка, реферальная ссылка, пригласить друга, бонусы, рефералы";
 
+    /**
+     * Ranks each entry independently in the vector and the lexical channel and
+     * fuses the two by Reciprocal Rank Fusion. The previous weighted sum
+     * (0.7·cosine + 0.3·ts_rank) compared two incomparable scales: real
+     * {@code ts_rank} values sit around 0.05, so the lexical term could never
+     * lift an entry past the admission threshold on its own and keyword-only
+     * matches were silently unreachable.
+     *
+     * <p>The lexical rank only contributes when there actually was a match,
+     * otherwise every non-matching row would still receive a rank and dilute
+     * the fusion.
+     */
+    private static final String HYBRID_SEARCH_SQL = """
+            WITH scored AS (
+                SELECT question,
+                       answer,
+                       1 - (embedding <=> ?::vector) AS vector_sim,
+                       ts_rank(to_tsvector('russian',
+                                   question || ' ' || COALESCE(keywords, '') || ' ' || answer),
+                               websearch_to_tsquery('russian', ?)) AS fts_rank
+                FROM faq
+                WHERE embedding IS NOT NULL
+            ),
+            ranked AS (
+                SELECT question, answer, vector_sim, fts_rank,
+                       RANK() OVER (ORDER BY vector_sim DESC) AS vector_pos,
+                       RANK() OVER (ORDER BY fts_rank DESC)   AS fts_pos
+                FROM scored
+            )
+            SELECT question, answer, vector_sim, fts_rank,
+                   (1.0 / (? + vector_pos))
+                   + CASE WHEN fts_rank > 0 THEN 1.0 / (? + fts_pos) ELSE 0 END AS rrf_score
+            FROM ranked
+            WHERE vector_sim >= ? OR fts_rank >= ?
+            ORDER BY rrf_score DESC
+            LIMIT ?
+            """;
+
+    private static final String VECTOR_SEARCH_SQL = """
+            SELECT question, answer, 1 - (embedding <=> ?::vector) AS vector_sim
+            FROM faq
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> ?::vector
+            LIMIT ?
+            """;
+
     private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
     private final EmbeddingProvider embeddingProvider;
     private volatile boolean ready = false;
-    private final ThreadLocal<Double> lastMaxSimilarity = ThreadLocal.withInitial(() -> 0.0);
-    private final ThreadLocal<String> lastBestQuestion = new ThreadLocal<>();
-    private final ThreadLocal<Set<String>> shownQuestions = new ThreadLocal<>();
 
-    public FaqEmbeddingService(JdbcTemplate jdbcTemplate,
-                                ObjectMapper objectMapper, EmbeddingProvider embeddingProvider) {
+    /**
+     * Access-ordered LRU over query embeddings. Embeddings are a pure function
+     * of the text, so entries never go stale. This collapses the repeated
+     * provider round-trips a single user message used to trigger: the primary
+     * search, the two constant fallback searches and the knowledge-gap insert
+     * all hit the same cache.
+     */
+    private final Map<String, float[]> embeddingCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, float[]> eldest) {
+                    return size() > EMBEDDING_CACHE_SIZE;
+                }
+            });
+
+    public FaqEmbeddingService(JdbcTemplate jdbcTemplate, EmbeddingProvider embeddingProvider) {
         this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
         this.embeddingProvider = embeddingProvider;
     }
 
@@ -54,7 +127,7 @@ public class FaqEmbeddingService {
         jdbcTemplate.execute("ALTER TABLE faq ADD COLUMN embedding vector(%d)"
                 .formatted(embeddingProvider.getDimension()));
         jdbcTemplate.execute("ALTER TABLE faq DROP COLUMN IF EXISTS image");
-        jdbcTemplate.execute("ALTER TABLE faq ADD COLUMN IF NOT EXISTS images VARCHAR(1000)");
+        jdbcTemplate.execute("ALTER TABLE faq DROP COLUMN IF EXISTS images");
         jdbcTemplate.execute("ALTER TABLE faq ADD COLUMN IF NOT EXISTS keywords VARCHAR(2000)");
         try {
             jdbcTemplate.execute("""
@@ -102,11 +175,7 @@ public class FaqEmbeddingService {
         }
     }
 
-    public void indexFaq(String question, String answer, String images) {
-        indexFaq(question, answer, images, null);
-    }
-
-    public void indexFaq(String question, String answer, String images, String keywords) {
+    public void indexFaq(String question, String answer, String keywords) {
         String embedText = question + (keywords != null && !keywords.isBlank() ? " " + keywords : "") + "\n" + answer;
         float[] embedding = embeddingProvider.embed(embedText);
         if (embedding == null || embedding.length != embeddingProvider.getDimension()) {
@@ -114,12 +183,10 @@ public class FaqEmbeddingService {
             return;
         }
 
-        String id = UUID.randomUUID().toString();
-        String vectorStr = vectorToString(embedding);
         jdbcTemplate.update(
-                "INSERT INTO faq (id, question, answer, embedding, images, keywords) VALUES (?, ?, ?, ?::vector, ?, ?)",
-                id, question, answer, vectorStr, images, keywords);
-        log.debug("Indexed FAQ: {} images={} keywords={}", question, images, keywords);
+                "INSERT INTO faq (id, question, answer, embedding, keywords) VALUES (?, ?, ?, ?::vector, ?)",
+                UUID.randomUUID().toString(), question, answer, vectorToString(embedding), keywords);
+        log.debug("Indexed FAQ: {} keywords={}", question, keywords);
     }
 
     public void clearFaq() {
@@ -137,49 +204,33 @@ public class FaqEmbeddingService {
             return List.of();
         }
 
-        float[] queryEmbedding = embeddingProvider.embed(query);
-        if (queryEmbedding == null || queryEmbedding.length != embeddingProvider.getDimension()) {
+        String vectorStr = embedQueryAsVector(query);
+        if (vectorStr == null) {
             return List.of();
         }
 
-        final String vectorStr = vectorToString(queryEmbedding);
         String rawClean = query.replaceAll("[^a-zA-Zа-яА-Я0-9\\s]", " ").trim();
-        final String cleanQuery = rawClean.isBlank() ? query : rawClean;
-
-        String sql = """
-                SELECT question, answer, images,
-                       (1 - (embedding <=> ?::vector)) AS vector_sim,
-                       ts_rank(to_tsvector('russian', question || ' ' || COALESCE(keywords, '') || ' ' || answer),
-                               websearch_to_tsquery('russian', ?)) AS fts_rank
-                FROM faq
-                WHERE embedding IS NOT NULL
-                ORDER BY (0.7 * (1 - (embedding <=> ?::vector)) + 0.3 * LEAST(ts_rank(to_tsvector('russian', question || ' ' || COALESCE(keywords, '') || ' ' || answer), websearch_to_tsquery('russian', ?)), 1.0)) DESC
-                LIMIT ?
-                """;
+        String cleanQuery = rawClean.isBlank() ? query : rawClean;
 
         List<FaqResult> results = new ArrayList<>();
         try {
             jdbcTemplate.query(
-                    sql,
+                    HYBRID_SEARCH_SQL,
                     ps -> {
                         ps.setString(1, vectorStr);
                         ps.setString(2, cleanQuery);
-                        ps.setString(3, vectorStr);
-                        ps.setString(4, cleanQuery);
-                        ps.setInt(5, SEARCH_LIMIT);
+                        ps.setInt(3, RRF_K);
+                        ps.setInt(4, RRF_K);
+                        ps.setDouble(5, MIN_VECTOR_SIMILARITY);
+                        ps.setDouble(6, MIN_FTS_RANK);
+                        ps.setInt(7, SEARCH_LIMIT);
                     },
                     rs -> {
-                        double vectorSim = rs.getDouble("vector_sim");
-                        double ftsRank = rs.getDouble("fts_rank");
-                        double combinedScore = 0.7 * vectorSim + 0.3 * Math.min(ftsRank, 1.0);
-                        if (combinedScore >= MIN_SIMILARITY || vectorSim >= MIN_SIMILARITY) {
-                            results.add(new FaqResult(
-                                    rs.getString("question"),
-                                    rs.getString("answer"),
-                                    splitImages(rs.getString("images")),
-                                    combinedScore
-                            ));
-                        }
+                        results.add(new FaqResult(
+                                rs.getString("question"),
+                                rs.getString("answer"),
+                                rs.getDouble("vector_sim"),
+                                rs.getDouble("rrf_score")));
                     }
             );
         } catch (Exception e) {
@@ -194,21 +245,20 @@ public class FaqEmbeddingService {
         List<FaqResult> results = new ArrayList<>();
         try {
             jdbcTemplate.query(
-                    "SELECT question, answer, images, 1 - (embedding <=> ?::vector) AS similarity FROM faq WHERE embedding IS NOT NULL ORDER BY embedding <=> ?::vector LIMIT ?",
+                    VECTOR_SEARCH_SQL,
                     ps -> {
                         ps.setString(1, vectorStr);
                         ps.setString(2, vectorStr);
                         ps.setInt(3, SEARCH_LIMIT);
                     },
                     rs -> {
-                        double similarity = rs.getDouble("similarity");
-                        if (similarity >= MIN_SIMILARITY) {
+                        double similarity = rs.getDouble("vector_sim");
+                        if (similarity >= MIN_VECTOR_SIMILARITY) {
                             results.add(new FaqResult(
                                     rs.getString("question"),
                                     rs.getString("answer"),
-                                    splitImages(rs.getString("images")),
-                                    similarity
-                            ));
+                                    similarity,
+                                    similarity));
                         }
                     }
             );
@@ -228,7 +278,7 @@ public class FaqEmbeddingService {
             mergeDeduped(results, search(REFERRAL_FAQ_QUERY));
         }
 
-        results.sort((a, b) -> Double.compare(b.similarity(), a.similarity()));
+        results.sort((a, b) -> Double.compare(b.rrfScore(), a.rrfScore()));
         if (results.size() > MAX_RESULTS) {
             results = new ArrayList<>(results.subList(0, MAX_RESULTS));
         }
@@ -236,88 +286,76 @@ public class FaqEmbeddingService {
     }
 
     private void mergeDeduped(List<FaqResult> target, List<FaqResult> source) {
-        Set<String> existing = new HashSet<>();
+        Set<String> existing = new LinkedHashSet<>();
         for (FaqResult r : target) {
             existing.add(r.question());
         }
         for (FaqResult r : source) {
-            if (!existing.contains(r.question())) {
+            if (existing.add(r.question())) {
                 target.add(r);
-                existing.add(r.question());
             }
         }
     }
 
-    public String buildFaqContext(String userQuery) {
+    public FaqContext buildFaqContext(String userQuery) {
         return buildFaqContext(userQuery, Set.of());
     }
 
-    public String buildFaqContext(String userQuery, Set<String> excludeQuestions) {
+    /**
+     * Retrieves the FAQ entries to put in front of the model and returns them
+     * together with the metadata the caller needs. Everything a caller might
+     * want about this retrieval is in the returned value — the previous version
+     * stashed the similarity, the best question and the shown set in
+     * {@link ThreadLocal}s that were never cleared, which only worked as long as
+     * every step of a request stayed on the same pooled thread.
+     */
+    public FaqContext buildFaqContext(String userQuery, Set<String> excludeQuestions) {
         List<FaqResult> results = searchWithFallback(userQuery);
-        if (!excludeQuestions.isEmpty()) {
+        if (excludeQuestions != null && !excludeQuestions.isEmpty()) {
             results = results.stream()
                     .filter(r -> !excludeQuestions.contains(r.question()))
                     .toList();
         }
         if (results.isEmpty()) {
-            lastMaxSimilarity.set(0.0);
-            lastBestQuestion.remove();
-            shownQuestions.set(Set.of());
-            return "";
+            return FaqContext.EMPTY;
         }
-
-        shownQuestions.set(results.stream()
-                .map(FaqResult::question)
-                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new)));
-
-        double maxSim = results.stream().mapToDouble(FaqResult::similarity).max().orElse(0.0);
-        lastMaxSimilarity.set(maxSim);
-        lastBestQuestion.set(results.get(0).question());
 
         StringBuilder sb = new StringBuilder(
                 "FAQ (скопируй инструкцию дословно в ответ, не добавляй своих шагов):\n");
         for (FaqResult r : results) {
             sb.append("Вопрос: ").append(r.question()).append("\n");
-            sb.append("Инструкция: ").append(r.answer()).append("\n");
-            if (r.images() != null && !r.images().isEmpty()) {
-                sb.append("(к ответу прилагаются картинки)\n");
-            }
-            sb.append("\n");
+            sb.append("Инструкция: ").append(r.answer()).append("\n\n");
         }
-        return sb.toString();
+
+        double maxSimilarity = results.stream()
+                .mapToDouble(FaqResult::similarity)
+                .max()
+                .orElse(0.0);
+
+        return new FaqContext(sb.toString(), List.copyOf(results),
+                maxSimilarity, results.get(0).question());
     }
 
-    public double getLastMaxSimilarity() {
-        return lastMaxSimilarity.get();
-    }
-
-    public String getLastFaqQuestion() {
-        return lastBestQuestion.get();
-    }
-
-    public Set<String> getShownQuestions() {
-        Set<String> questions = shownQuestions.get();
-        return questions != null ? questions : Set.of();
-    }
-
-    public boolean looksLikeRejection(String message) {
-        if (message == null || message.isBlank()) {
-            return false;
-        }
-        String lower = message.toLowerCase();
-        return lower.contains("не то")
-                || lower.contains("не подходит")
-                || lower.contains("не это")
-                || lower.contains("другой вариант")
-                || lower.contains("другая инструкция")
-                || lower.contains("не та")
-                || lower.contains("нет,")
-                || lower.contains("другое");
-    }
-
+    /** Embeds {@code text} and renders it as a pgvector literal, or null on failure. */
     public String embedQueryAsVector(String text) {
-        float[] embedding = embeddingProvider.embed(text);
+        float[] embedding = embed(text);
         return embedding != null ? vectorToString(embedding) : null;
+    }
+
+    private float[] embed(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        float[] cached = embeddingCache.get(text);
+        if (cached != null) {
+            return cached;
+        }
+        float[] embedding = embeddingProvider.embed(text);
+        if (embedding == null || embedding.length != embeddingProvider.getDimension()) {
+            return null;
+        }
+        embeddingCache.put(text, embedding);
+        return embedding;
     }
 
     private boolean looksLikeConnectionIssue(String query) {
@@ -352,20 +390,9 @@ public class FaqEmbeddingService {
                 || lower.contains("partner")
                 || lower.contains("приглас")
                 || lower.contains("приглаш")
-                || (lower.contains("друг") || lower.contains("друз"))
+                || lower.contains("друг")
+                || lower.contains("друз")
                 || lower.contains("бонус");
-    }
-
-
-
-    public List<String> getMatchedImages(String userQuery) {
-        return searchWithFallback(userQuery).stream()
-                .filter(r -> r.images() != null && !r.images().isEmpty())
-                .flatMap(r -> r.images().stream())
-                .map(String::trim)
-                .filter(s -> !s.isBlank())
-                .distinct()
-                .toList();
     }
 
     private String vectorToString(float[] vector) {
@@ -378,13 +405,32 @@ public class FaqEmbeddingService {
         return sb.toString();
     }
 
-    public record FaqResult(String question, String answer, List<String> images, double similarity) {
+    /**
+     * A single retrieved FAQ entry.
+     *
+     * @param similarity raw cosine similarity — the knowledge-gap thresholds are
+     *                   expressed on this scale, so it stays separate from the
+     *                   fused ranking score
+     * @param rrfScore   Reciprocal Rank Fusion score used for ordering only
+     */
+    public record FaqResult(String question, String answer, double similarity, double rrfScore) {
     }
 
-    private static List<String> splitImages(String images) {
-        if (images == null || images.isBlank()) {
-            return List.of();
+    /** Everything one FAQ retrieval produced. */
+    public record FaqContext(String text, List<FaqResult> results,
+                             double maxSimilarity, String bestQuestion) {
+
+        public static final FaqContext EMPTY = new FaqContext("", List.of(), 0.0, null);
+
+        public boolean isEmpty() {
+            return results.isEmpty();
         }
-        return List.of(images.split(","));
+
+        /** Questions shown to the model, in rank order. */
+        public Set<String> questions() {
+            return results.stream()
+                    .map(FaqResult::question)
+                    .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        }
     }
 }

@@ -13,7 +13,13 @@ import java.util.List;
 @Repository
 public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> {
 
-    List<ChatMessage> findTop20ByTelegramIdOrderByCreatedAtAsc(Long telegramId);
+    /**
+     * Returns the most recent messages, newest first. Callers must reverse the
+     * result to get chronological order — ordering ascending here would take the
+     * 20 <em>oldest</em> messages in the TTL window instead of the live
+     * conversation.
+     */
+    List<ChatMessage> findTop20ByTelegramIdOrderByCreatedAtDesc(Long telegramId);
 
     @Modifying
     @Transactional

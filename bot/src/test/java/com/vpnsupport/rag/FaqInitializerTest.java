@@ -86,56 +86,6 @@ class FaqInitializerTest {
         assertEquals(64, hash.length());
     }
 
-    @Test
-    void shouldExtractImagesFromList() throws Exception {
-        Method method = FaqInitializer.class.getDeclaredMethod("extractImages", Object.class);
-        method.setAccessible(true);
-
-        String result = (String) method.invoke(null, List.of("img1.jpg", "img2.jpg"));
-
-        assertEquals("img1.jpg,img2.jpg", result);
-    }
-
-    @Test
-    void shouldExtractImagesFromNull() throws Exception {
-        Method method = FaqInitializer.class.getDeclaredMethod("extractImages", Object.class);
-        method.setAccessible(true);
-
-        String result = (String) method.invoke(null, (Object) null);
-
-        assertNull(result);
-    }
-
-    @Test
-    void shouldExtractImagesFromEmptyList() throws Exception {
-        Method method = FaqInitializer.class.getDeclaredMethod("extractImages", Object.class);
-        method.setAccessible(true);
-
-        String result = (String) method.invoke(null, List.of());
-
-        assertNull(result);
-    }
-
-    @Test
-    void shouldExtractImagesFromNonList() throws Exception {
-        Method method = FaqInitializer.class.getDeclaredMethod("extractImages", Object.class);
-        method.setAccessible(true);
-
-        String result = (String) method.invoke(null, "not-a-list");
-
-        assertNull(result);
-    }
-
-    @Test
-    void shouldExtractImagesFromSingleElementList() throws Exception {
-        Method method = FaqInitializer.class.getDeclaredMethod("extractImages", Object.class);
-        method.setAccessible(true);
-
-        String result = (String) method.invoke(null, List.of("only.jpg"));
-
-        assertEquals("only.jpg", result);
-    }
-
     private String invokeComputeHash(ClassPathResource resource) throws Exception {
         Method method = FaqInitializer.class.getDeclaredMethod("computeHash", ClassPathResource.class);
         method.setAccessible(true);

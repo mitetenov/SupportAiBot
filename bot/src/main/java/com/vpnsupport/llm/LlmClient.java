@@ -2,9 +2,9 @@ package com.vpnsupport.llm;
 
 public interface LlmClient {
 
-    String chat(String userMessage, long telegramUserId);
+    LlmReply chat(String userMessage, long telegramUserId);
 
-    String chatWithImage(String userMessage, long telegramUserId, String base64Image, String mimeType);
+    LlmReply chatWithImage(String userMessage, long telegramUserId, String base64Image, String mimeType);
 
     default boolean supportsImages() {
         return false;

@@ -4,7 +4,6 @@ import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.reaction.ReactionType;
 import com.pengrad.telegrambot.request.BaseRequest;
 import com.pengrad.telegrambot.request.SendMessage;
-import com.pengrad.telegrambot.request.SendPhoto;
 import com.pengrad.telegrambot.request.SetMessageReaction;
 import com.pengrad.telegrambot.response.BaseResponse;
 import com.pengrad.telegrambot.response.SendResponse;
@@ -12,8 +11,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -83,47 +80,6 @@ public class TelegramMessageSender {
             }
         } catch (Exception e) {
             log.error("Error setting reaction on message {} in chat {}", messageId, chatId, e);
-        }
-    }
-
-    public void sendPhoto(long chatId, String imageRef) {
-        if (imageRef == null || imageRef.isBlank()) {
-            return;
-        }
-        try {
-            if (isTelegramFileId(imageRef)) {
-                SendResponse response = telegramBot.execute(new SendPhoto(chatId, imageRef));
-                if (!response.isOk()) {
-                    log.error("Failed to send photo to {}: {}", chatId, response.description());
-                }
-            } else {
-                byte[] imageData = loadImage(imageRef);
-                if (imageData == null) {
-                    log.error("Image not found on classpath: faq/images/{}", imageRef);
-                    return;
-                }
-                SendResponse response = telegramBot.execute(new SendPhoto(chatId, imageData));
-                if (!response.isOk()) {
-                    log.error("Failed to send photo to {}: {}", chatId, response.description());
-                }
-            }
-        } catch (Exception e) {
-            log.error("Error sending photo to {}", chatId, e);
-        }
-    }
-
-    private boolean isTelegramFileId(String s) {
-        return s.startsWith("AgAC") || s.startsWith("BQAC") || s.startsWith("AAMC");
-    }
-
-    private byte[] loadImage(String filename) {
-        String path = "/faq/images/" + filename;
-        try (InputStream is = getClass().getResourceAsStream(path)) {
-            if (is == null) return null;
-            return is.readAllBytes();
-        } catch (IOException e) {
-            log.error("Failed to read image from classpath: {}", path, e);
-            return null;
         }
     }
 

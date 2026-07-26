@@ -73,7 +73,12 @@ public class KnowledgeGapService {
         log.info("Knowledge gaps schema initialized");
     }
 
-    public void evaluate(String userQuery, long telegramUserId, String rawBotResponse) {
+    /**
+     * Records a knowledge gap for {@code userQuery} if the retrieval behind
+     * {@code faqContext} looks like it failed the user.
+     */
+    public void evaluate(String userQuery, long telegramUserId, String rawBotResponse,
+                         FaqEmbeddingService.FaqContext faqContext) {
         try {
             if (userQuery == null || userQuery.isBlank()) {
                 return;
@@ -81,39 +86,43 @@ public class KnowledgeGapService {
             String query = truncate(userQuery, MAX_QUERY_LENGTH);
             String response = truncate(rawBotResponse, MAX_RESPONSE_LENGTH);
 
-            double maxSimilarity = faqEmbeddingService.getLastMaxSimilarity();
-            String bestFaqQuestion = faqEmbeddingService.getLastFaqQuestion();
-            int faqCount = maxSimilarity > 0 ? 1 : 0;
-
-            String trigger = determineTrigger(rawBotResponse, maxSimilarity, bestFaqQuestion);
+            FaqEmbeddingService.FaqContext context = orEmpty(faqContext);
+            String trigger = determineTrigger(rawBotResponse, context.maxSimilarity(), context.bestQuestion());
             if (trigger == null) {
                 return;
             }
 
-            storeGap(query, telegramUserId, bestFaqQuestion, maxSimilarity, faqCount, trigger, response);
+            storeGap(query, telegramUserId, context.bestQuestion(), context.maxSimilarity(),
+                    context.results().size(), trigger, response);
         } catch (Exception e) {
             log.warn("Failed to evaluate knowledge gap: {}", e.getMessage());
         }
     }
 
-    public void evaluateOperatorRequest(String userQuery, long telegramUserId) {
+    /**
+     * Records a gap for a user who asked for a human right after the bot
+     * answered — the strongest available signal that the answer missed.
+     */
+    public void evaluateOperatorRequest(String userQuery, long telegramUserId,
+                                        FaqEmbeddingService.FaqContext faqContext) {
         if (userQuery == null || userQuery.isBlank()) {
             return;
         }
 
         String query = truncate(userQuery, MAX_QUERY_LENGTH);
         String botResponse = "[Пользователь запросил оператора после ответа бота]";
-
-        double maxSimilarity = faqEmbeddingService.getLastMaxSimilarity();
-        String bestFaqQuestion = faqEmbeddingService.getLastFaqQuestion();
-        int faqCount = maxSimilarity > 0 ? 1 : 0;
+        FaqEmbeddingService.FaqContext context = orEmpty(faqContext);
 
         try {
-            storeGap(query, telegramUserId, bestFaqQuestion, maxSimilarity, faqCount,
-                    "USER_OPERATOR", botResponse);
+            storeGap(query, telegramUserId, context.bestQuestion(), context.maxSimilarity(),
+                    context.results().size(), "USER_OPERATOR", botResponse);
         } catch (Exception e) {
             log.warn("Failed to evaluate operator knowledge gap: {}", e.getMessage());
         }
+    }
+
+    private static FaqEmbeddingService.FaqContext orEmpty(FaqEmbeddingService.FaqContext context) {
+        return context != null ? context : FaqEmbeddingService.FaqContext.EMPTY;
     }
 
     public List<GapStatsDto> getTopGaps(int limit) {
