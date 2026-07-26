@@ -1,16 +1,39 @@
+# Keep the build context small: everything not listed here is shipped to the
+# daemon on every build, and changing any of it can invalidate the cache.
+
+# Build output — the image compiles from source, never from a local jar
 target/
 *.class
 *.jar
 *.war
-.idea/
-*.iml
-.vscode/
-.DS_Store
-*.log
-.env
-.env.example
-DataExport_*/
+
+# VCS and CI
 .git/
 .gitignore
-docker-compose.yml
+.github/
+.worktrees/
+
+# IDE and OS
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.project
+.classpath
+.DS_Store
+
+# Secrets and local state
+.env
+.env.example
+data/
+*.log
+DataExport_*/
+
+# Docs and orchestration — not needed to compile or run
 README.md
+CI-CD.md
+docker-compose.yml
+Dockerfile
+.dockerignore
