@@ -18,8 +18,14 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Gemini attaches an opaque {@code thought_signature} to a function call and
+ * expects it echoed back on the matching function response. Dropping it breaks
+ * multi-step tool use, and nothing else in the codebase touches this field —
+ * hence a file of its own.
+ */
 @ExtendWith(MockitoExtension.class)
-class GeminiClientRoundtripTest {
+class GeminiThoughtSignatureTest {
 
     @Mock private McpRouter mcpRouter;
     @Mock private ChatHistoryService chatHistoryService;
@@ -75,9 +81,7 @@ class GeminiClientRoundtripTest {
                 }
                 """;
 
-        var method = GeminiClient.class.getDeclaredMethod("parseResponse", String.class);
-        method.setAccessible(true);
-        LlmResponse response = (LlmResponse) method.invoke(client, rawResponse);
+        LlmResponse response = client.parseResponse(rawResponse);
 
         assertEquals("Let me check your devices.", response.text());
         assertEquals(2, response.toolCalls().size());
@@ -132,16 +136,11 @@ class GeminiClientRoundtripTest {
                 }
                 """;
 
-        var parseMethod = GeminiClient.class.getDeclaredMethod("parseResponse", String.class);
-        parseMethod.setAccessible(true);
-        LlmResponse response = (LlmResponse) parseMethod.invoke(client, rawResponse);
+        LlmResponse response = client.parseResponse(rawResponse);
 
         // Now add to conversation — should use rawParts and preserve thought_signature
         List<Map<String, Object>> conversation = new ArrayList<>();
-        var addMethod = GeminiClient.class.getDeclaredMethod(
-                "addToolCallsToConversation", List.class, LlmResponse.class);
-        addMethod.setAccessible(true);
-        addMethod.invoke(client, conversation, response);
+        client.addToolCallsToConversation(conversation, response);
 
         assertEquals(1, conversation.size());
         Map<String, Object> modelMsg = conversation.get(0);
@@ -165,10 +164,7 @@ class GeminiClientRoundtripTest {
                 "hwid_devices_list", "", Map.of("uuid", "abc-123"), "sig_response_test");
 
         List<Map<String, Object>> conversation = new ArrayList<>();
-        var addResultMethod = GeminiClient.class.getDeclaredMethod(
-                "addToolResultToConversation", List.class, LlmResponse.ToolCall.class, String.class);
-        addResultMethod.setAccessible(true);
-        addResultMethod.invoke(client, conversation, toolCall, "{\"devices\": []}");
+        client.addToolResultToConversation(conversation, toolCall, "{\"devices\": []}");
 
         assertEquals(1, conversation.size());
         Map<String, Object> funcMsg = conversation.get(0);
@@ -196,10 +192,7 @@ class GeminiClientRoundtripTest {
                 "nodes_list", "", Map.of(), null);
 
         List<Map<String, Object>> conversation = new ArrayList<>();
-        var addResultMethod = GeminiClient.class.getDeclaredMethod(
-                "addToolResultToConversation", List.class, LlmResponse.ToolCall.class, String.class);
-        addResultMethod.setAccessible(true);
-        addResultMethod.invoke(client, conversation, toolCall, "[]");
+        client.addToolResultToConversation(conversation, toolCall, "[]");
 
         Map<String, Object> funcMsg = conversation.get(0);
         @SuppressWarnings("unchecked")
@@ -235,23 +228,15 @@ class GeminiClientRoundtripTest {
                 """;
 
         // Step 1: Parse the response
-        var parseMethod = GeminiClient.class.getDeclaredMethod("parseResponse", String.class);
-        parseMethod.setAccessible(true);
-        LlmResponse response = (LlmResponse) parseMethod.invoke(client, apiResponse);
+        LlmResponse response = client.parseResponse(apiResponse);
 
         // Step 2: Add model's function call to conversation
         List<Map<String, Object>> conversation = new ArrayList<>();
-        var addCallsMethod = GeminiClient.class.getDeclaredMethod(
-                "addToolCallsToConversation", List.class, LlmResponse.class);
-        addCallsMethod.setAccessible(true);
-        addCallsMethod.invoke(client, conversation, response);
+        client.addToolCallsToConversation(conversation, response);
 
         // Step 3: Add function response
         LlmResponse.ToolCall tc = response.toolCalls().get(0);
-        var addResultMethod = GeminiClient.class.getDeclaredMethod(
-                "addToolResultToConversation", List.class, LlmResponse.ToolCall.class, String.class);
-        addResultMethod.setAccessible(true);
-        addResultMethod.invoke(client, conversation, tc, "{\"uuid\": \"user-uuid-123\"}");
+        client.addToolResultToConversation(conversation, tc, "{\"uuid\": \"user-uuid-123\"}");
 
         // Assert: conversation now contains model message + function response
         assertEquals(2, conversation.size());
@@ -283,10 +268,7 @@ class GeminiClientRoundtripTest {
         LlmResponse response = new LlmResponse("Just text", List.of(), List.of());
         List<Map<String, Object>> conversation = new ArrayList<>();
 
-        var addCallsMethod = GeminiClient.class.getDeclaredMethod(
-                "addToolCallsToConversation", List.class, LlmResponse.class);
-        addCallsMethod.setAccessible(true);
-        addCallsMethod.invoke(client, conversation, response);
+        client.addToolCallsToConversation(conversation, response);
 
         assertEquals(1, conversation.size());
         Map<String, Object> modelMsg = conversation.get(0);
@@ -318,9 +300,7 @@ class GeminiClientRoundtripTest {
                 }
                 """;
 
-        var parseMethod = GeminiClient.class.getDeclaredMethod("parseResponse", String.class);
-        parseMethod.setAccessible(true);
-        LlmResponse response = (LlmResponse) parseMethod.invoke(client, rawResponse);
+        LlmResponse response = client.parseResponse(rawResponse);
 
         assertEquals(1, response.toolCalls().size());
         assertNull(response.toolCalls().get(0).thoughtSignature(),
@@ -362,9 +342,7 @@ class GeminiClientRoundtripTest {
                 }
                 """;
 
-        var parseMethod = GeminiClient.class.getDeclaredMethod("parseResponse", String.class);
-        parseMethod.setAccessible(true);
-        LlmResponse response = (LlmResponse) parseMethod.invoke(client, rawResponse);
+        LlmResponse response = client.parseResponse(rawResponse);
 
         assertEquals(2, response.toolCalls().size());
         assertEquals("sig_nodes", response.toolCalls().get(0).thoughtSignature());
@@ -372,10 +350,7 @@ class GeminiClientRoundtripTest {
 
         // Verify rawParts preserve both signatures
         List<Map<String, Object>> conversation = new ArrayList<>();
-        var addCallsMethod = GeminiClient.class.getDeclaredMethod(
-                "addToolCallsToConversation", List.class, LlmResponse.class);
-        addCallsMethod.setAccessible(true);
-        addCallsMethod.invoke(client, conversation, response);
+        client.addToolCallsToConversation(conversation, response);
 
         Map<String, Object> modelMsg = conversation.get(0);
         @SuppressWarnings("unchecked")

@@ -13,7 +13,10 @@ RUN --mount=type=cache,target=/root/.m2 mvn package -pl bot -DskipTests -B
 # Stage 2: Runtime image — lightweight JRE only
 # =============================================================================
 FROM eclipse-temurin:21-jre-alpine
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl \
+    && addgroup -S bot && adduser -S -G bot bot
 COPY --from=java-build /app/bot/target/bot-*.jar /app/bot.jar
 WORKDIR /app
-ENTRYPOINT ["java", "-jar", "/app/bot.jar"]
+USER bot
+# Size the heap from the container limit rather than the host's memory.
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "/app/bot.jar"]

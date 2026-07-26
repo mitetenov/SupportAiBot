@@ -11,6 +11,10 @@ import com.vpnsupport.bot.TelegramMessageSender;
 import com.vpnsupport.bot.TopicManager;
 import com.vpnsupport.config.TelegramProperties;
 import org.junit.jupiter.api.Test;
+
+import com.vpnsupport.bot.BotMessages;
+
+import java.util.List;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -23,6 +27,9 @@ class SupportGroupForwarderTest {
 
     @Mock
     private TelegramBot telegramBot;
+
+    @Mock
+    private BotMessages messages;
 
     @Mock
     private TelegramMessageSender messageSender;
@@ -42,7 +49,7 @@ class SupportGroupForwarderTest {
         when(telegramBot.execute(any(CopyMessage.class))).thenReturn(okResponse);
 
         SupportGroupForwarder forwarder = createForwarder();
-        forwarder.forwardToSupport(1L, 100, user, "Help me!", "Bot response", false);
+        forwarder.forwardToSupport(1L, List.of(100), user, "Bot response", false);
 
         verify(telegramBot, atLeastOnce()).execute(any(CopyMessage.class));
         verify(messageSender).sendToTopic(eq(100L), eq(42), anyString());
@@ -54,7 +61,7 @@ class SupportGroupForwarderTest {
         when(topicManager.resolveTopicId(1L, "@johndoe")).thenReturn(null);
 
         SupportGroupForwarder forwarder = createForwarder();
-        forwarder.forwardToSupport(1L, 100, user, "Help me!", "Bot response", false);
+        forwarder.forwardToSupport(1L, List.of(100), user, "Bot response", false);
 
         verify(telegramBot, never()).execute(any(CopyMessage.class));
         verify(messageSender, never()).sendToTopic(anyLong(), anyInt(), anyString());
@@ -75,7 +82,7 @@ class SupportGroupForwarderTest {
         when(topicManager.recreateStaleTopic(1L, "@johndoe", 42)).thenReturn(99);
 
         SupportGroupForwarder forwarder = createForwarder();
-        forwarder.forwardToSupport(1L, 100, user, "Help me!", "Bot response", false);
+        forwarder.forwardToSupport(1L, List.of(100), user, "Bot response", false);
 
         verify(topicManager).recreateStaleTopic(1L, "@johndoe", 42);
         verify(telegramBot, times(2)).execute(any(CopyMessage.class));
@@ -96,7 +103,7 @@ class SupportGroupForwarderTest {
         when(topicManager.recreateStaleTopic(1L, "@johndoe", 42)).thenReturn(99);
 
         SupportGroupForwarder forwarder = createForwarder();
-        forwarder.forwardToSupport(1L, 100, user, "Help me!", "Bot response", false);
+        forwarder.forwardToSupport(1L, List.of(100), user, "Bot response", false);
 
         verify(messageSender, never()).sendToTopic(anyLong(), anyInt(), anyString());
     }
@@ -110,7 +117,7 @@ class SupportGroupForwarderTest {
         when(telegramBot.execute(any(CopyMessage.class))).thenReturn(okResponse);
 
         SupportGroupForwarder forwarder = createForwarderWithAdmin("admin");
-        forwarder.forwardToSupport(1L, 100, user, "Help me!", "Bot response", true);
+        forwarder.forwardToSupport(1L, List.of(100), user, "Bot response", true);
 
         verify(messageSender).sendToTopic(eq(100L), eq(42), contains("@admin"));
     }
@@ -124,7 +131,7 @@ class SupportGroupForwarderTest {
         when(telegramBot.execute(any(CopyMessage.class))).thenReturn(okResponse);
 
         SupportGroupForwarder forwarder = createForwarderWithAdmin("admin");
-        forwarder.forwardToSupport(1L, 100, user, "Help me!", "Bot response", false);
+        forwarder.forwardToSupport(1L, List.of(100), user, "Bot response", false);
 
         verify(messageSender).sendToTopic(eq(100L), eq(42), argThat(s -> !s.contains("@admin")));
     }
@@ -138,7 +145,7 @@ class SupportGroupForwarderTest {
         when(telegramBot.execute(any(CopyMessage.class))).thenReturn(okResponse);
 
         SupportGroupForwarder forwarder = createForwarder();
-        forwarder.forwardToSupport(1L, 100, user, "Help me!", "Bot response", false);
+        forwarder.forwardToSupport(1L, List.of(100), user, "Bot response", false);
 
         verify(topicManager).resolveTopicId(1L, "@johndoe");
     }
@@ -152,7 +159,7 @@ class SupportGroupForwarderTest {
         when(telegramBot.execute(any(CopyMessage.class))).thenReturn(okResponse);
 
         SupportGroupForwarder forwarder = createForwarder();
-        forwarder.forwardToSupport(2L, 100, user, "Help me!", "Bot response", false);
+        forwarder.forwardToSupport(2L, List.of(100), user, "Bot response", false);
 
         verify(topicManager).resolveTopicId(2L, "John Doe");
     }
@@ -166,7 +173,7 @@ class SupportGroupForwarderTest {
         when(telegramBot.execute(any(CopyMessage.class))).thenReturn(okResponse);
 
         SupportGroupForwarder forwarder = createForwarder();
-        forwarder.forwardToSupport(3L, 100, user, "Help me!", "Bot response", false);
+        forwarder.forwardToSupport(3L, List.of(100), user, "Bot response", false);
 
         verify(topicManager).resolveTopicId(3L, "John");
     }
@@ -180,7 +187,7 @@ class SupportGroupForwarderTest {
         when(telegramBot.execute(any(CopyMessage.class))).thenReturn(okResponse);
 
         SupportGroupForwarder forwarder = createForwarder();
-        forwarder.forwardToSupport(4L, 100, user, "Help me!", "Bot response", false);
+        forwarder.forwardToSupport(4L, List.of(100), user, "Bot response", false);
 
         verify(topicManager).resolveTopicId(4L, "User 4");
     }
@@ -195,9 +202,11 @@ class SupportGroupForwarderTest {
 
         SupportGroupForwarder forwarder = createForwarder();
         String longResponse = "A".repeat(4000);
-        forwarder.forwardToSupport(1L, 100, user, "Help me!", longResponse, false);
+        forwarder.forwardToSupport(1L, List.of(100), user, longResponse, false);
 
-        verify(messageSender).sendToTopic(eq(100L), eq(42), contains("(сообщение обрезано)"));
+        // The mock message source echoes keys, so this asserts the truncation
+        // notice comes from messages.properties rather than an inlined literal.
+        verify(messageSender).sendToTopic(eq(100L), eq(42), contains("admin.response.truncated"));
     }
 
     @Test
@@ -247,7 +256,7 @@ class SupportGroupForwarderTest {
         when(topicManager.recreateStaleTopic(1L, "@johndoe", 42)).thenReturn(99);
 
         SupportGroupForwarder forwarder = createForwarder();
-        forwarder.forwardToSupport(1L, 100, user, "Help me!", "Bot response", false);
+        forwarder.forwardToSupport(1L, List.of(100), user, "Bot response", false);
 
         verify(topicManager).recreateStaleTopic(1L, "@johndoe", 42);
     }
@@ -261,7 +270,7 @@ class SupportGroupForwarderTest {
         when(telegramBot.execute(any(CopyMessage.class))).thenReturn(ok);
 
         SupportGroupForwarder forwarder = createForwarder();
-        forwarder.forwardToSupport(1L, 100, user, "Help me!", "Bot response", false);
+        forwarder.forwardToSupport(1L, List.of(100), user, "Bot response", false);
 
         verify(messageMappingRepository).save(argThat(m ->
                 m.getTopicMessageId() == 200
@@ -288,16 +297,20 @@ class SupportGroupForwarderTest {
     private SupportGroupForwarder createForwarder() {
         TelegramProperties properties = new TelegramProperties();
         properties.setSupportGroupChatId(100L);
+        lenient().when(messages.get(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(inv -> inv.getArgument(0));
         return new SupportGroupForwarder(telegramBot, messageSender, topicManager,
-                messageMappingRepository, properties);
+                messageMappingRepository, messages, properties);
     }
 
     private SupportGroupForwarder createForwarderWithAdmin(String adminUsername) {
         TelegramProperties properties = new TelegramProperties();
         properties.setSupportGroupChatId(100L);
         properties.setSupportAdminUsername(adminUsername);
+        lenient().when(messages.get(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(inv -> inv.getArgument(0));
         return new SupportGroupForwarder(telegramBot, messageSender, topicManager,
-                messageMappingRepository, properties);
+                messageMappingRepository, messages, properties);
     }
 
     private User userWithUsername(long id, String username) {

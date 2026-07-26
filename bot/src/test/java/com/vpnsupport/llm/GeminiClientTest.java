@@ -72,13 +72,7 @@ class GeminiClientTest {
 
     @Test
     void shouldBuildInitialConversationForText() throws Exception {
-        var method = GeminiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "Hello", 123L, "FAQ", null, null);
+        List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "FAQ", null, null);
 
         assertTrue(!conv.isEmpty(), "Conversation should not be empty");
         Map<String, Object> last = conv.get(conv.size() - 1);
@@ -87,13 +81,7 @@ class GeminiClientTest {
 
     @Test
     void shouldBuildInitialConversationIncludeDynamicContext() throws Exception {
-        var method = GeminiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "Hello", 777L, "FAQ text", null, null);
+        List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 777L, "FAQ text", null, null);
 
         assertEquals("user", conv.get(0).get("role"));
         @SuppressWarnings("unchecked")
@@ -107,13 +95,7 @@ class GeminiClientTest {
 
     @Test
     void shouldBuildInitialConversationWithoutFaqWhenNull() throws Exception {
-        var method = GeminiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "Hello", 123L, null, null, null);
+        List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, null, null, null);
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> firstParts = (List<Map<String, Object>>) conv.get(0).get("parts");
@@ -124,13 +106,7 @@ class GeminiClientTest {
 
     @Test
     void shouldBuildInitialConversationWithoutFaqWhenEmpty() throws Exception {
-        var method = GeminiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "Hello", 123L, "", null, null);
+        List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "", null, null);
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> firstParts = (List<Map<String, Object>>) conv.get(0).get("parts");
@@ -141,13 +117,7 @@ class GeminiClientTest {
 
     @Test
     void shouldBuildInitialConversationForImage() throws Exception {
-        var method = GeminiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "Describe", 123L, "FAQ", "base64data", "image/png");
+        List<Map<String, Object>> conv = client.buildInitialConversation("Describe", 123L, "FAQ", "base64data", "image/png");
 
         assertTrue(!conv.isEmpty());
         Map<String, Object> last = conv.get(conv.size() - 1);

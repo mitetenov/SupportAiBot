@@ -64,9 +64,7 @@ public class FaqInitializer implements ApplicationRunner {
                 String question = (String) entry.get("question");
                 String answer = (String) entry.get("answer");
                 if (question != null && answer != null) {
-                    String images = extractImages(entry.get("images"));
-                    String keywords = extractKeywords(entry.get("keywords"));
-                    embeddingService.indexFaq(question, answer, images, keywords);
+                    embeddingService.indexFaq(question, answer, extractKeywords(entry.get("keywords")));
                 }
             }
 
@@ -101,15 +99,6 @@ public class FaqInitializer implements ApplicationRunner {
             log.error("Failed to compute FAQ file hash", e);
             return null;
         }
-    }
-
-    private static String extractImages(Object imagesValue) {
-        if (imagesValue instanceof List<?> list && !list.isEmpty()) {
-            return list.stream()
-                    .map(Object::toString)
-                    .collect(java.util.stream.Collectors.joining(","));
-        }
-        return null;
     }
 
     private static String extractKeywords(Object keywordsValue) {

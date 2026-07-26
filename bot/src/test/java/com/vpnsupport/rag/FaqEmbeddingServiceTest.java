@@ -31,7 +31,7 @@ class FaqEmbeddingServiceTest {
         lenient().when(embeddingProvider.getDimension()).thenReturn(2000);
 
         objectMapper = new ObjectMapper();
-        service = new FaqEmbeddingService(jdbcTemplate, objectMapper, embeddingProvider);
+        service = new FaqEmbeddingService(jdbcTemplate, embeddingProvider);
     }
 
     @Test
@@ -42,14 +42,9 @@ class FaqEmbeddingServiceTest {
 
     @Test
     void shouldReturnEmptyBuildFaqContextWhenNotReady() {
-        String context = service.buildFaqContext("test");
-        assertEquals("", context);
-    }
-
-    @Test
-    void shouldReturnEmptyMatchedImagesWhenNotReady() {
-        List<String> images = service.getMatchedImages("test");
-        assertTrue(images.isEmpty());
+        FaqEmbeddingService.FaqContext context = service.buildFaqContext("test");
+        assertTrue(context.isEmpty());
+        assertEquals("", context.text());
     }
 
 
@@ -87,43 +82,20 @@ class FaqEmbeddingServiceTest {
 
     @Test
     void shouldHandleNullQueryInBuildFaqContext() {
-        String context = service.buildFaqContext(null);
-        assertEquals("", context);
+        FaqEmbeddingService.FaqContext context = service.buildFaqContext(null);
+        assertTrue(context.isEmpty());
+        assertEquals("", context.text());
+        assertEquals(0.0, context.maxSimilarity());
+        assertNull(context.bestQuestion());
     }
 
     @Test
     void shouldHandleBlankQueryInBuildFaqContext() {
-        String context = service.buildFaqContext("  ");
-        assertEquals("", context);
-    }
-
-    @Test
-    void shouldSplitImagesFromNull() throws Exception {
-        var method = FaqEmbeddingService.class.getDeclaredMethod("splitImages", String.class);
-        method.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        List<String> result = (List<String>) method.invoke(null, (String) null);
-        assertTrue(result.isEmpty());
-    }
-
-    @Test
-    void shouldSplitImagesFromBlank() throws Exception {
-        var method = FaqEmbeddingService.class.getDeclaredMethod("splitImages", String.class);
-        method.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        List<String> result = (List<String>) method.invoke(null, "  ");
-        assertTrue(result.isEmpty());
-    }
-
-    @Test
-    void shouldSplitImagesFromCommaSeparated() throws Exception {
-        var method = FaqEmbeddingService.class.getDeclaredMethod("splitImages", String.class);
-        method.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        List<String> result = (List<String>) method.invoke(null, "img1.jpg,img2.jpg");
-        assertEquals(2, result.size());
-        assertEquals("img1.jpg", result.get(0));
-        assertEquals("img2.jpg", result.get(1));
+        FaqEmbeddingService.FaqContext context = service.buildFaqContext("  ");
+        assertTrue(context.isEmpty());
+        assertEquals("", context.text());
+        assertEquals(0.0, context.maxSimilarity());
+        assertNull(context.bestQuestion());
     }
 
     @Test
@@ -251,8 +223,8 @@ class FaqEmbeddingServiceTest {
         service.clearFaq();
         service.indexFaq("test question", "test answer", null);
 
-        verify(jdbcTemplate).update(eq("INSERT INTO faq (id, question, answer, embedding, images, keywords) VALUES (?, ?, ?, ?::vector, ?, ?)"),
-                anyString(), eq("test question"), eq("test answer"), anyString(), isNull(), isNull());
+        verify(jdbcTemplate).update(eq("INSERT INTO faq (id, question, answer, embedding, keywords) VALUES (?, ?, ?, ?::vector, ?)"),
+                anyString(), eq("test question"), eq("test answer"), anyString(), isNull());
         verify(embeddingProvider).embed(contains("test question"));
     }
 
@@ -263,8 +235,8 @@ class FaqEmbeddingServiceTest {
         service.clearFaq();
         service.indexFaq("query", "answer", null);
 
-        verify(jdbcTemplate, never()).update(eq("INSERT INTO faq (id, question, answer, embedding, images, keywords) VALUES (?, ?, ?, ?::vector, ?, ?)"),
-                anyString(), anyString(), anyString(), anyString(), any(), any());
+        verify(jdbcTemplate, never()).update(eq("INSERT INTO faq (id, question, answer, embedding, keywords) VALUES (?, ?, ?, ?::vector, ?)"),
+                anyString(), anyString(), anyString(), anyString(), any());
     }
 
     @Test
@@ -275,12 +247,13 @@ class FaqEmbeddingServiceTest {
         service.clearFaq();
         service.indexFaq("query", "answer", null);
 
-        verify(jdbcTemplate, never()).update(eq("INSERT INTO faq (id, question, answer, embedding, images, keywords) VALUES (?, ?, ?, ?::vector, ?, ?)"),
-                anyString(), anyString(), anyString(), anyString(), any(), any());
+        verify(jdbcTemplate, never()).update(eq("INSERT INTO faq (id, question, answer, embedding, keywords) VALUES (?, ?, ?, ?::vector, ?)"),
+                anyString(), anyString(), anyString(), anyString(), any());
     }
 
     @Test
     void shouldEmbedQueryAsVector() {
+        when(embeddingProvider.getDimension()).thenReturn(2);
         when(embeddingProvider.embed(eq("my query"))).thenReturn(new float[]{0.8f, 0.2f});
 
         String result = service.embedQueryAsVector("my query");
@@ -289,5 +262,28 @@ class FaqEmbeddingServiceTest {
         assertTrue(result.startsWith("["));
         assertTrue(result.contains("0.8"));
         verify(embeddingProvider).embed("my query");
+    }
+
+    @Test
+    void shouldRejectAnEmbeddingOfTheWrongDimension() {
+        when(embeddingProvider.getDimension()).thenReturn(2000);
+        when(embeddingProvider.embed(eq("my query"))).thenReturn(new float[]{0.8f, 0.2f});
+
+        assertNull(service.embedQueryAsVector("my query"));
+    }
+
+    @Test
+    void shouldEmbedEachDistinctTextOnlyOnce() {
+        when(embeddingProvider.getDimension()).thenReturn(2);
+        when(embeddingProvider.embed(eq("repeat"))).thenReturn(new float[]{0.5f, 0.5f});
+
+        service.embedQueryAsVector("repeat");
+        service.embedQueryAsVector("repeat");
+        service.embedQueryAsVector("repeat");
+
+        // One provider round-trip, not three: the same message used to trigger
+        // several embedding calls across the primary search, the constant
+        // fallback searches and knowledge-gap accounting.
+        verify(embeddingProvider, times(1)).embed("repeat");
     }
 }

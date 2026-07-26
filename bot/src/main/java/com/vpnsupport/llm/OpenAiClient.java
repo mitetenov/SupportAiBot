@@ -28,7 +28,6 @@ import java.util.Map;
 public class OpenAiClient extends AbstractLlmClient {
 
     private static final Logger log = LoggerFactory.getLogger(OpenAiClient.class);
-    private static final double DEFAULT_TEMPERATURE = 0.3;
 
     private final WebClient webClient;
     private final String model;
@@ -285,30 +284,5 @@ public class OpenAiClient extends AbstractLlmClient {
             functions.add(fn);
         }
         return List.copyOf(functions);
-    }
-
-    private ObjectNode buildRequestBody(List<Map<String, Object>> messages) {
-        ObjectNode body = objectMapper.createObjectNode();
-        body.put("model", model);
-
-        ArrayNode messagesArray = body.putArray("messages");
-        for (Map<String, Object> msg : messages) {
-            messagesArray.add(objectMapper.valueToTree(msg));
-        }
-
-        List<Map<String, Object>> tools = getToolDefinitions();
-        if (!tools.isEmpty()) {
-            ArrayNode toolsArray = body.putArray("tools");
-            for (Map<String, Object> tool : tools) {
-                toolsArray.add(objectMapper.valueToTree(tool));
-            }
-            body.put("tool_choice", "auto");
-            body.put("reasoning_effort", "none");
-        }
-
-        if (temperature != null) {
-            body.put("temperature", temperature);
-        }
-        return body;
     }
 }

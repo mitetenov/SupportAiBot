@@ -8,7 +8,12 @@ public class RemnawaveMcpProperties {
     private String url;
     private String baseUrl;
     private String apiToken;
-    private boolean readonly = true;
+    /**
+     * When true, mutating MCP tools (HWID device deletion) are withheld from
+     * the model entirely. Defaults to false to preserve the device-management
+     * flow the support prompt describes.
+     */
+    private boolean readonly = false;
 
     public String getUrl() {
         return url;

@@ -35,6 +35,19 @@ class KnowledgeGapServiceTest {
         service = new KnowledgeGapService(jdbcTemplate, faqEmbeddingService, embeddingProvider);
     }
 
+
+    /** Builds the retrieval a caller would have passed in. */
+    private static FaqEmbeddingService.FaqContext context(double maxSimilarity, String bestQuestion) {
+        if (bestQuestion == null && maxSimilarity == 0.0) {
+            return FaqEmbeddingService.FaqContext.EMPTY;
+        }
+        return new FaqEmbeddingService.FaqContext(
+                "FAQ...",
+                List.of(new FaqEmbeddingService.FaqResult(bestQuestion, "answer", maxSimilarity, 0.01)),
+                maxSimilarity,
+                bestQuestion);
+    }
+
     @Test
     void shouldInitSchema() {
         service.initSchema();
@@ -47,21 +60,16 @@ class KnowledgeGapServiceTest {
 
     @Test
     void shouldNotTriggerWhenFaqFoundWithGoodMatch() {
-        when(faqEmbeddingService.getLastMaxSimilarity()).thenReturn(0.85);
-        when(faqEmbeddingService.getLastFaqQuestion()).thenReturn("Найден FAQ");
-
-        service.evaluate("Как настроить VPN", 12345L, "Вот инструкция: нажмите кнопку");
+        service.evaluate("Как настроить VPN", 12345L, "Вот инструкция: нажмите кнопку", context(0.85, "Найден FAQ"));
 
         verify(jdbcTemplate, never()).update(anyString(), any(), any());
     }
 
     @Test
     void shouldTriggerNoMatchWhenNoFaqFound() {
-        when(faqEmbeddingService.getLastMaxSimilarity()).thenReturn(0.0);
-        when(faqEmbeddingService.getLastFaqQuestion()).thenReturn(null);
         when(faqEmbeddingService.embedQueryAsVector(anyString())).thenReturn(null);
 
-        service.evaluate("Странный вопрос без FAQ", 12345L, "Я не знаю ответа");
+        service.evaluate("Странный вопрос без FAQ", 12345L, "Я не знаю ответа", context(0.0, null));
 
         verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
                 any(), any(), any(), any(), any(), any(), any(), any(), any());
@@ -69,11 +77,9 @@ class KnowledgeGapServiceTest {
 
     @Test
     void shouldTriggerLowSimilarity() {
-        when(faqEmbeddingService.getLastMaxSimilarity()).thenReturn(0.45);
-        when(faqEmbeddingService.getLastFaqQuestion()).thenReturn("Слабый FAQ");
         when(faqEmbeddingService.embedQueryAsVector(anyString())).thenReturn(null);
 
-        service.evaluate("Сложный вопрос", 12345L, "Попробуйте обновить подписку");
+        service.evaluate("Сложный вопрос", 12345L, "Попробуйте обновить подписку", context(0.45, "Слабый FAQ"));
 
         verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
                 any(), any(), any(), any(), any(), any(), any(), any(), any());
@@ -81,11 +87,9 @@ class KnowledgeGapServiceTest {
 
     @Test
     void shouldTriggerEscalated() {
-        when(faqEmbeddingService.getLastMaxSimilarity()).thenReturn(0.80);
-        when(faqEmbeddingService.getLastFaqQuestion()).thenReturn("FAQ об оплате");
         when(faqEmbeddingService.embedQueryAsVector(anyString())).thenReturn(null);
 
-        service.evaluate("Оплатил но не продлилось", 12345L, "Обратитесь в @PeipivoSalesBot [ESCALATE]");
+        service.evaluate("Оплатил но не продлилось", 12345L, "Обратитесь в @PeipivoSalesBot [ESCALATE]", context(0.80, "FAQ об оплате"));
 
         verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
                 any(), any(), any(), any(), any(), any(), any(), any(), any());
@@ -93,11 +97,9 @@ class KnowledgeGapServiceTest {
 
     @Test
     void shouldTriggerLlmUnsure() {
-        when(faqEmbeddingService.getLastMaxSimilarity()).thenReturn(0.75);
-        when(faqEmbeddingService.getLastFaqQuestion()).thenReturn("Какой-то FAQ");
         when(faqEmbeddingService.embedQueryAsVector(anyString())).thenReturn(null);
 
-        service.evaluate("Вопрос про другое", 12345L, "К сожалению, я не знаю ответа на этот вопрос");
+        service.evaluate("Вопрос про другое", 12345L, "К сожалению, я не знаю ответа на этот вопрос", context(0.75, "Какой-то FAQ"));
 
         verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
                 any(), any(), any(), any(), any(), any(), any(), any(), any());
@@ -105,11 +107,9 @@ class KnowledgeGapServiceTest {
 
     @Test
     void shouldEvaluateOperatorRequest() {
-        when(faqEmbeddingService.getLastMaxSimilarity()).thenReturn(0.80);
-        when(faqEmbeddingService.getLastFaqQuestion()).thenReturn("FAQ");
         when(faqEmbeddingService.embedQueryAsVector(anyString())).thenReturn(null);
 
-        service.evaluateOperatorRequest("Нужен оператор", 12345L);
+        service.evaluateOperatorRequest("Нужен оператор", 12345L, context(0.80, "FAQ"));
 
         verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
                 any(), any(), any(), any(), any(), any(), any(), any(), any());
@@ -117,21 +117,21 @@ class KnowledgeGapServiceTest {
 
     @Test
     void shouldNotEvaluateNullQuery() {
-        service.evaluate(null, 12345L, "Ответ");
+        service.evaluate(null, 12345L, "Ответ", FaqEmbeddingService.FaqContext.EMPTY);
 
         verify(jdbcTemplate, never()).update(anyString(), any(), any());
     }
 
     @Test
     void shouldNotEvaluateBlankQuery() {
-        service.evaluate("  ", 12345L, "Ответ");
+        service.evaluate("  ", 12345L, "Ответ", FaqEmbeddingService.FaqContext.EMPTY);
 
         verify(jdbcTemplate, never()).update(anyString(), any(), any());
     }
 
     @Test
     void shouldNotEvaluateNullOperatorQuery() {
-        service.evaluateOperatorRequest(null, 12345L);
+        service.evaluateOperatorRequest(null, 12345L, FaqEmbeddingService.FaqContext.EMPTY);
 
         verify(jdbcTemplate, never()).update(anyString(), any(), any());
     }

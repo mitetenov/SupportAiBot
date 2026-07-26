@@ -59,13 +59,7 @@ class OpenAiClientTest {
     void shouldBuildInitialConversationWithSystemPrompt() throws Exception {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
-        var method = OpenAiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "Hello", 123L, "FAQ content", null, null);
+        List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "FAQ content", null, null);
 
         assertEquals(3, conv.size());
         assertEquals("system", conv.get(0).get("role"));
@@ -80,13 +74,7 @@ class OpenAiClientTest {
                 Map.of("role", "assistant", "content", "resp")
         ));
 
-        var method = OpenAiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "Hello", 123L, "FAQ", null, null);
+        List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "FAQ", null, null);
 
         assertEquals(5, conv.size());
     }
@@ -95,13 +83,7 @@ class OpenAiClientTest {
     void shouldBuildConversationWithImage() throws Exception {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
-        var method = OpenAiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "Describe this", 123L, null, "base64data", "image/png");
+        List<Map<String, Object>> conv = client.buildInitialConversation("Describe this", 123L, null, "base64data", "image/png");
 
         assertEquals(3, conv.size());
         Map<String, Object> userMsg = conv.get(2);
@@ -124,13 +106,7 @@ class OpenAiClientTest {
     void shouldBuildConversationWithImageAndNoText() throws Exception {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
-        var method = OpenAiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "", 123L, null, "base64data", "image/jpeg");
+        List<Map<String, Object>> conv = client.buildInitialConversation("", 123L, null, "base64data", "image/jpeg");
 
         assertEquals(3, conv.size());
         Map<String, Object> userMsg = conv.get(2);
@@ -163,9 +139,7 @@ class OpenAiClientTest {
                 }
                 """;
 
-        var method = OpenAiClient.class.getDeclaredMethod("parseResponse", String.class);
-        method.setAccessible(true);
-        LlmResponse response = (LlmResponse) method.invoke(client, jsonResponse);
+        LlmResponse response = client.parseResponse(jsonResponse);
 
         assertEquals("Hello, how can I help?", response.text());
         assertFalse(response.hasToolCalls());
@@ -189,9 +163,7 @@ class OpenAiClientTest {
                 }
                 """;
 
-        var method = OpenAiClient.class.getDeclaredMethod("parseResponse", String.class);
-        method.setAccessible(true);
-        LlmResponse response = (LlmResponse) method.invoke(client, jsonResponse);
+        LlmResponse response = client.parseResponse(jsonResponse);
 
         assertTrue(response.text().isEmpty());
         assertTrue(response.hasToolCalls());
@@ -209,13 +181,7 @@ class OpenAiClientTest {
     void shouldIncludeTelegramIdInDynamicContext() throws Exception {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
-        var method = OpenAiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "Hello", 777L, null, null, null);
+        List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 777L, null, null, null);
 
         String dynamicContext = (String) conv.get(1).get("content");
         assertTrue(dynamicContext.contains("Telegram ID: 777"),
@@ -228,13 +194,7 @@ class OpenAiClientTest {
     void shouldIncludeFaqInDynamicContextWhenPresent() throws Exception {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
-        var method = OpenAiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "Hello", 123L, "Some FAQ content", null, null);
+        List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "Some FAQ content", null, null);
 
         String dynamicContext = (String) conv.get(1).get("content");
         assertTrue(dynamicContext.contains("Telegram ID: 123"));
@@ -245,13 +205,7 @@ class OpenAiClientTest {
     void shouldNotIncludeFaqInDynamicContextWhenEmpty() throws Exception {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
-        var method = OpenAiClient.class.getDeclaredMethod(
-                "buildInitialConversation", String.class, long.class, String.class, String.class, String.class);
-        method.setAccessible(true);
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> conv = (List<Map<String, Object>>) method.invoke(
-                client, "Hello", 123L, "", null, null);
+        List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "", null, null);
 
         String dynamicContext = (String) conv.get(1).get("content");
         assertTrue(dynamicContext.contains("Telegram ID: 123"));
@@ -287,9 +241,7 @@ class OpenAiClientTest {
                 }
                 """;
 
-        var method = OpenAiClient.class.getDeclaredMethod("saveUsage", String.class, long.class);
-        method.setAccessible(true);
-        method.invoke(client, jsonResponse, 123L);
+        client.saveUsage(jsonResponse, 123L);
 
         verify(tokenUsageRepository).save(argThat(usage ->
                 usage.getTelegramId() == 123L
@@ -333,65 +285,6 @@ class OpenAiClientTest {
         assertThrows(IllegalArgumentException.class, () ->
                 new OpenAiClient(props, objectMapper, mcpRouter,
                         chatHistoryService, faqEmbeddingService, tokenUsageRepository));
-    }
-
-    @Test
-    void shouldIncludeReasoningEffortWhenToolsPresent() throws Exception {
-        when(mcpRouter.listTools()).thenReturn(List.of(
-                new McpTool("test_tool", "test description", Map.of())
-        ));
-
-        var method = OpenAiClient.class.getDeclaredMethod("buildRequestBody", List.class);
-        method.setAccessible(true);
-
-        List<Map<String, Object>> messages = List.of(Map.of("role", "user", "content", "hi"));
-        ObjectNode body = (ObjectNode) method.invoke(client, messages);
-
-        assertTrue(body.has("reasoning_effort"), "Should include reasoning_effort when tools are present");
-        assertEquals("none", body.get("reasoning_effort").asText());
-        assertTrue(body.has("tools"));
-        assertTrue(body.has("tool_choice"));
-        assertEquals("auto", body.get("tool_choice").asText());
-    }
-
-    @Test
-    void shouldNotIncludeReasoningEffortWhenNoTools() throws Exception {
-        when(mcpRouter.listTools()).thenReturn(List.of());
-
-        var method = OpenAiClient.class.getDeclaredMethod("buildRequestBody", List.class);
-        method.setAccessible(true);
-
-        List<Map<String, Object>> messages = List.of(Map.of("role", "user", "content", "hi"));
-        ObjectNode body = (ObjectNode) method.invoke(client, messages);
-
-        assertFalse(body.has("reasoning_effort"), "Should NOT include reasoning_effort without tools");
-        assertFalse(body.has("tools"));
-        assertFalse(body.has("tool_choice"));
-    }
-
-    @Test
-    void shouldIncludeTemperatureInRequestBody() throws Exception {
-        when(mcpRouter.listTools()).thenReturn(List.of());
-
-        var method = OpenAiClient.class.getDeclaredMethod("buildRequestBody", List.class);
-        method.setAccessible(true);
-
-        ObjectNode body = (ObjectNode) method.invoke(client, List.of(Map.of("role", "user", "content", "hi")));
-
-        assertTrue(body.has("temperature"));
-        assertEquals(0.3, body.get("temperature").asDouble(), 0.001);
-    }
-
-    @Test
-    void shouldIncludeModelInRequestBody() throws Exception {
-        when(mcpRouter.listTools()).thenReturn(List.of());
-
-        var method = OpenAiClient.class.getDeclaredMethod("buildRequestBody", List.class);
-        method.setAccessible(true);
-
-        ObjectNode body = (ObjectNode) method.invoke(client, List.of(Map.of("role", "user", "content", "hi")));
-
-        assertEquals("openai-test", body.get("model").asText());
     }
 
     @Test
@@ -442,20 +335,4 @@ class OpenAiClientTest {
         assertEquals("{}", conversation.get(0).get("arguments"));
     }
 
-    @Test
-    void shouldIncludeMessagesInRequestBody() throws Exception {
-        when(mcpRouter.listTools()).thenReturn(List.of());
-
-        var method = OpenAiClient.class.getDeclaredMethod("buildRequestBody", List.class);
-        method.setAccessible(true);
-
-        List<Map<String, Object>> messages = List.of(
-                Map.of("role", "system", "content", "You are helpful"),
-                Map.of("role", "user", "content", "hello")
-        );
-        ObjectNode body = (ObjectNode) method.invoke(client, messages);
-
-        assertTrue(body.has("messages"));
-        assertEquals(2, body.get("messages").size());
-    }
 }
