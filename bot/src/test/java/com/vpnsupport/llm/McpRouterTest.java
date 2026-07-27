@@ -230,7 +230,9 @@ class McpRouterTest {
         router(List.of(client)).callTool(
                 "users_get_by_telegram_id", Map.of("telegram_id", "999999"), CALLER);
 
-        assertEquals(CALLER, client.lastArguments().get("telegram_id"));
+        // The model sent a string, so the override stays a string — see
+        // shouldKeepTheShapeTheModelChoseWhenTheSchemaOmitsAType.
+        assertEquals(String.valueOf(CALLER), client.lastArguments().get("telegram_id"));
     }
 
     @Test
@@ -244,6 +246,87 @@ class McpRouterTest {
         router(List.of(client)).callTool("users_get_by_telegram_id", Map.of(), CALLER);
 
         assertEquals(CALLER, client.lastArguments().get("telegramId"));
+    }
+
+    // ------------------------------------------------ type of the pinned value
+
+    private static StubMcpClient clientDeclaring(Object telegramIdSchema) {
+        Map<String, Object> properties = new java.util.LinkedHashMap<>();
+        properties.put("telegramId", telegramIdSchema);
+        return new StubMcpClient(
+                List.of(new McpTool("users_get_by_telegram_id", "desc",
+                        Map.of("type", "object", "properties", properties))),
+                Map.of("users_get_by_telegram_id", "ok"));
+    }
+
+    /**
+     * mcp-remnawave declares telegramId as a string. Pinning a raw long made the
+     * server reject every call with
+     * {@code -32602 Invalid input: expected string, received number}.
+     */
+    @Test
+    void shouldSendTheIdAsAStringWhenTheSchemaDeclaresOne() {
+        StubMcpClient client = clientDeclaring(Map.of("type", "string"));
+
+        router(List.of(client)).callTool("users_get_by_telegram_id", Map.of(), CALLER);
+
+        assertEquals(String.valueOf(CALLER), client.lastArguments().get("telegramId"));
+    }
+
+    @Test
+    void shouldSendTheIdAsAStringEvenWhenTheModelSuppliedANumber() {
+        StubMcpClient client = clientDeclaring(Map.of("type", "string"));
+
+        router(List.of(client)).callTool(
+                "users_get_by_telegram_id", Map.of("telegramId", 999_999L), CALLER);
+
+        assertEquals(String.valueOf(CALLER), client.lastArguments().get("telegramId"));
+    }
+
+    @Test
+    void shouldSendTheIdAsANumberWhenTheSchemaDeclaresOne() {
+        StubMcpClient client = clientDeclaring(Map.of("type", "number"));
+
+        router(List.of(client)).callTool(
+                "users_get_by_telegram_id", Map.of("telegramId", "999999"), CALLER);
+
+        assertEquals(CALLER, client.lastArguments().get("telegramId"));
+    }
+
+    @Test
+    void shouldSendTheIdAsAnIntegerWhenTheSchemaDeclaresOne() {
+        StubMcpClient client = clientDeclaring(Map.of("type", "integer"));
+
+        router(List.of(client)).callTool("users_get_by_telegram_id", Map.of(), CALLER);
+
+        assertEquals(CALLER, client.lastArguments().get("telegramId"));
+    }
+
+    @Test
+    void shouldKeepTheShapeTheModelChoseWhenTheSchemaOmitsAType() {
+        StubMcpClient numeric = clientDeclaring(Map.of("description", "no type here"));
+        router(List.of(numeric)).callTool(
+                "users_get_by_telegram_id", Map.of("telegramId", 12345L), CALLER);
+        assertEquals(CALLER, numeric.lastArguments().get("telegramId"));
+
+        StubMcpClient textual = clientDeclaring(Map.of("description", "no type here"));
+        router(List.of(textual)).callTool(
+                "users_get_by_telegram_id", Map.of("telegramId", "12345"), CALLER);
+        assertEquals(String.valueOf(CALLER), textual.lastArguments().get("telegramId"));
+    }
+
+    @Test
+    void shouldDefaultToAStringWhenNothingSaysOtherwise() {
+        // No schema at all and no value from the model: a string is the safer
+        // default, since IDs past 2^53 are not exact as JSON numbers.
+        StubMcpClient client = new StubMcpClient(
+                List.of(new McpTool("users_get_by_telegram_id", "desc", Map.of())),
+                Map.of("users_get_by_telegram_id", "ok"));
+
+        router(List.of(client)).callTool(
+                "users_get_by_telegram_id", Map.of("telegram_id", "1"), CALLER);
+
+        assertEquals(String.valueOf(CALLER), client.lastArguments().get("telegram_id"));
     }
 
     @Test

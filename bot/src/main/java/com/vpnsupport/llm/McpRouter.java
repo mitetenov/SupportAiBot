@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -48,7 +49,7 @@ public class McpRouter {
 
     private final List<McpClientInterface> clients;
     private final Map<String, McpClientInterface> toolToClient;
-    private final Map<String, String> telegramIdParamByTool;
+    private final Map<String, TelegramIdParam> telegramIdParamByTool;
     private final Set<String> allowedTools;
     private final ObjectMapper objectMapper;
 
@@ -87,23 +88,45 @@ public class McpRouter {
      * ID. Deriving the name from the schema means we still pin the argument if
      * the MCP server renames it, and lets us supply it when the model omits it.
      */
-    private Map<String, String> buildTelegramIdParamMap() {
-        Map<String, String> map = new LinkedHashMap<>();
+    private Map<String, TelegramIdParam> buildTelegramIdParamMap() {
+        Map<String, TelegramIdParam> map = new LinkedHashMap<>();
         for (McpTool tool : listTools()) {
-            propertyNames(tool.inputSchema()).stream()
-                    .filter(McpRouter::isTelegramIdArg)
-                    .findFirst()
+            telegramIdProperty(tool.inputSchema())
                     .ifPresent(param -> map.putIfAbsent(tool.name(), param));
         }
         return Map.copyOf(map);
     }
 
+    /**
+     * Locates the Telegram ID property and the JSON type the server declares for
+     * it. The type matters: {@code mcp-remnawave} declares {@code telegramId} as
+     * a string, and sending a number is rejected outright with
+     * {@code -32602 Input validation error}.
+     */
     @SuppressWarnings("unchecked")
-    private static List<String> propertyNames(Map<String, Object> inputSchema) {
-        if (inputSchema == null || !(inputSchema.get("properties") instanceof Map<?, ?> properties)) {
-            return List.of();
+    private static Optional<TelegramIdParam> telegramIdProperty(Map<String, Object> inputSchema) {
+        if (inputSchema == null || !(inputSchema.get("properties") instanceof Map<?, ?> raw)) {
+            return Optional.empty();
         }
-        return ((Map<String, Object>) properties).keySet().stream().toList();
+        Map<String, Object> properties = (Map<String, Object>) raw;
+        return properties.entrySet().stream()
+                .filter(e -> isTelegramIdArg(e.getKey()))
+                .findFirst()
+                .map(e -> new TelegramIdParam(e.getKey(), declaredType(e.getValue())));
+    }
+
+    private static String declaredType(Object propertySchema) {
+        if (propertySchema instanceof Map<?, ?> schema && schema.get("type") instanceof String type) {
+            return type;
+        }
+        return null;
+    }
+
+    /**
+     * @param name the argument name
+     * @param jsonType the declared JSON type, or null when the schema omits it
+     */
+    private record TelegramIdParam(String name, String jsonType) {
     }
 
     public List<McpTool> listTools() {
@@ -149,7 +172,8 @@ public class McpRouter {
             safe.putAll(arguments);
         }
 
-        String schemaParam = telegramIdParamByTool.get(toolName);
+        TelegramIdParam schemaParam = telegramIdParamByTool.get(toolName);
+
         safe.keySet().stream()
                 .filter(McpRouter::isTelegramIdArg)
                 .toList()
@@ -159,13 +183,35 @@ public class McpRouter {
                         log.warn("Tool {} called with {}={} — overriding with the actual sender {}",
                                 toolName, key, supplied, telegramUserId);
                     }
-                    safe.put(key, telegramUserId);
+                    safe.put(key, coerce(telegramUserId, schemaParam, supplied));
                 });
 
-        if (schemaParam != null) {
-            safe.computeIfAbsent(schemaParam, k -> telegramUserId);
+        if (schemaParam != null && !safe.containsKey(schemaParam.name())) {
+            safe.put(schemaParam.name(), coerce(telegramUserId, schemaParam, null));
         }
         return safe;
+    }
+
+    /**
+     * Renders the ID as the type the tool expects.
+     *
+     * <p>The schema wins when it declares one. Otherwise the shape the model
+     * chose is kept — it read the same schema — and a string is the last resort,
+     * since IDs beyond 2^53 are unsafe as JSON numbers anyway.
+     */
+    private static Object coerce(long telegramUserId, TelegramIdParam param, Object supplied) {
+        String jsonType = param != null ? param.jsonType() : null;
+        if (jsonType != null) {
+            return switch (jsonType) {
+                case "string" -> String.valueOf(telegramUserId);
+                case "number", "integer" -> telegramUserId;
+                default -> String.valueOf(telegramUserId);
+            };
+        }
+        if (supplied instanceof Number) {
+            return telegramUserId;
+        }
+        return String.valueOf(telegramUserId);
     }
 
     private static boolean isTelegramIdArg(String key) {
