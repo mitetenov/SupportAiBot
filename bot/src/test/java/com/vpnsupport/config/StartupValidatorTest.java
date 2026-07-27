@@ -56,31 +56,28 @@ class StartupValidatorTest {
 
     @Test
     void shouldValidateDeepseekProvider() {
-        assertDoesNotThrow(() -> validator(
-                telegram(), llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "gemini")
-                .run(null));
+        StartupValidator validator = validator(telegram(), llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "gemini");
+        assertDoesNotThrow(() -> validator.run(null));
     }
 
     @Test
     void shouldValidateGeminiProvider() {
-        assertDoesNotThrow(() -> validator(
-                telegram(), llm("gemini"), deepSeek(), gemini(), remnawave(), openAi(), "gemini")
-                .run(null));
+        StartupValidator validator = validator(telegram(), llm("gemini"), deepSeek(), gemini(), remnawave(), openAi(), "gemini");
+        assertDoesNotThrow(() -> validator.run(null));
     }
 
     @Test
     void shouldValidateOpenAiProvider() {
-        assertDoesNotThrow(() -> validator(
-                telegram(), llm("openai"), deepSeek(), gemini(), remnawave(), openAi(), "openai")
-                .run(null));
+        StartupValidator validator = validator(telegram(), llm("openai"), deepSeek(), gemini(), remnawave(), openAi(), "openai");
+        assertDoesNotThrow(() -> validator.run(null));
     }
 
     @Test
     void shouldThrowWhenBotTokenMissing() {
         TelegramProperties t = telegram();
         t.setBotToken(null);
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(t, llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "gemini").run(null));
+        StartupValidator validator = validator(t, llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("TELEGRAM_BOT_TOKEN"));
     }
 
@@ -88,8 +85,8 @@ class StartupValidatorTest {
     void shouldThrowWhenBotTokenBlank() {
         TelegramProperties t = telegram();
         t.setBotToken("  ");
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(t, llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "gemini").run(null));
+        StartupValidator validator = validator(t, llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("TELEGRAM_BOT_TOKEN"));
     }
 
@@ -97,8 +94,8 @@ class StartupValidatorTest {
     void shouldThrowWhenSupportGroupChatIdIsZero() {
         TelegramProperties t = telegram();
         t.setSupportGroupChatId(0);
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(t, llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "gemini").run(null));
+        StartupValidator validator = validator(t, llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("TELEGRAM_SUPPORT_GROUP_CHAT_ID"));
     }
 
@@ -106,23 +103,23 @@ class StartupValidatorTest {
     void shouldThrowWhenSupportGroupChatIdIsPositive() {
         TelegramProperties t = telegram();
         t.setSupportGroupChatId(123L);
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(t, llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "gemini").run(null));
+        StartupValidator validator = validator(t, llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("отрицательным"));
     }
 
     @Test
     void shouldThrowForUnknownProvider() {
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("unknown"), deepSeek(), gemini(), remnawave(), openAi(), "gemini").run(null));
+        StartupValidator validator = validator(telegram(), llm("unknown"), deepSeek(), gemini(), remnawave(), openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("Неизвестный LLM_PROVIDER"));
         assertTrue(ex.getMessage().contains("deepseek"));
     }
 
     @Test
     void shouldThrowForTypoInProvider() {
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("openei"), deepSeek(), gemini(), remnawave(), openAi(), "gemini").run(null));
+        StartupValidator validator = validator(telegram(), llm("openei"), deepSeek(), gemini(), remnawave(), openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("Неизвестный LLM_PROVIDER"));
         assertTrue(ex.getMessage().contains("openai"));
     }
@@ -131,8 +128,8 @@ class StartupValidatorTest {
     void shouldThrowWhenDeepseekApiKeyMissing() {
         DeepSeekProperties d = deepSeek();
         d.setApiKey(null);
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("deepseek"), d, gemini(), remnawave(), openAi(), "gemini").run(null));
+        StartupValidator validator = validator(telegram(), llm("deepseek"), d, gemini(), remnawave(), openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("DEEPSEEK_API_KEY"));
     }
 
@@ -140,8 +137,8 @@ class StartupValidatorTest {
     void shouldThrowWhenDeepseekModelMissing() {
         DeepSeekProperties d = deepSeek();
         d.setModel(null);
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("deepseek"), d, gemini(), remnawave(), openAi(), "gemini").run(null));
+        StartupValidator validator = validator(telegram(), llm("deepseek"), d, gemini(), remnawave(), openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("DEEPSEEK_MODEL"));
     }
 
@@ -149,8 +146,8 @@ class StartupValidatorTest {
     void shouldThrowWhenOpenAiApiKeyMissing() {
         OpenAiProperties o = new OpenAiProperties();
         o.setModel("gpt-4");
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("openai"), deepSeek(), gemini(), remnawave(), o, "gemini").run(null));
+        StartupValidator validator = validator(telegram(), llm("openai"), deepSeek(), gemini(), remnawave(), o, "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("OPENAI_API_KEY"));
     }
 
@@ -159,8 +156,8 @@ class StartupValidatorTest {
         OpenAiProperties o = new OpenAiProperties();
         o.setApiKey("not-sk-prefix");
         o.setModel("gpt-4");
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("openai"), deepSeek(), gemini(), remnawave(), o, "gemini").run(null));
+        StartupValidator validator = validator(telegram(), llm("openai"), deepSeek(), gemini(), remnawave(), o, "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("начинаться с 'sk-'"));
     }
 
@@ -168,8 +165,8 @@ class StartupValidatorTest {
     void shouldThrowWhenOpenAiModelMissing() {
         OpenAiProperties o = openAi();
         o.setModel(null);
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("openai"), deepSeek(), gemini(), remnawave(), o, "gemini").run(null));
+        StartupValidator validator = validator(telegram(), llm("openai"), deepSeek(), gemini(), remnawave(), o, "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("OPENAI_MODEL"));
     }
 
@@ -177,8 +174,8 @@ class StartupValidatorTest {
     void shouldThrowWhenGeminiApiKeyMissing() {
         GeminiProperties g = new GeminiProperties();
         g.setModel("gemini-pro");
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("gemini"), deepSeek(), g, remnawave(), openAi(), "gemini").run(null));
+        StartupValidator validator = validator(telegram(), llm("gemini"), deepSeek(), g, remnawave(), openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("GEMINI_API_KEY"));
     }
 
@@ -186,23 +183,23 @@ class StartupValidatorTest {
     void shouldThrowWhenGeminiModelMissing() {
         GeminiProperties g = gemini();
         g.setModel(null);
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("gemini"), deepSeek(), g, remnawave(), openAi(), "gemini").run(null));
+        StartupValidator validator = validator(telegram(), llm("gemini"), deepSeek(), g, remnawave(), openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("GEMINI_MODEL"));
     }
 
     @Test
     void shouldThrowWhenRemnawaveMcpUrlMissing() {
         RemnawaveMcpProperties r = new RemnawaveMcpProperties();
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("deepseek"), deepSeek(), gemini(), r, openAi(), "gemini").run(null));
+        StartupValidator validator = validator(telegram(), llm("deepseek"), deepSeek(), gemini(), r, openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("REMNAWAVE_MCP_URL"));
     }
 
     @Test
     void shouldThrowForUnknownEmbeddingProvider() {
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "badprovider").run(null));
+        StartupValidator validator = validator(telegram(), llm("deepseek"), deepSeek(), gemini(), remnawave(), openAi(), "badprovider");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("Неизвестный EMBEDDING_PROVIDER"));
     }
 
@@ -210,8 +207,8 @@ class StartupValidatorTest {
     void shouldThrowWhenEmbeddingOpenAiButNoApiKey() {
         OpenAiProperties o = new OpenAiProperties();
         o.setModel("gpt-4");
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("deepseek"), deepSeek(), gemini(), remnawave(), o, "openai").run(null));
+        StartupValidator validator = validator(telegram(), llm("deepseek"), deepSeek(), gemini(), remnawave(), o, "openai");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("OPENAI_API_KEY"));
     }
 
@@ -220,8 +217,8 @@ class StartupValidatorTest {
         OpenAiProperties o = new OpenAiProperties();
         o.setApiKey("wrong-key");
         o.setModel("gpt-4");
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("deepseek"), deepSeek(), gemini(), remnawave(), o, "openai").run(null));
+        StartupValidator validator = validator(telegram(), llm("deepseek"), deepSeek(), gemini(), remnawave(), o, "openai");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("sk-"));
     }
 
@@ -229,8 +226,8 @@ class StartupValidatorTest {
     void shouldThrowWhenEmbeddingGeminiButNoApiKey() {
         GeminiProperties g = new GeminiProperties();
         g.setModel("gemini-pro");
-        var ex = assertThrows(IllegalStateException.class, () ->
-                validator(telegram(), llm("deepseek"), deepSeek(), g, remnawave(), openAi(), "gemini").run(null));
+        StartupValidator validator = validator(telegram(), llm("deepseek"), deepSeek(), g, remnawave(), openAi(), "gemini");
+        var ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertTrue(ex.getMessage().contains("GEMINI_API_KEY"));
     }
 }

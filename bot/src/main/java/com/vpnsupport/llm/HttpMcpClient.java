@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Component
 public class HttpMcpClient implements McpClientInterface {
@@ -32,6 +33,12 @@ public class HttpMcpClient implements McpClientInterface {
     private static final String SESSION_HEADER = "Mcp-Session-Id";
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
 
+    private static final String JSONRPC_KEY = "jsonrpc";
+    private static final String JSONRPC_VERSION = "2.0";
+    private static final String METHOD_KEY = "method";
+    private static final String PARAMS_KEY = "params";
+    private static final String ERROR_KEY = "error";
+
     private final RemnawaveMcpProperties properties;
     private final ObjectMapper objectMapper;
     private final AdminNotifier adminNotifier;
@@ -40,7 +47,10 @@ public class HttpMcpClient implements McpClientInterface {
 
     private volatile boolean initialized = false;
     private volatile String sessionId;
-    private volatile List<McpTool> cachedTools = Collections.emptyList();
+    // AtomicReference rather than a volatile List: volatile publishes the
+    // reference but says nothing about the contents.
+    private final AtomicReference<List<McpTool>> cachedTools =
+            new AtomicReference<>(Collections.emptyList());
 
     @Autowired
     public HttpMcpClient(RemnawaveMcpProperties properties, ObjectMapper objectMapper,
@@ -78,7 +88,7 @@ public class HttpMcpClient implements McpClientInterface {
             }
             loadTools();
             initialized = true;
-            log.info("MCP HTTP client initialized with {} tools at {}", cachedTools.size(), properties.getUrl());
+            log.info("MCP HTTP client initialized with {} tools at {}", cachedTools.get().size(), properties.getUrl());
         } catch (Exception e) {
             log.error("Failed to initialize MCP HTTP client — bot will run without tools from {}", properties.getUrl(), e);
             adminNotifier.notifyError("MCP HTTP init failed for " + properties.getUrl(), e);
@@ -100,7 +110,7 @@ public class HttpMcpClient implements McpClientInterface {
 
     @Override
     public List<McpTool> listTools() {
-        return cachedTools;
+        return cachedTools.get();
     }
 
     @Override
@@ -123,20 +133,20 @@ public class HttpMcpClient implements McpClientInterface {
 
     private String errorResponse(String message) {
         try {
-            return objectMapper.writeValueAsString(Map.of("error", message));
+            return objectMapper.writeValueAsString(Map.of(ERROR_KEY, message));
         } catch (JsonProcessingException e) {
             return "{\"error\":\"unknown error\"}";
         }
     }
 
-    private boolean initializeSession() throws Exception {
+    private boolean initializeSession() throws JsonProcessingException {
         int id = requestId.incrementAndGet();
 
         Map<String, Object> req = new LinkedHashMap<>();
-        req.put("jsonrpc", "2.0");
+        req.put(JSONRPC_KEY, JSONRPC_VERSION);
         req.put("id", id);
-        req.put("method", "initialize");
-        req.put("params", Map.of(
+        req.put(METHOD_KEY, "initialize");
+        req.put(PARAMS_KEY, Map.of(
                 "protocolVersion", PROTOCOL_VERSION,
                 "capabilities", Map.of(),
                 "clientInfo", Map.of(
@@ -159,20 +169,20 @@ public class HttpMcpClient implements McpClientInterface {
                     return clientResponse.bodyToMono(String.class)
                             .flatMap(body -> {
                                 if (clientResponse.statusCode().isError()) {
-                                    return Mono.just(Map.of("error", true, "body", body));
+                                    return Mono.just(Map.of(ERROR_KEY, true, "body", body));
                                 }
-                                return Mono.just(Map.of("error", false, "body", body));
+                                return Mono.just(Map.of(ERROR_KEY, false, "body", body));
                             });
                 })
                 .block(REQUEST_TIMEOUT);
 
         if (response == null) {
-            throw new RuntimeException("Empty response from MCP initialize");
+            throw new McpException("Empty response from MCP initialize");
         }
 
         String body = (String) response.get("body");
 
-        if (Boolean.TRUE.equals(response.get("error"))) {
+        if (Boolean.TRUE.equals(response.get(ERROR_KEY))) {
             if (body != null && body.contains("already initialized")) {
                 if (sessionId != null) {
                     log.info("MCP session reused: {}", sessionId);
@@ -182,13 +192,13 @@ public class HttpMcpClient implements McpClientInterface {
                 sessionId = null;
                 return false;
             }
-            throw new RuntimeException("MCP HTTP error: " + body);
+            throw new McpException("MCP HTTP error: " + body);
         }
 
         String jsonPayload = extractJsonFromSse(body);
         JsonNode message = objectMapper.readTree(jsonPayload);
-        if (message.has("error")) {
-            throw new RuntimeException("MCP initialize error: " + message.get("error"));
+        if (message.has(ERROR_KEY)) {
+            throw new McpException("MCP initialize error: " + message.get(ERROR_KEY));
         }
         log.info("MCP initialize response: {}", message.get("result"));
 
@@ -201,7 +211,7 @@ public class HttpMcpClient implements McpClientInterface {
         return true;
     }
 
-    private void loadTools() throws Exception {
+    private void loadTools() throws JsonProcessingException {
         JsonNode response = sendRequest("tools/list", Map.of());
         JsonNode tools = response.get("tools");
         if (tools != null && tools.isArray()) {
@@ -215,18 +225,18 @@ public class HttpMcpClient implements McpClientInterface {
                         : Map.of();
                 toolList.add(new McpTool(name, description, inputSchema));
             }
-            cachedTools = Collections.unmodifiableList(toolList);
+            cachedTools.set(List.copyOf(toolList));
         }
     }
 
-    private JsonNode sendRequest(String method, Map<String, Object> params) throws Exception {
+    private JsonNode sendRequest(String method, Map<String, Object> params) throws JsonProcessingException {
         int id = requestId.incrementAndGet();
 
         Map<String, Object> request = new LinkedHashMap<>();
-        request.put("jsonrpc", "2.0");
+        request.put(JSONRPC_KEY, JSONRPC_VERSION);
         request.put("id", id);
-        request.put("method", method);
-        request.put("params", params != null ? params : Map.of());
+        request.put(METHOD_KEY, method);
+        request.put(PARAMS_KEY, params != null ? params : Map.of());
 
         log.debug("MCP request [{}]: {}", id, method);
 
@@ -240,19 +250,19 @@ public class HttpMcpClient implements McpClientInterface {
                 .retrieve()
                 .onStatus(HttpStatusCode::isError,
                         clientResponse -> clientResponse.bodyToMono(String.class)
-                                .flatMap(err -> Mono.error(new RuntimeException(
+                                .flatMap(err -> Mono.error(new McpException(
                                         "MCP HTTP error: " + clientResponse.statusCode() + " - " + err))))
                 .bodyToMono(String.class)
                 .block(REQUEST_TIMEOUT);
 
         if (responseBody == null) {
-            throw new RuntimeException("Empty response from MCP server");
+            throw new McpException("Empty response from MCP server");
         }
 
         String jsonPayload = extractJsonFromSse(responseBody);
         JsonNode message = objectMapper.readTree(jsonPayload);
-        if (message.has("error")) {
-            throw new RuntimeException("MCP error: " + message.get("error"));
+        if (message.has(ERROR_KEY)) {
+            throw new McpException("MCP error: " + message.get(ERROR_KEY));
         }
         return message.get("result");
     }
@@ -270,9 +280,9 @@ public class HttpMcpClient implements McpClientInterface {
     private void sendNotification(String method, Map<String, Object> params) {
         try {
             Map<String, Object> notification = new LinkedHashMap<>();
-            notification.put("jsonrpc", "2.0");
-            notification.put("method", method);
-            notification.put("params", params);
+            notification.put(JSONRPC_KEY, JSONRPC_VERSION);
+            notification.put(METHOD_KEY, method);
+            notification.put(PARAMS_KEY, params);
 
             WebClient.RequestHeadersSpec<?> spec = webClient.post()
                     .bodyValue(notification);

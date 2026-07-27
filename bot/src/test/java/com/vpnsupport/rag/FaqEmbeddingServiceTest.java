@@ -1,6 +1,5 @@
 package com.vpnsupport.rag;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,14 +22,12 @@ class FaqEmbeddingServiceTest {
     @Mock
     private EmbeddingProvider embeddingProvider;
 
-    private ObjectMapper objectMapper;
     private FaqEmbeddingService service;
 
     @BeforeEach
     void setUp() {
         lenient().when(embeddingProvider.getDimension()).thenReturn(2000);
 
-        objectMapper = new ObjectMapper();
         service = new FaqEmbeddingService(jdbcTemplate, embeddingProvider);
     }
 
@@ -101,7 +98,7 @@ class FaqEmbeddingServiceTest {
     @Test
     void shouldGetFaqHashWhenExists() {
         when(jdbcTemplate.queryForObject(
-                eq("SELECT val FROM faq_metadata WHERE key = 'faq_hash'"), eq(String.class)))
+                "SELECT val FROM faq_metadata WHERE key = 'faq_hash'", String.class))
                 .thenReturn("abc123def");
 
         String hash = service.getFaqHash();
@@ -112,7 +109,7 @@ class FaqEmbeddingServiceTest {
     @Test
     void shouldGetFaqHashWhenNotExists() {
         when(jdbcTemplate.queryForObject(
-                eq("SELECT val FROM faq_metadata WHERE key = 'faq_hash'"), eq(String.class)))
+                "SELECT val FROM faq_metadata WHERE key = 'faq_hash'", String.class))
                 .thenReturn(null);
 
         String hash = service.getFaqHash();
@@ -123,7 +120,7 @@ class FaqEmbeddingServiceTest {
     @Test
     void shouldGetFaqHashWhenError() {
         when(jdbcTemplate.queryForObject(
-                eq("SELECT val FROM faq_metadata WHERE key = 'faq_hash'"), eq(String.class)))
+                "SELECT val FROM faq_metadata WHERE key = 'faq_hash'", String.class))
                 .thenThrow(new RuntimeException("DB error"));
 
         String hash = service.getFaqHash();
@@ -135,15 +132,13 @@ class FaqEmbeddingServiceTest {
     void shouldUpdateFaqHash() {
         service.updateFaqHash("newhash123");
 
-        verify(jdbcTemplate).update(
-                eq("INSERT INTO faq_metadata (key, val) VALUES ('faq_hash', ?) " +
-                   "ON CONFLICT (key) DO UPDATE SET val = EXCLUDED.val"),
-                eq("newhash123"));
+        verify(jdbcTemplate).update("INSERT INTO faq_metadata (key, val) VALUES ('faq_hash', ?) " +
+                   "ON CONFLICT (key) DO UPDATE SET val = EXCLUDED.val", "newhash123");
     }
 
     @Test
     void shouldGetFaqCountWhenHasRows() {
-        when(jdbcTemplate.queryForObject(eq("SELECT COUNT(*) FROM faq"), eq(Integer.class)))
+        when(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM faq", Integer.class))
                 .thenReturn(42);
 
         Integer count = service.getFaqCount();
@@ -153,7 +148,7 @@ class FaqEmbeddingServiceTest {
 
     @Test
     void shouldGetFaqCountWhenTableNotExists() {
-        when(jdbcTemplate.queryForObject(eq("SELECT COUNT(*) FROM faq"), eq(Integer.class)))
+        when(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM faq", Integer.class))
                 .thenThrow(new RuntimeException("Table not found"));
 
         Integer count = service.getFaqCount();
@@ -163,7 +158,7 @@ class FaqEmbeddingServiceTest {
 
     @Test
     void shouldGetFaqCountWhenNullResult() {
-        when(jdbcTemplate.queryForObject(eq("SELECT COUNT(*) FROM faq"), eq(Integer.class)))
+        when(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM faq", Integer.class))
                 .thenReturn(null);
 
         Integer count = service.getFaqCount();
@@ -254,7 +249,7 @@ class FaqEmbeddingServiceTest {
     @Test
     void shouldEmbedQueryAsVector() {
         when(embeddingProvider.getDimension()).thenReturn(2);
-        when(embeddingProvider.embed(eq("my query"))).thenReturn(new float[]{0.8f, 0.2f});
+        when(embeddingProvider.embed("my query")).thenReturn(new float[]{0.8f, 0.2f});
 
         String result = service.embedQueryAsVector("my query");
 
@@ -267,7 +262,7 @@ class FaqEmbeddingServiceTest {
     @Test
     void shouldRejectAnEmbeddingOfTheWrongDimension() {
         when(embeddingProvider.getDimension()).thenReturn(2000);
-        when(embeddingProvider.embed(eq("my query"))).thenReturn(new float[]{0.8f, 0.2f});
+        when(embeddingProvider.embed("my query")).thenReturn(new float[]{0.8f, 0.2f});
 
         assertNull(service.embedQueryAsVector("my query"));
     }
@@ -275,7 +270,7 @@ class FaqEmbeddingServiceTest {
     @Test
     void shouldEmbedEachDistinctTextOnlyOnce() {
         when(embeddingProvider.getDimension()).thenReturn(2);
-        when(embeddingProvider.embed(eq("repeat"))).thenReturn(new float[]{0.5f, 0.5f});
+        when(embeddingProvider.embed("repeat")).thenReturn(new float[]{0.5f, 0.5f});
 
         service.embedQueryAsVector("repeat");
         service.embedQueryAsVector("repeat");

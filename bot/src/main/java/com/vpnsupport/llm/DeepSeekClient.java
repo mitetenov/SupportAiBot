@@ -9,8 +9,6 @@ import com.vpnsupport.bot.LlmTokenUsage;
 import com.vpnsupport.bot.LlmTokenUsageRepository;
 import com.vpnsupport.config.DeepSeekProperties;
 import com.vpnsupport.rag.FaqEmbeddingService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -27,12 +25,19 @@ import java.util.Map;
 @ConditionalOnProperty(name = "llm.provider", havingValue = "deepseek")
 public class DeepSeekClient extends AbstractLlmClient {
 
-    private static final Logger log = LoggerFactory.getLogger(DeepSeekClient.class);
     private static final double TEMPERATURE = 0.3;
+    private static final String ROLE_KEY = "role";
+    private static final String CONTENT_KEY = "content";
+    private static final String FUNCTION_KEY = "function";
 
     private final WebClient webClient;
     private final String model;
-    private volatile List<Map<String, Object>> cachedToolDefinitions;
+    /**
+     * Built once at construction: {@link McpRouter} already has the tool list by
+     * the time this bean is created, so the lazy double-checked locking this
+     * replaced never had anything to defer.
+     */
+    private final List<Map<String, Object>> toolDefinitions;
 
     public DeepSeekClient(DeepSeekProperties properties, ObjectMapper objectMapper,
                           McpRouter mcpRouter, ChatHistoryService chatHistoryService,
@@ -47,19 +52,7 @@ public class DeepSeekClient extends AbstractLlmClient {
                 .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
                         HttpClient.create().responseTimeout(Duration.ofSeconds(60))))
                 .build();
-    }
-
-    private List<Map<String, Object>> getToolDefinitions() {
-        List<Map<String, Object>> tools = cachedToolDefinitions;
-        if (tools == null) {
-            synchronized (this) {
-                tools = cachedToolDefinitions;
-                if (tools == null) {
-                    cachedToolDefinitions = tools = buildToolDefinitions();
-                }
-            }
-        }
-        return tools;
+        this.toolDefinitions = buildToolDefinitions();
     }
 
     @Override
@@ -68,16 +61,16 @@ public class DeepSeekClient extends AbstractLlmClient {
             String userMessage, long telegramUserId, String faqContext,
             String base64Image, String mimeType) {
         List<Map<String, Object>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "system", "content", SupportPrompt.SYSTEM));
+        messages.add(Map.of(ROLE_KEY, "system", CONTENT_KEY, SupportPrompt.SYSTEM));
 
         String dynamicContext = "Telegram ID: " + telegramUserId;
         if (faqContext != null && !faqContext.isEmpty()) {
             dynamicContext += "\n\n" + faqContext;
         }
-        messages.add(Map.of("role", "system", "content", dynamicContext));
+        messages.add(Map.of(ROLE_KEY, "system", CONTENT_KEY, dynamicContext));
 
         messages.addAll(chatHistoryService.getHistory(telegramUserId));
-        messages.add(Map.of("role", "user", "content", userMessage));
+        messages.add(Map.of(ROLE_KEY, "user", CONTENT_KEY, userMessage));
         return messages;
     }
 
@@ -85,7 +78,7 @@ public class DeepSeekClient extends AbstractLlmClient {
     @SuppressWarnings("unused")
     protected String callApi(List<Map<String, Object>> conversation, String faqContext, long telegramUserId) {
         ObjectNode requestBody = buildRequestBody(conversation);
-        log.debug("DeepSeek request ({} tools available)", getToolDefinitions().size());
+        log.debug("DeepSeek request ({} tools available)", toolDefinitions.size());
 
         return webClient.post()
                 .uri("/chat/completions")
@@ -116,15 +109,15 @@ public class DeepSeekClient extends AbstractLlmClient {
                         "Не удалось получить ответ от модели. Попробуйте позже.");
             }
 
-            String content = message.has("content") && !message.get("content").isNull()
-                    ? message.get("content").asText() : null;
+            String content = message.has(CONTENT_KEY) && !message.get(CONTENT_KEY).isNull()
+                    ? message.get(CONTENT_KEY).asText() : null;
 
             List<LlmResponse.ToolCall> toolCalls = new ArrayList<>();
             JsonNode toolCallsNode = message.get("tool_calls");
             if (toolCallsNode != null && toolCallsNode.isArray()) {
                 for (JsonNode tc : toolCallsNode) {
-                    String fnName = tc.get("function").get("name").asText();
-                    String fnArgsStr = tc.get("function").get("arguments").asText();
+                    String fnName = tc.get(FUNCTION_KEY).get("name").asText();
+                    String fnArgsStr = tc.get(FUNCTION_KEY).get("arguments").asText();
                     String tcId = tc.get("id").asText();
                     @SuppressWarnings("unchecked")
                     Map<String, Object> args = fnArgsStr.isEmpty()
@@ -149,14 +142,14 @@ public class DeepSeekClient extends AbstractLlmClient {
         for (LlmResponse.ToolCall tc : response.toolCalls()) {
             toolCallMaps.add(Map.of(
                     "id", tc.id(),
-                    "type", "function",
+                    "type", FUNCTION_KEY,
                     // The OpenAI-compatible schema types function.arguments as a
                     // JSON *string*; sending an object breaks the second turn of
                     // the tool loop.
-                    "function", Map.of("name", tc.name(), "arguments", serializeArguments(tc.arguments()))
+                    FUNCTION_KEY, Map.of("name", tc.name(), "arguments", serializeArguments(tc.arguments()))
             ));
         }
-        conversation.add(Map.of("role", "assistant", "tool_calls", toolCallMaps));
+        conversation.add(Map.of(ROLE_KEY, "assistant", "tool_calls", toolCallMaps));
     }
 
     private String serializeArguments(Map<String, Object> arguments) {
@@ -171,7 +164,7 @@ public class DeepSeekClient extends AbstractLlmClient {
     @Override
     protected void addToolResultToConversation(List<Map<String, Object>> conversation,
                                                 LlmResponse.ToolCall toolCall, String toolResult) {
-        conversation.add(Map.of("role", "tool", "tool_call_id", toolCall.id(), "content", toolResult));
+        conversation.add(Map.of(ROLE_KEY, "tool", "tool_call_id", toolCall.id(), CONTENT_KEY, toolResult));
     }
 
 
@@ -210,7 +203,7 @@ public class DeepSeekClient extends AbstractLlmClient {
                 parameters = Map.of("type", "object", "properties", Map.of());
             }
             function.put("parameters", parameters);
-            functions.add(Map.of("type", "function", "function", function));
+            functions.add(Map.of("type", FUNCTION_KEY, FUNCTION_KEY, function));
         }
         return List.copyOf(functions);
     }
@@ -224,7 +217,7 @@ public class DeepSeekClient extends AbstractLlmClient {
             messagesArray.add(objectMapper.valueToTree(msg));
         }
 
-        List<Map<String, Object>> tools = getToolDefinitions();
+        List<Map<String, Object>> tools = toolDefinitions;
         if (!tools.isEmpty()) {
             ArrayNode toolsArray = body.putArray("tools");
             for (Map<String, Object> tool : tools) {

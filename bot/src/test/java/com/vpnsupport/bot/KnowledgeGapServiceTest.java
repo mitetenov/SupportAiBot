@@ -72,7 +72,7 @@ class KnowledgeGapServiceTest {
         service.evaluate("Странный вопрос без FAQ", 12345L, "Я не знаю ответа", context(0.0, null));
 
         verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
-                any(), any(), any(), any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -82,7 +82,7 @@ class KnowledgeGapServiceTest {
         service.evaluate("Сложный вопрос", 12345L, "Попробуйте обновить подписку", context(0.45, "Слабый FAQ"));
 
         verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
-                any(), any(), any(), any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -92,7 +92,7 @@ class KnowledgeGapServiceTest {
         service.evaluate("Оплатил но не продлилось", 12345L, "Обратитесь в @PeipivoSalesBot [ESCALATE]", context(0.80, "FAQ об оплате"));
 
         verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
-                any(), any(), any(), any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -102,7 +102,7 @@ class KnowledgeGapServiceTest {
         service.evaluate("Вопрос про другое", 12345L, "К сожалению, я не знаю ответа на этот вопрос", context(0.75, "Какой-то FAQ"));
 
         verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
-                any(), any(), any(), any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -112,7 +112,7 @@ class KnowledgeGapServiceTest {
         service.evaluateOperatorRequest("Нужен оператор", 12345L, context(0.80, "FAQ"));
 
         verify(jdbcTemplate).update(contains("INSERT INTO knowledge_gaps"),
-                any(), any(), any(), any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

@@ -1,7 +1,6 @@
 package com.vpnsupport.llm;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.vpnsupport.bot.ChatHistoryService;
 import com.vpnsupport.bot.LlmTokenUsageRepository;
 import com.vpnsupport.config.GeminiProperties;
@@ -48,7 +47,7 @@ class GeminiThoughtSignatureTest {
     }
 
     @Test
-    void shouldParseResponseWithThoughtSignature() throws Exception {
+    void shouldParseResponseWithThoughtSignature() {
         String rawResponse = """
                 {
                     "candidates": [{
@@ -115,7 +114,7 @@ class GeminiThoughtSignatureTest {
     }
 
     @Test
-    void shouldPreserveThoughtSignatureInModelParts() throws Exception {
+    void shouldPreserveThoughtSignatureInModelParts() {
         String rawResponse = """
                 {
                     "candidates": [{
@@ -159,7 +158,7 @@ class GeminiThoughtSignatureTest {
     }
 
     @Test
-    void shouldIncludeThoughtSignatureInFunctionResponse() throws Exception {
+    void shouldIncludeThoughtSignatureInFunctionResponse() {
         LlmResponse.ToolCall toolCall = new LlmResponse.ToolCall(
                 "hwid_devices_list", "", Map.of("uuid", "abc-123"), "sig_response_test");
 
@@ -187,7 +186,7 @@ class GeminiThoughtSignatureTest {
     }
 
     @Test
-    void shouldNotIncludeThoughtSignatureWhenNull() throws Exception {
+    void shouldNotIncludeThoughtSignatureWhenNull() {
         LlmResponse.ToolCall toolCall = new LlmResponse.ToolCall(
                 "nodes_list", "", Map.of(), null);
 
@@ -204,7 +203,7 @@ class GeminiThoughtSignatureTest {
     }
 
     @Test
-    void shouldDoFullFunctionCallRoundtripWithThoughtSignature() throws Exception {
+    void shouldDoFullFunctionCallRoundtripWithThoughtSignature() {
         // Simulate a complete function-call cycle: model calls tool → we execute → we respond
         String apiResponse = """
                 {
@@ -263,7 +262,7 @@ class GeminiThoughtSignatureTest {
     }
 
     @Test
-    void shouldFallbackWhenRawPartsAreEmpty() throws Exception {
+    void shouldFallbackWhenRawPartsAreEmpty() {
         // If for some reason rawParts are empty, should build parts from parsed ToolCalls
         LlmResponse response = new LlmResponse("Just text", List.of(), List.of());
         List<Map<String, Object>> conversation = new ArrayList<>();
@@ -280,7 +279,7 @@ class GeminiThoughtSignatureTest {
     }
 
     @Test
-    void shouldHandleToolCallWithoutThoughtSignature() throws Exception {
+    void shouldHandleToolCallWithoutThoughtSignature() {
         String rawResponse = """
                 {
                     "candidates": [{
@@ -313,7 +312,7 @@ class GeminiThoughtSignatureTest {
     }
 
     @Test
-    void shouldHandleMultipleSimultaneousFunctionCallsWithMixedSignatures() throws Exception {
+    void shouldHandleMultipleSimultaneousFunctionCallsWithMixedSignatures() {
         String rawResponse = """
                 {
                     "candidates": [{

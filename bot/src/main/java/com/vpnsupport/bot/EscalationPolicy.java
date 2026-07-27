@@ -21,7 +21,8 @@ public final class EscalationPolicy {
     // ASCII-only, so every boundary around a Cyrillic word silently fails to match.
     private static final Pattern ASKS_FOR_HUMAN = Pattern.compile(
             "\\b(оператор\\w*|человек\\w*|человеч\\w*|жив(ой|ого|ому|ым|ом))\\b",
-            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.UNICODE_CHARACTER_CLASS);
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
+                    | Pattern.UNICODE_CHARACTER_CLASS | Pattern.CANON_EQ);
 
     /** True when the model asked for escalation. */
     public static boolean modelRequestedEscalation(String rawResponse) {

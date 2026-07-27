@@ -155,7 +155,7 @@ class VpnSupportBotTest {
 
         bot.processUpdate(update(voice));
 
-        verify(messageSender).send(eq(USER_CHAT_ID), eq("bot.media.unsupported"));
+        verify(messageSender).send(USER_CHAT_ID, "bot.media.unsupported");
         verify(forwarder).forwardToSupport(eq(USER_CHAT_ID), eq(List.of(222)), any(),
                 eq("support.media.received"), eq(false));
     }
@@ -175,7 +175,7 @@ class VpnSupportBotTest {
 
         bot.processUpdate(update(photo));
 
-        verify(messageSender).send(eq(USER_CHAT_ID), eq("bot.photo.notsupported"));
+        verify(messageSender).send(USER_CHAT_ID, "bot.photo.notsupported");
         verify(forwarder).forwardToSupport(eq(USER_CHAT_ID), eq(List.of(333)), any(),
                 eq("support.media.received"), eq(false));
         verifyNoInteractions(photoDownloader);
@@ -191,7 +191,7 @@ class VpnSupportBotTest {
 
         bot.processUpdate(update(photo));
 
-        verify(messageSender).send(eq(USER_CHAT_ID), eq("bot.photo.download.error"));
+        verify(messageSender).send(USER_CHAT_ID, "bot.photo.download.error");
     }
 
     // ------------------------------------------------------------------ commands
@@ -203,7 +203,7 @@ class VpnSupportBotTest {
         bot.processUpdate(update(userMessage("/start", 111)));
 
         verify(chatHistoryService).clear(USER_CHAT_ID);
-        verify(messageSender).send(eq(USER_CHAT_ID), eq("bot.start.welcome"));
+        verify(messageSender).send(USER_CHAT_ID, "bot.start.welcome");
         verifyNoInteractions(pipeline);
     }
 
@@ -222,7 +222,7 @@ class VpnSupportBotTest {
 
         bot.processUpdate(update(userMessage("/operator", 111)));
 
-        verify(messageSender).send(eq(USER_CHAT_ID), eq("bot.operator.transfer"));
+        verify(messageSender).send(USER_CHAT_ID, "bot.operator.transfer");
         verify(forwarder).forwardToSupport(eq(USER_CHAT_ID), eq(List.of(111)), any(),
                 eq("support.operator.request"), eq(true));
     }
@@ -265,7 +265,7 @@ class VpnSupportBotTest {
 
         bot.processUpdate(update(message));
 
-        verify(messageSender).send(eq(100L), eq("support.operator.prefix"));
+        verify(messageSender).send(100L, "support.operator.prefix");
     }
 
     @Test
@@ -275,8 +275,7 @@ class VpnSupportBotTest {
 
         bot.processUpdate(update(message));
 
-        verify(messageSender).setReaction(eq(String.valueOf(SUPPORT_CHAT_ID)), eq(900),
-                eq(List.of(new ReactionTypeEmoji("👍"))));
+        verify(messageSender).setReaction(String.valueOf(SUPPORT_CHAT_ID), 900, List.of(new ReactionTypeEmoji("👍")));
         verify(messageSender, never()).sendReply(eq(SUPPORT_CHAT_ID), anyInt(), anyString());
     }
 
@@ -307,7 +306,7 @@ class VpnSupportBotTest {
 
         bot.processUpdate(update(message));
 
-        verify(messageSender).send(eq(100L), eq("support.operator.prefix"));
+        verify(messageSender).send(100L, "support.operator.prefix");
         verify(messageSender, never()).sendReply(eq(100L), anyInt(), anyString());
     }
 
@@ -371,7 +370,7 @@ class VpnSupportBotTest {
         bot.processUpdate(reactionUpdate(
                 reactionUpdated(SUPPORT_CHAT_ID, 300, new ReactionType[]{thumbsUp})));
 
-        verify(messageSender).setReaction(eq("100"), eq(42), eq(List.of(thumbsUp)));
+        verify(messageSender).setReaction("100", 42, List.of(thumbsUp));
     }
 
     @Test
@@ -383,7 +382,7 @@ class VpnSupportBotTest {
         bot.processUpdate(reactionUpdate(
                 reactionUpdated(100L, 42, new ReactionType[]{heart})));
 
-        verify(messageSender).setReaction(eq(String.valueOf(SUPPORT_CHAT_ID)), eq(300), eq(List.of(heart)));
+        verify(messageSender).setReaction(String.valueOf(SUPPORT_CHAT_ID), 300, List.of(heart));
     }
 
     @Test
@@ -393,7 +392,7 @@ class VpnSupportBotTest {
 
         bot.processUpdate(reactionUpdate(reactionUpdated(100L, 42, new ReactionType[]{})));
 
-        verify(messageSender).setReaction(eq(String.valueOf(SUPPORT_CHAT_ID)), eq(300), eq(List.of()));
+        verify(messageSender).setReaction(String.valueOf(SUPPORT_CHAT_ID), 300, List.of());
     }
 
     @Test

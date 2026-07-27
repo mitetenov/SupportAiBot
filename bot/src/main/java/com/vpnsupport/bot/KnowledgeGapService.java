@@ -23,6 +23,11 @@ public class KnowledgeGapService {
     private static final int MAX_QUERY_LENGTH = 2000;
     private static final int MAX_RESPONSE_LENGTH = 500;
 
+    private static final String INSERT_GAP_SQL =
+            "INSERT INTO knowledge_gaps (user_query, embedding, telegram_id, best_faq_question, "
+            + "max_similarity, faq_count, trigger_reason, bot_response, first_seen, last_seen) "
+            + "VALUES (?, CAST(? AS vector), ?, ?, ?, ?, ?, ?, ?, ?)";
+
     private final JdbcTemplate jdbcTemplate;
     private final FaqEmbeddingService faqEmbeddingService;
     private final EmbeddingProvider embeddingProvider;
@@ -92,8 +97,8 @@ public class KnowledgeGapService {
                 return;
             }
 
-            storeGap(query, telegramUserId, context.bestQuestion(), context.maxSimilarity(),
-                    context.results().size(), trigger, response);
+            storeGap(new Gap(query, telegramUserId, context.bestQuestion(),
+                    context.maxSimilarity(), context.results().size(), trigger, response));
         } catch (Exception e) {
             log.warn("Failed to evaluate knowledge gap: {}", e.getMessage());
         }
@@ -114,8 +119,8 @@ public class KnowledgeGapService {
         FaqEmbeddingService.FaqContext context = orEmpty(faqContext);
 
         try {
-            storeGap(query, telegramUserId, context.bestQuestion(), context.maxSimilarity(),
-                    context.results().size(), "USER_OPERATOR", botResponse);
+            storeGap(new Gap(query, telegramUserId, context.bestQuestion(),
+                    context.maxSimilarity(), context.results().size(), "USER_OPERATOR", botResponse));
         } catch (Exception e) {
             log.warn("Failed to evaluate operator knowledge gap: {}", e.getMessage());
         }
@@ -133,6 +138,8 @@ public class KnowledgeGapService {
                     "SELECT user_query, gap_count, trigger_reason, first_seen, last_seen " +
                     "FROM knowledge_gaps ORDER BY gap_count DESC LIMIT ?",
                     ps -> ps.setInt(1, safeLimit),
+                    // Block body, not an expression: an expression lambda here is
+                    // ambiguous between ResultSetExtractor and RowCallbackHandler.
                     rs -> {
                         gaps.add(new GapStatsDto(
                                 rs.getString("user_query"),
@@ -153,12 +160,10 @@ public class KnowledgeGapService {
         return getTopGaps(DEFAULT_TOP_LIMIT);
     }
 
-    private void storeGap(String userQuery, long telegramUserId, String bestFaqQuestion,
-                          double maxSimilarity, int faqCount, String triggerReason, String botResponse) {
-        String vectorStr = faqEmbeddingService.embedQueryAsVector(userQuery);
+    private void storeGap(Gap gap) {
+        String vectorStr = faqEmbeddingService.embedQueryAsVector(gap.userQuery());
         if (vectorStr == null) {
-            insertGap(userQuery, null, telegramUserId, bestFaqQuestion, maxSimilarity,
-                    faqCount, triggerReason, botResponse);
+            insertGap(gap, null);
             return;
         }
 
@@ -169,46 +174,36 @@ public class KnowledgeGapService {
                     Timestamp.from(Instant.now()), existingId);
             log.debug("Incremented gap count for existing gap id={}", existingId);
         } else {
-            insertGap(userQuery, vectorStr, telegramUserId, bestFaqQuestion, maxSimilarity,
-                    faqCount, triggerReason, botResponse);
+            insertGap(gap, vectorStr);
         }
     }
 
-    private void insertGap(String userQuery, String vectorStr, long telegramUserId,
-                           String bestFaqQuestion, double maxSimilarity, int faqCount,
-                           String triggerReason, String botResponse) {
+    /**
+     * Writes the row. {@code CAST(? AS vector)} accepts a null, so a gap whose
+     * query could not be embedded takes the same statement as one that could —
+     * the two near-identical INSERTs this replaced differed only in that cast.
+     */
+    private void insertGap(Gap gap, String vectorStr) {
         Timestamp now = Timestamp.from(Instant.now());
-        if (vectorStr == null || vectorStr.isBlank()) {
-            jdbcTemplate.update(
-                    "INSERT INTO knowledge_gaps (user_query, embedding, telegram_id, best_faq_question, " +
-                    "max_similarity, faq_count, trigger_reason, bot_response, first_seen, last_seen) " +
-                    "VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    userQuery,
-                    telegramUserId,
-                    bestFaqQuestion,
-                    maxSimilarity,
-                    faqCount,
-                    triggerReason,
-                    botResponse,
-                    now,
-                    now);
-        } else {
-            jdbcTemplate.update(
-                    "INSERT INTO knowledge_gaps (user_query, embedding, telegram_id, best_faq_question, " +
-                    "max_similarity, faq_count, trigger_reason, bot_response, first_seen, last_seen) " +
-                    "VALUES (?, CAST(? AS vector), ?, ?, ?, ?, ?, ?, ?, ?)",
-                    userQuery,
-                    vectorStr,
-                    telegramUserId,
-                    bestFaqQuestion,
-                    maxSimilarity,
-                    faqCount,
-                    triggerReason,
-                    botResponse,
-                    now,
-                    now);
-        }
-        log.debug("Inserted new knowledge gap: trigger={}, query='{}'", triggerReason, userQuery);
+        jdbcTemplate.update(INSERT_GAP_SQL,
+                gap.userQuery(),
+                vectorStr != null && !vectorStr.isBlank() ? vectorStr : null,
+                gap.telegramUserId(),
+                gap.bestFaqQuestion(),
+                gap.maxSimilarity(),
+                gap.faqCount(),
+                gap.triggerReason(),
+                gap.botResponse(),
+                now,
+                now);
+        log.debug("Inserted new knowledge gap: trigger={}, query='{}'",
+                gap.triggerReason(), gap.userQuery());
+    }
+
+    /** One knowledge-gap row before it is written. */
+    private record Gap(String userQuery, long telegramUserId, String bestFaqQuestion,
+                       double maxSimilarity, int faqCount, String triggerReason,
+                       String botResponse) {
     }
 
     private Long findSimilarGap(String vectorStr) {

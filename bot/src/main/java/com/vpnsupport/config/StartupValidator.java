@@ -15,8 +15,11 @@ import java.util.Set;
 public class StartupValidator implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(StartupValidator.class);
-    private static final List<String> VALID_LLM_PROVIDERS = List.of("deepseek", "gemini", "openai");
-    private static final List<String> VALID_EMBEDDING_PROVIDERS = List.of("gemini", "openai");
+    private static final String DEEPSEEK = "deepseek";
+    private static final String GEMINI = "gemini";
+    private static final String OPENAI = "openai";
+    private static final List<String> VALID_LLM_PROVIDERS = List.of(DEEPSEEK, GEMINI, OPENAI);
+    private static final List<String> VALID_EMBEDDING_PROVIDERS = List.of(GEMINI, OPENAI);
 
     private final TelegramProperties telegramProperties;
     private final LlmProperties llmProperties;
@@ -96,25 +99,28 @@ public class StartupValidator implements ApplicationRunner {
         }
 
         switch (normalized) {
-            case "deepseek":
+            case DEEPSEEK:
                 requireText(deepSeekProperties.getApiKey(),
                         "DEEPSEEK_API_KEY не задан. Получите ключ на https://platform.deepseek.com/api_keys "
                         + "и добавьте в .env: DEEPSEEK_API_KEY=sk-...");
                 requireText(deepSeekProperties.getModel(),
                         "DEEPSEEK_MODEL не задан. Укажите модель, например: DEEPSEEK_MODEL=deepseek-chat");
                 break;
-            case "gemini":
+            case GEMINI:
                 requireText(geminiProperties.getApiKey(),
                         "GEMINI_API_KEY не задан. Получите ключ в Google AI Studio: "
                         + "https://aistudio.google.com/apikey и добавьте в .env: GEMINI_API_KEY=...");
                 requireText(geminiProperties.getModel(),
                         "GEMINI_MODEL не задан. Укажите модель, например: GEMINI_MODEL=gemini-3.5-flash-light");
                 break;
-            case "openai":
+            case OPENAI:
                 validateOpenAiApiKey();
                 requireText(openAiProperties.getModel(),
                         "OPENAI_MODEL не задан. Укажите модель, например: OPENAI_MODEL=gpt-5.6-luna");
                 break;
+            default:
+                // Unreachable: `normalized` was checked against VALID_LLM_PROVIDERS above.
+                throw new IllegalStateException("Unhandled LLM provider: " + normalized);
         }
     }
 
@@ -141,7 +147,7 @@ public class StartupValidator implements ApplicationRunner {
                     + "\nПроверьте .env: EMBEDDING_PROVIDER=" + embeddingProvider);
         }
 
-        if ("openai".equals(normalized)) {
+        if (OPENAI.equals(normalized)) {
             String key = openAiProperties.getApiKey();
             if (!StringUtils.hasText(key)) {
                 throw new IllegalStateException(
@@ -156,7 +162,7 @@ public class StartupValidator implements ApplicationRunner {
             }
         }
 
-        if ("gemini".equals(normalized)) {
+        if (GEMINI.equals(normalized)) {
             requireText(geminiProperties.getApiKey(),
                     "EMBEDDING_PROVIDER=gemini, но GEMINI_API_KEY не задан. "
                     + "Добавьте в .env: GEMINI_API_KEY=... "

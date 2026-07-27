@@ -1,7 +1,6 @@
 package com.vpnsupport.llm;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.vpnsupport.bot.ChatHistoryService;
 import com.vpnsupport.bot.LlmTokenUsageRepository;
 import com.vpnsupport.config.DeepSeekProperties;
@@ -61,7 +60,7 @@ class DeepSeekClientTest {
     }
 
     @Test
-    void shouldBuildInitialConversationWithSystemPrompt() throws Exception {
+    void shouldBuildInitialConversationWithSystemPrompt() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "FAQ content", null, null);
@@ -73,7 +72,7 @@ class DeepSeekClientTest {
     }
 
     @Test
-    void shouldBuildInitialConversationWithHistory() throws Exception {
+    void shouldBuildInitialConversationWithHistory() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of(
                 Map.of("role", "user", "content", "prev"),
                 Map.of("role", "assistant", "content", "resp")
@@ -85,7 +84,7 @@ class DeepSeekClientTest {
     }
 
     @Test
-    void shouldParseTextResponse() throws Exception {
+    void shouldParseTextResponse() {
         String jsonResponse = """
                 {
                     "choices": [{
@@ -109,7 +108,7 @@ class DeepSeekClientTest {
     }
 
     @Test
-    void shouldParseToolCallResponse() throws Exception {
+    void shouldParseToolCallResponse() {
         String jsonResponse = """
                 {
                     "choices": [{
@@ -150,7 +149,7 @@ class DeepSeekClientTest {
 
 
     @Test
-    void shouldIncludeTelegramIdInDynamicContext() throws Exception {
+    void shouldIncludeTelegramIdInDynamicContext() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 777L, null, null, null);
@@ -163,7 +162,7 @@ class DeepSeekClientTest {
     }
 
     @Test
-    void shouldIncludeFaqInDynamicContextWhenPresent() throws Exception {
+    void shouldIncludeFaqInDynamicContextWhenPresent() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "Some FAQ content", null, null);
@@ -174,7 +173,7 @@ class DeepSeekClientTest {
     }
 
     @Test
-    void shouldNotIncludeFaqInDynamicContextWhenEmpty() throws Exception {
+    void shouldNotIncludeFaqInDynamicContextWhenEmpty() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "", null, null);
@@ -185,14 +184,10 @@ class DeepSeekClientTest {
     }
 
     @Test
-    void shouldAddToolResultToConversation() throws Exception {
-        var method = DeepSeekClient.class.getDeclaredMethod(
-                "addToolResultToConversation", List.class, LlmResponse.ToolCall.class, String.class);
-        method.setAccessible(true);
-
+    void shouldAddToolResultToConversation() {
         List<Map<String, Object>> conversation = new java.util.ArrayList<>();
         LlmResponse.ToolCall tc = new LlmResponse.ToolCall("get_nodes", "call_1", Map.of());
-        method.invoke(client, conversation, tc, "{\"nodes\": []}");
+        client.addToolResultToConversation(conversation, tc, "{\"nodes\": []}");
 
         assertEquals(1, conversation.size());
         assertEquals("tool", conversation.get(0).get("role"));
@@ -201,7 +196,7 @@ class DeepSeekClientTest {
     }
 
     @Test
-    void shouldSaveUsage() throws Exception {
+    void shouldSaveUsage() {
         String jsonResponse = """
                 {
                     "choices": [],

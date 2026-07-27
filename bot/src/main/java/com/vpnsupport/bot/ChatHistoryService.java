@@ -11,7 +11,6 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
@@ -22,6 +21,9 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 
 @Service
 public class ChatHistoryService {
+
+    private static final String ROLE_KEY = "role";
+    private static final String CONTENT_KEY = "content";
 
     private static final Logger log = LoggerFactory.getLogger(ChatHistoryService.class);
 
@@ -50,7 +52,7 @@ public class ChatHistoryService {
         if (history == null) {
             history = loadFromDatabase(userId);
         }
-        if (history == null || history.isEmpty()) {
+        if (history.isEmpty()) {
             return List.of();
         }
         lastActivity.put(userId, System.currentTimeMillis());
@@ -61,14 +63,14 @@ public class ChatHistoryService {
         if (text == null) {
             return;
         }
-        append(userId, Map.of("role", "user", "content", text));
+        append(userId, Map.of(ROLE_KEY, "user", CONTENT_KEY, text));
     }
 
     public void addAssistantMessage(long userId, String text) {
         if (text == null) {
             return;
         }
-        append(userId, Map.of("role", "assistant", "content", text));
+        append(userId, Map.of(ROLE_KEY, "assistant", CONTENT_KEY, text));
     }
 
     private void append(long userId, Map<String, Object> message) {
@@ -82,7 +84,7 @@ public class ChatHistoryService {
                 history.removeFirst();
             }
         }
-        persistAsync(userId, (String) message.get("role"), (String) message.get("content"));
+        persistAsync(userId, (String) message.get(ROLE_KEY), (String) message.get(CONTENT_KEY));
     }
 
     public List<Map<String, Object>> toGeminiContents(long userId) {
@@ -93,11 +95,11 @@ public class ChatHistoryService {
 
         List<Map<String, Object>> contents = new ArrayList<>();
         for (Map<String, Object> message : history) {
-            String role = (String) message.get("role");
-            String content = (String) message.get("content");
+            String role = (String) message.get(ROLE_KEY);
+            String content = (String) message.get(CONTENT_KEY);
             String geminiRole = "assistant".equals(role) ? "model" : "user";
             contents.add(Map.of(
-                    "role", geminiRole,
+                    ROLE_KEY, geminiRole,
                     "parts", List.of(Map.of("text", content))
             ));
         }
@@ -123,18 +125,17 @@ public class ChatHistoryService {
     private Deque<Map<String, Object>> loadFromDatabase(long userId) {
         try {
             List<ChatMessage> messages =
-                    new ArrayList<>(chatMessageRepository.findTop20ByTelegramIdOrderByCreatedAtDesc(userId));
+                    chatMessageRepository.findTop20ByTelegramIdOrderByCreatedAtDesc(userId);
             if (messages.isEmpty()) {
                 loadedFromDb.put(userId, true);
-                return null;
+                return new ConcurrentLinkedDeque<>();
             }
-            // The query returns newest-first so it picks up the live conversation;
-            // the model needs it chronological.
-            Collections.reverse(messages);
 
             Deque<Map<String, Object>> history = new ConcurrentLinkedDeque<>();
-            for (ChatMessage msg : messages) {
-                history.addLast(Map.of("role", msg.getRole(), "content", msg.getContent()));
+            // The query returns newest-first so it picks up the live
+            // conversation; the model needs it chronological.
+            for (ChatMessage msg : messages.reversed()) {
+                history.addLast(Map.of(ROLE_KEY, msg.getRole(), CONTENT_KEY, msg.getContent()));
             }
             histories.put(userId, history);
             loadedFromDb.put(userId, true);
@@ -144,7 +145,7 @@ public class ChatHistoryService {
         } catch (Exception e) {
             log.warn("Failed to load chat history from DB for user {}: {}", userId, e.getMessage());
             loadedFromDb.put(userId, true);
-            return null;
+            return new ConcurrentLinkedDeque<>();
         }
     }
 
@@ -213,8 +214,8 @@ public class ChatHistoryService {
         var it = history.descendingIterator();
         while (it.hasNext()) {
             Map<String, Object> msg = it.next();
-            if ("user".equals(msg.get("role"))) {
-                return (String) msg.get("content");
+            if ("user".equals(msg.get(ROLE_KEY))) {
+                return (String) msg.get(CONTENT_KEY);
             }
         }
         return null;

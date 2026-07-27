@@ -162,8 +162,8 @@ public class McpRouter {
                     safe.put(key, telegramUserId);
                 });
 
-        if (schemaParam != null && !safe.containsKey(schemaParam)) {
-            safe.put(schemaParam, telegramUserId);
+        if (schemaParam != null) {
+            safe.computeIfAbsent(schemaParam, k -> telegramUserId);
         }
         return safe;
     }

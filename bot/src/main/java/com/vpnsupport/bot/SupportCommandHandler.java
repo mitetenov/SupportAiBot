@@ -85,7 +85,7 @@ public class SupportCommandHandler {
             try {
                 long num = Long.parseLong(parts[1]);
                 if (num <= STATS_ID_THRESHOLD) {
-                    showTopStats(chatId, (int) Math.clamp(num, 1, STATS_ID_THRESHOLD));
+                    showTopStats(chatId, Math.clamp(num, 1, STATS_ID_THRESHOLD));
                 } else {
                     showUserStats(chatId, num);
                 }

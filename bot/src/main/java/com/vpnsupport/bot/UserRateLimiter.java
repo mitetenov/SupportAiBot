@@ -1,8 +1,10 @@
 package com.vpnsupport.bot;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -24,8 +26,29 @@ public class UserRateLimiter {
 
     private final ConcurrentHashMap<Long, Long> lastRequestAt = new ConcurrentHashMap<>();
 
+    /**
+     * Time source. Injectable so tests can step over the interval instead of
+     * sleeping through it — the wall-clock version cost four seconds per run and
+     * was inherently racy.
+     */
+    private final Clock clock;
+
+    /**
+     * Annotated explicitly: with two constructors Spring would otherwise have to
+     * guess which one to inject through.
+     */
+    @Autowired
+    public UserRateLimiter() {
+        this(Clock.systemUTC());
+    }
+
+    /** Test seam: lets a test step the clock instead of sleeping. */
+    UserRateLimiter(Clock clock) {
+        this.clock = clock;
+    }
+
     public boolean tryAcquire(long userId) {
-        long now = System.currentTimeMillis();
+        long now = clock.millis();
         AtomicBoolean allowed = new AtomicBoolean(false);
         lastRequestAt.compute(userId, (k, v) -> {
             if (v == null || now - v >= MIN_INTERVAL_MS) {
@@ -40,7 +63,7 @@ public class UserRateLimiter {
     /** Keeps the map from retaining one permanent entry per user ever seen. */
     @Scheduled(fixedDelay = 10, timeUnit = TimeUnit.MINUTES)
     public void evictStaleEntries() {
-        long cutoff = System.currentTimeMillis() - RETENTION_MS;
+        long cutoff = clock.millis() - RETENTION_MS;
         lastRequestAt.entrySet().removeIf(entry -> entry.getValue() < cutoff);
     }
 }

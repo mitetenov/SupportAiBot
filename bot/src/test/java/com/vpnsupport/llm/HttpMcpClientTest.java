@@ -8,14 +8,19 @@ import okhttp3.mockwebserver.MockWebServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.io.IOException;
+import java.util.stream.Stream;
+
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class HttpMcpClientTest {
@@ -27,14 +32,14 @@ class HttpMcpClientTest {
     private ObjectMapper objectMapper;
 
     @BeforeEach
-    void setUp() throws Exception {
+    void setUp() throws IOException {
         server = new MockWebServer();
         server.start();
         objectMapper = new ObjectMapper();
     }
 
     @AfterEach
-    void tearDown() throws Exception {
+    void tearDown() throws IOException {
         server.shutdown();
     }
 
@@ -58,28 +63,23 @@ class HttpMcpClientTest {
         assertEquals(input, result);
     }
 
-    @Test
-    void shouldExtractJsonFromSseDataLine() {
-        String input = "data: {\"jsonrpc\":\"2.0\",\"result\":{\"key\":\"value\"},\"id\":1}";
-        String expected = "{\"jsonrpc\":\"2.0\",\"result\":{\"key\":\"value\"},\"id\":1}";
-        String result = invokeExtractJsonFromSse(input);
-        assertEquals(expected, result);
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("sseBodies")
+    void shouldExtractTheFirstDataLineFromAnSseBody(String name, String input, String expected) {
+        assertEquals(expected, invokeExtractJsonFromSse(input));
     }
 
-    @Test
-    void shouldExtractJsonFromSseWithEvent() {
-        String input = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"result\":\"hello\",\"id\":1}";
-        String expected = "{\"jsonrpc\":\"2.0\",\"result\":\"hello\",\"id\":1}";
-        String result = invokeExtractJsonFromSse(input);
-        assertEquals(expected, result);
-    }
-
-    @Test
-    void shouldExtractFirstDataLineInSse() {
-        String input = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"result\":\"first\",\"id\":1}\n\ndata: {\"jsonrpc\":\"2.0\",\"result\":\"second\",\"id\":2}";
-        String expected = "{\"jsonrpc\":\"2.0\",\"result\":\"first\",\"id\":1}";
-        String result = invokeExtractJsonFromSse(input);
-        assertEquals(expected, result);
+    static Stream<Arguments> sseBodies() {
+        return Stream.of(
+                Arguments.of("bare data line",
+                        "data: {\"jsonrpc\":\"2.0\",\"result\":{\"key\":\"value\"},\"id\":1}",
+                        "{\"jsonrpc\":\"2.0\",\"result\":{\"key\":\"value\"},\"id\":1}"),
+                Arguments.of("preceded by an event line",
+                        "event: message\ndata: {\"jsonrpc\":\"2.0\",\"result\":\"hello\",\"id\":1}",
+                        "{\"jsonrpc\":\"2.0\",\"result\":\"hello\",\"id\":1}"),
+                Arguments.of("only the first of several data lines",
+                        "event: message\ndata: {\"jsonrpc\":\"2.0\",\"result\":\"first\",\"id\":1}\n\ndata: {\"jsonrpc\":\"2.0\",\"result\":\"second\",\"id\":2}",
+                        "{\"jsonrpc\":\"2.0\",\"result\":\"first\",\"id\":1}"));
     }
 
     @Test
@@ -185,7 +185,7 @@ class HttpMcpClientTest {
     }
 
     @Test
-    void shouldHandleAlreadyInitializedWithSessionId() throws Exception {
+    void shouldHandleAlreadyInitializedWithSessionId() {
         HttpMcpClient client = createClient();
 
         server.enqueue(new MockResponse()
