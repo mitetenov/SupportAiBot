@@ -191,7 +191,7 @@ class UserMessagePipelineTest {
 
         pipeline.handle(batch("странный вопрос"));
 
-        verify(knowledgeGapService).evaluate(eq("странный вопрос"), eq(USER_ID), eq("Ответ"), eq(context));
+        verify(knowledgeGapService).evaluate("странный вопрос", USER_ID, "Ответ", context);
     }
 
     @Test

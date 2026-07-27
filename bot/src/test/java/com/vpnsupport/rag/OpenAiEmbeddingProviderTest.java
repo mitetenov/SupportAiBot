@@ -58,13 +58,11 @@ class OpenAiEmbeddingProviderTest {
 
         provider.embed("test");
 
-        try {
+        assertDoesNotThrow(() -> {
             RecordedRequest request = server.takeRequest();
             String body = request.getBody().readUtf8();
             assertTrue(body.contains("\"text-embedding-3-small\""));
-        } catch (Exception e) {
-            fail("Failed to read request: " + e.getMessage());
-        }
+        });
     }
 
     @Test
@@ -83,13 +81,11 @@ class OpenAiEmbeddingProviderTest {
 
         provider.embed("test");
 
-        try {
+        assertDoesNotThrow(() -> {
             RecordedRequest request = server.takeRequest();
             String body = request.getBody().readUtf8();
             assertTrue(body.contains("\"text-embedding-3-small\""), "Should default to text-embedding-3-small when config is blank");
-        } catch (Exception e) {
-            fail("Failed to read request: " + e.getMessage());
-        }
+        });
     }
 
     @Test
@@ -110,17 +106,17 @@ class OpenAiEmbeddingProviderTest {
     }
 
     @Test
-    void shouldReturnNullOnHttpError() {
+    void shouldReturnEmptyArrayOnHttpError() {
         OpenAiEmbeddingProvider provider = createProvider("text-embedding-3-small");
         server.enqueue(new MockResponse().setResponseCode(500));
 
         float[] result = provider.embed("test");
 
-        assertNull(result);
+        assertEquals(0, result.length);
     }
 
     @Test
-    void shouldReturnNullWhenNoDataInResponse() {
+    void shouldReturnEmptyArrayWhenNoDataInResponse() {
         OpenAiEmbeddingProvider provider = createProvider("text-embedding-3-small");
         server.enqueue(new MockResponse()
                 .setBody("""
@@ -130,11 +126,11 @@ class OpenAiEmbeddingProviderTest {
 
         float[] result = provider.embed("test");
 
-        assertNull(result);
+        assertEquals(0, result.length);
     }
 
     @Test
-    void shouldReturnNullWhenEmptyDataArray() {
+    void shouldReturnEmptyArrayWhenEmptyDataArray() {
         OpenAiEmbeddingProvider provider = createProvider("text-embedding-3-small");
         server.enqueue(new MockResponse()
                 .setBody("""
@@ -144,11 +140,11 @@ class OpenAiEmbeddingProviderTest {
 
         float[] result = provider.embed("test");
 
-        assertNull(result);
+        assertEquals(0, result.length);
     }
 
     @Test
-    void shouldReturnNullWhenNoEmbeddingInDataItem() {
+    void shouldReturnEmptyArrayWhenNoEmbeddingInDataItem() {
         OpenAiEmbeddingProvider provider = createProvider("text-embedding-3-small");
         server.enqueue(new MockResponse()
                 .setBody("""
@@ -158,7 +154,7 @@ class OpenAiEmbeddingProviderTest {
 
         float[] result = provider.embed("test");
 
-        assertNull(result);
+        assertEquals(0, result.length);
     }
 
     @Test
@@ -207,7 +203,7 @@ class OpenAiEmbeddingProviderTest {
     }
 
     @Test
-    void shouldReturnNullOnMalformedJson() {
+    void shouldReturnEmptyArrayOnMalformedJson() {
         OpenAiEmbeddingProvider provider = createProvider("text-embedding-3-small");
         server.enqueue(new MockResponse()
                 .setBody("not json")
@@ -215,6 +211,6 @@ class OpenAiEmbeddingProviderTest {
 
         float[] result = provider.embed("test");
 
-        assertNull(result);
+        assertEquals(0, result.length);
     }
 }

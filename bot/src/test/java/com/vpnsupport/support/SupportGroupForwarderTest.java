@@ -1,11 +1,9 @@
 package com.vpnsupport.support;
 
 import com.pengrad.telegrambot.TelegramBot;
-import com.pengrad.telegrambot.model.Message;
 import com.pengrad.telegrambot.model.User;
 import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.response.MessageIdResponse;
-import com.vpnsupport.bot.MessageMapping;
 import com.vpnsupport.bot.MessageMappingRepository;
 import com.vpnsupport.bot.TelegramMessageSender;
 import com.vpnsupport.bot.TopicManager;

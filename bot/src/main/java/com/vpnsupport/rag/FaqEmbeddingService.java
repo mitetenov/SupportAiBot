@@ -38,6 +38,9 @@ public class FaqEmbeddingService {
 
     private static final int EMBEDDING_CACHE_SIZE = 256;
 
+    /** Sentinel for "could not embed"; never a valid result. */
+    private static final float[] EMPTY_EMBEDDING = new float[0];
+
     private static final String CONNECTION_FAQ_QUERY =
             "Не могу подключиться к VPN / не работает / не заходит";
     private static final String REFERRAL_FAQ_QUERY =
@@ -225,6 +228,8 @@ public class FaqEmbeddingService {
                         ps.setDouble(6, MIN_FTS_RANK);
                         ps.setInt(7, SEARCH_LIMIT);
                     },
+                    // Block body, not an expression: an expression lambda here is
+                    // ambiguous between ResultSetExtractor and RowCallbackHandler.
                     rs -> {
                         results.add(new FaqResult(
                                 rs.getString("question"),
@@ -339,12 +344,13 @@ public class FaqEmbeddingService {
     /** Embeds {@code text} and renders it as a pgvector literal, or null on failure. */
     public String embedQueryAsVector(String text) {
         float[] embedding = embed(text);
-        return embedding != null ? vectorToString(embedding) : null;
+        return embedding.length > 0 ? vectorToString(embedding) : null;
     }
 
+    /** @return the embedding, or an empty array when it could not be produced */
     private float[] embed(String text) {
         if (text == null || text.isBlank()) {
-            return null;
+            return EMPTY_EMBEDDING;
         }
         float[] cached = embeddingCache.get(text);
         if (cached != null) {
@@ -352,7 +358,7 @@ public class FaqEmbeddingService {
         }
         float[] embedding = embeddingProvider.embed(text);
         if (embedding == null || embedding.length != embeddingProvider.getDimension()) {
-            return null;
+            return EMPTY_EMBEDDING;
         }
         embeddingCache.put(text, embedding);
         return embedding;

@@ -20,6 +20,13 @@ import java.time.Duration;
 public class GeminiEmbeddingProvider implements EmbeddingProvider {
 
     private static final Logger log = LoggerFactory.getLogger(GeminiEmbeddingProvider.class);
+    /**
+     * Returned on failure. Callers treat any array whose length is not
+     * {@link #getDimension()} as a failed embedding, so this is rejected the
+     * same way null was — without the risk of a NullPointerException.
+     */
+    private static final float[] EMPTY = new float[0];
+
     private static final int DIMENSION = 2000;
     private static final String MODEL = "gemini-embedding-001";
 
@@ -62,12 +69,12 @@ public class GeminiEmbeddingProvider implements EmbeddingProvider {
             JsonNode embeddingNode = jsonResponse.get("embedding");
             if (embeddingNode == null) {
                 log.error("No embedding in Gemini response: {}", response);
-                return null;
+                return EMPTY;
             }
             JsonNode values = embeddingNode.get("values");
             if (values == null || !values.isArray()) {
                 log.error("Unexpected Gemini embedding response: {}", response);
-                return null;
+                return EMPTY;
             }
 
             float[] result = new float[values.size()];
@@ -78,7 +85,7 @@ public class GeminiEmbeddingProvider implements EmbeddingProvider {
 
         } catch (Exception e) {
             log.error("Gemini embedding request failed", e);
-            return null;
+            return EMPTY;
         }
     }
 }

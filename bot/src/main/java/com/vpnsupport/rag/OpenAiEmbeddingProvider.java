@@ -18,6 +18,13 @@ import java.time.Duration;
 public class OpenAiEmbeddingProvider implements EmbeddingProvider {
 
     private static final Logger log = LoggerFactory.getLogger(OpenAiEmbeddingProvider.class);
+    /**
+     * Returned on failure. Callers treat any array whose length is not
+     * {@link #getDimension()} as a failed embedding, so this is rejected the
+     * same way null was — without the risk of a NullPointerException.
+     */
+    private static final float[] EMPTY = new float[0];
+
     private static final int DIMENSION = 1536;
 
     private final ObjectMapper objectMapper;
@@ -62,12 +69,12 @@ public class OpenAiEmbeddingProvider implements EmbeddingProvider {
             JsonNode data = jsonResponse.get("data");
             if (data == null || !data.isArray() || data.isEmpty()) {
                 log.error("No embedding data in OpenAI response: {}", response);
-                return null;
+                return EMPTY;
             }
             JsonNode embeddingNode = data.get(0).get("embedding");
             if (embeddingNode == null || !embeddingNode.isArray()) {
                 log.error("Unexpected OpenAI embedding response: {}", response);
-                return null;
+                return EMPTY;
             }
 
             float[] result = new float[embeddingNode.size()];
@@ -78,7 +85,7 @@ public class OpenAiEmbeddingProvider implements EmbeddingProvider {
 
         } catch (Exception e) {
             log.error("OpenAI embedding request failed", e);
-            return null;
+            return EMPTY;
         }
     }
 }

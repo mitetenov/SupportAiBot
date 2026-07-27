@@ -38,7 +38,8 @@ public abstract class AbstractLlmClient implements LlmClient {
             + "|^(айфон|iphone|андроид|android|винда|windows|макбук|мак|mac|linux|tv|телевизор)\\b",
             // UNICODE_CHARACTER_CLASS makes \b and \w Unicode-aware; without it
             // they are ASCII-only and no Cyrillic boundary ever matches.
-            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.UNICODE_CHARACTER_CLASS);
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE
+                    | Pattern.UNICODE_CHARACTER_CLASS | Pattern.CANON_EQ);
 
     /** A message with no letters at all (emoji, punctuation) can't stand alone either. */
     private static final Pattern HAS_LETTERS = Pattern.compile("\\p{L}");
@@ -111,16 +112,7 @@ public abstract class AbstractLlmClient implements LlmClient {
                 LlmResponse llmResponse = parseResponse(rawResponse);
 
                 if (llmResponse.hasToolCalls()) {
-                    log.info("{} requested {} tool call(s)", getProviderName(), llmResponse.toolCalls().size());
-                    addToolCallsToConversation(conversation, llmResponse);
-
-                    for (LlmResponse.ToolCall tc : llmResponse.toolCalls()) {
-                        log.info("Executing tool: {} with args: {}", tc.name(), tc.arguments());
-                        String toolResult = mcpRouter.callTool(tc.name(), tc.arguments(), telegramUserId);
-                        log.info("Tool {} result: {}", tc.name(), truncate(toolResult));
-                        addToolResultToConversation(conversation, tc, toolResult);
-                    }
-
+                    runToolCalls(conversation, llmResponse, telegramUserId);
                     iteration++;
                     continue;
                 }
@@ -143,6 +135,22 @@ public abstract class AbstractLlmClient implements LlmClient {
 
         throw new LlmProcessingException("Max iterations reached",
                 "Превышено количество попыток обработки запроса. Пожалуйста, попробуйте ещё раз.");
+    }
+
+    /** Executes every tool the model asked for and appends the results. */
+    private void runToolCalls(List<Map<String, Object>> conversation, LlmResponse llmResponse,
+                              long telegramUserId) {
+        log.info("{} requested {} tool call(s)", getProviderName(), llmResponse.toolCalls().size());
+        addToolCallsToConversation(conversation, llmResponse);
+
+        for (LlmResponse.ToolCall tc : llmResponse.toolCalls()) {
+            log.info("Executing tool: {} with args: {}", tc.name(), tc.arguments());
+            String toolResult = mcpRouter.callTool(tc.name(), tc.arguments(), telegramUserId);
+            if (log.isInfoEnabled()) {
+                log.info("Tool {} result: {}", tc.name(), truncate(toolResult));
+            }
+            addToolResultToConversation(conversation, tc, toolResult);
+        }
     }
 
     protected abstract List<Map<String, Object>> buildInitialConversation(

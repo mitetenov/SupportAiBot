@@ -1,7 +1,6 @@
 package com.vpnsupport.llm;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.vpnsupport.bot.ChatHistoryService;
 import com.vpnsupport.bot.LlmTokenUsageRepository;
 import com.vpnsupport.config.OpenAiProperties;
@@ -56,7 +55,7 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldBuildInitialConversationWithSystemPrompt() throws Exception {
+    void shouldBuildInitialConversationWithSystemPrompt() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "FAQ content", null, null);
@@ -68,7 +67,7 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldBuildInitialConversationWithHistory() throws Exception {
+    void shouldBuildInitialConversationWithHistory() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of(
                 Map.of("role", "user", "content", "prev"),
                 Map.of("role", "assistant", "content", "resp")
@@ -80,7 +79,7 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldBuildConversationWithImage() throws Exception {
+    void shouldBuildConversationWithImage() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
         List<Map<String, Object>> conv = client.buildInitialConversation("Describe this", 123L, null, "base64data", "image/png");
@@ -103,7 +102,7 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldBuildConversationWithImageAndNoText() throws Exception {
+    void shouldBuildConversationWithImageAndNoText() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
         List<Map<String, Object>> conv = client.buildInitialConversation("", 123L, null, "base64data", "image/jpeg");
@@ -121,7 +120,7 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldParseTextResponse() throws Exception {
+    void shouldParseTextResponse() {
         String jsonResponse = """
                 {
                     "output": [{
@@ -146,7 +145,7 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldParseToolCallResponse() throws Exception {
+    void shouldParseToolCallResponse() {
         String jsonResponse = """
                 {
                     "output": [{
@@ -178,7 +177,7 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldIncludeTelegramIdInDynamicContext() throws Exception {
+    void shouldIncludeTelegramIdInDynamicContext() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 777L, null, null, null);
@@ -191,7 +190,7 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldIncludeFaqInDynamicContextWhenPresent() throws Exception {
+    void shouldIncludeFaqInDynamicContextWhenPresent() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "Some FAQ content", null, null);
@@ -202,7 +201,7 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldNotIncludeFaqInDynamicContextWhenEmpty() throws Exception {
+    void shouldNotIncludeFaqInDynamicContextWhenEmpty() {
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
 
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "", null, null);
@@ -213,14 +212,10 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldAddToolResultToConversation() throws Exception {
-        var method = OpenAiClient.class.getDeclaredMethod(
-                "addToolResultToConversation", List.class, LlmResponse.ToolCall.class, String.class);
-        method.setAccessible(true);
-
+    void shouldAddToolResultToConversation() {
         List<Map<String, Object>> conversation = new java.util.ArrayList<>();
         LlmResponse.ToolCall tc = new LlmResponse.ToolCall("get_nodes", "call_1", Map.of());
-        method.invoke(client, conversation, tc, "{\"nodes\": []}");
+        client.addToolResultToConversation(conversation, tc, "{\"nodes\": []}");
 
         assertEquals(1, conversation.size());
         assertEquals("function_call_output", conversation.get(0).get("type"));
@@ -229,7 +224,7 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldSaveUsage() throws Exception {
+    void shouldSaveUsage() {
         String jsonResponse = """
                 {
                     "choices": [],
@@ -297,16 +292,12 @@ class OpenAiClientTest {
 
         String expectedJson = objectMapper.writeValueAsString(complexArgs);
 
-        var method = OpenAiClient.class.getDeclaredMethod(
-                "addToolCallsToConversation", List.class, LlmResponse.class);
-        method.setAccessible(true);
-
         List<Map<String, Object>> conversation = new java.util.ArrayList<>();
         LlmResponse response = new LlmResponse("", List.of(
                 new LlmResponse.ToolCall("test_func", "call_123", complexArgs)
         ));
 
-        method.invoke(client, conversation, response);
+        client.addToolCallsToConversation(conversation, response);
 
         assertEquals(1, conversation.size());
         assertEquals("function_call", conversation.get(0).get("type"));
@@ -316,17 +307,13 @@ class OpenAiClientTest {
     }
 
     @Test
-    void shouldHandleEmptyArgumentsInToolCall() throws Exception {
-        var method = OpenAiClient.class.getDeclaredMethod(
-                "addToolCallsToConversation", List.class, LlmResponse.class);
-        method.setAccessible(true);
-
+    void shouldHandleEmptyArgumentsInToolCall() {
         List<Map<String, Object>> conversation = new java.util.ArrayList<>();
         LlmResponse response = new LlmResponse("", List.of(
                 new LlmResponse.ToolCall("empty_func", "call_1", Map.of())
         ));
 
-        method.invoke(client, conversation, response);
+        client.addToolCallsToConversation(conversation, response);
 
         assertEquals(1, conversation.size());
         assertEquals("function_call", conversation.get(0).get("type"));

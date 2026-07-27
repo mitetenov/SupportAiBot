@@ -13,7 +13,6 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
@@ -160,6 +159,8 @@ class ChatHistoryServiceTest {
         try {
             history.add(Map.of("role", "user", "content", "injected"));
         } catch (UnsupportedOperationException expected) {
+            // Either an immutable copy (throws) or a defensive copy (does not)
+            // is fine; the assertion below is what actually matters.
         }
 
         assertEquals(1, service.getHistory(1L).size());

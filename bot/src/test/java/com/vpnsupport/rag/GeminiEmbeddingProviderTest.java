@@ -68,16 +68,16 @@ class GeminiEmbeddingProviderTest {
     }
 
     @Test
-    void shouldReturnNullOnHttpError() {
+    void shouldReturnEmptyArrayOnHttpError() {
         server.enqueue(new MockResponse().setResponseCode(500));
 
         float[] result = provider.embed("test");
 
-        assertNull(result);
+        assertEquals(0, result.length);
     }
 
     @Test
-    void shouldReturnNullWhenNoEmbeddingKey() {
+    void shouldReturnEmptyArrayWhenNoEmbeddingKey() {
         server.enqueue(new MockResponse()
                 .setBody("""
                         {"somethingElse":true}
@@ -86,11 +86,11 @@ class GeminiEmbeddingProviderTest {
 
         float[] result = provider.embed("test");
 
-        assertNull(result);
+        assertEquals(0, result.length);
     }
 
     @Test
-    void shouldReturnNullWhenValuesNotArray() {
+    void shouldReturnEmptyArrayWhenValuesNotArray() {
         server.enqueue(new MockResponse()
                 .setBody("""
                         {"embedding":{"values":"not-an-array"}}
@@ -99,18 +99,18 @@ class GeminiEmbeddingProviderTest {
 
         float[] result = provider.embed("test");
 
-        assertNull(result);
+        assertEquals(0, result.length);
     }
 
     @Test
-    void shouldReturnNullOnMalformedJson() {
+    void shouldReturnEmptyArrayOnMalformedJson() {
         server.enqueue(new MockResponse()
                 .setBody("not json at all")
                 .addHeader("Content-Type", "text/plain"));
 
         float[] result = provider.embed("test");
 
-        assertNull(result);
+        assertEquals(0, result.length);
     }
 
     @Test

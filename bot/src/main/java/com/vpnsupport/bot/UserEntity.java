@@ -6,6 +6,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 
 @Entity
 @Table(name = "user_names")
@@ -35,7 +36,7 @@ public class UserEntity {
         this.username = username;
         this.firstName = firstName;
         this.lastName = lastName;
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now(ZoneOffset.UTC);
     }
 
     public Long getTelegramId() {

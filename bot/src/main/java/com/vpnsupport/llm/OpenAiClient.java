@@ -9,8 +9,6 @@ import com.vpnsupport.bot.LlmTokenUsage;
 import com.vpnsupport.bot.LlmTokenUsageRepository;
 import com.vpnsupport.config.OpenAiProperties;
 import com.vpnsupport.rag.FaqEmbeddingService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -27,12 +25,20 @@ import java.util.Map;
 @ConditionalOnProperty(name = "llm.provider", havingValue = "openai")
 public class OpenAiClient extends AbstractLlmClient {
 
-    private static final Logger log = LoggerFactory.getLogger(OpenAiClient.class);
+    private static final String ROLE_KEY = "role";
+    private static final String CONTENT_KEY = "content";
+    private static final String CALL_ID_KEY = "call_id";
+
 
     private final WebClient webClient;
     private final String model;
     private final Double temperature;
-    private volatile List<Map<String, Object>> cachedToolDefinitions;
+    /**
+     * Built once at construction: {@link McpRouter} already has the tool list by
+     * the time this bean is created, so the lazy double-checked locking this
+     * replaced never had anything to defer.
+     */
+    private final List<Map<String, Object>> toolDefinitions;
 
     public OpenAiClient(OpenAiProperties properties, ObjectMapper objectMapper,
                         McpRouter mcpRouter, ChatHistoryService chatHistoryService,
@@ -52,19 +58,7 @@ public class OpenAiClient extends AbstractLlmClient {
                 .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
                         HttpClient.create().responseTimeout(Duration.ofSeconds(60))))
                 .build();
-    }
-
-    private List<Map<String, Object>> getToolDefinitions() {
-        List<Map<String, Object>> tools = cachedToolDefinitions;
-        if (tools == null) {
-            synchronized (this) {
-                tools = cachedToolDefinitions;
-                if (tools == null) {
-                    cachedToolDefinitions = tools = buildToolDefinitions();
-                }
-            }
-        }
-        return tools;
+        this.toolDefinitions = buildToolDefinitions();
     }
 
     @Override
@@ -78,13 +72,13 @@ public class OpenAiClient extends AbstractLlmClient {
             String userMessage, long telegramUserId, String faqContext,
             String base64Image, String mimeType) {
         List<Map<String, Object>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "system", "content", SupportPrompt.SYSTEM));
+        messages.add(Map.of(ROLE_KEY, "system", CONTENT_KEY, SupportPrompt.SYSTEM));
 
         String dynamicContext = "Telegram ID: " + telegramUserId;
         if (faqContext != null && !faqContext.isEmpty()) {
             dynamicContext += "\n\n" + faqContext;
         }
-        messages.add(Map.of("role", "system", "content", dynamicContext));
+        messages.add(Map.of(ROLE_KEY, "system", CONTENT_KEY, dynamicContext));
 
         messages.addAll(chatHistoryService.getHistory(telegramUserId));
 
@@ -98,9 +92,9 @@ public class OpenAiClient extends AbstractLlmClient {
                     "type", "input_image",
                     "image_url", dataUri
             ));
-            messages.add(Map.of("role", "user", "content", parts));
+            messages.add(Map.of(ROLE_KEY, "user", CONTENT_KEY, parts));
         } else {
-            messages.add(Map.of("role", "user", "content", userMessage));
+            messages.add(Map.of(ROLE_KEY, "user", CONTENT_KEY, userMessage));
         }
 
         return messages;
@@ -117,7 +111,7 @@ public class OpenAiClient extends AbstractLlmClient {
             inputArray.add(objectMapper.valueToTree(item));
         }
 
-        List<Map<String, Object>> tools = getToolDefinitions();
+        List<Map<String, Object>> tools = toolDefinitions;
         if (!tools.isEmpty()) {
             ArrayNode toolsArray = requestBody.putArray("tools");
             for (Map<String, Object> tool : tools) {
@@ -132,7 +126,7 @@ public class OpenAiClient extends AbstractLlmClient {
             requestBody.put("temperature", temperature);
         }
 
-        log.debug("OpenAI Responses API request ({} tools available)", getToolDefinitions().size());
+        log.debug("OpenAI Responses API request ({} tools available)", toolDefinitions.size());
 
         String rawResponse = webClient.post()
                 .uri("/responses")
@@ -155,7 +149,8 @@ public class OpenAiClient extends AbstractLlmClient {
                 .block();
 
         if (rawResponse == null) {
-            throw new RuntimeException("OpenAI Responses API returned null/empty body");
+            throw new LlmProcessingException("OpenAI Responses API returned null/empty body",
+                    "Не удалось получить ответ от модели. Попробуйте позже.");
         }
 
         return rawResponse;
@@ -178,24 +173,9 @@ public class OpenAiClient extends AbstractLlmClient {
             for (JsonNode item : output) {
                 String type = item.has("type") ? item.get("type").asText() : "";
                 if ("function_call".equals(type)) {
-                    String fnName = item.get("name").asText();
-                    String fnArgsStr = item.get("arguments").asText();
-                    String callId = item.get("call_id").asText();
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> args = fnArgsStr.isEmpty()
-                            ? Map.of()
-                            : objectMapper.readValue(fnArgsStr, Map.class);
-                    toolCalls.add(new LlmResponse.ToolCall(fnName, callId, args));
+                    toolCalls.add(parseToolCall(item));
                 } else if ("message".equals(type)) {
-                    JsonNode content = item.get("content");
-                    if (content != null && content.isArray()) {
-                        for (JsonNode part : content) {
-                            if ("output_text".equals(part.get("type").asText())
-                                    && part.has("text") && !part.get("text").isNull()) {
-                                text.append(part.get("text").asText());
-                            }
-                        }
-                    }
+                    appendMessageText(item, text);
                 }
             }
 
@@ -215,6 +195,30 @@ public class OpenAiClient extends AbstractLlmClient {
         }
     }
 
+    private LlmResponse.ToolCall parseToolCall(JsonNode item)
+            throws com.fasterxml.jackson.core.JsonProcessingException {
+        String fnArgsStr = item.get("arguments").asText();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> args = fnArgsStr.isEmpty()
+                ? Map.of()
+                : objectMapper.readValue(fnArgsStr, Map.class);
+        return new LlmResponse.ToolCall(
+                item.get("name").asText(), item.get(CALL_ID_KEY).asText(), args);
+    }
+
+    private static void appendMessageText(JsonNode item, StringBuilder text) {
+        JsonNode content = item.get(CONTENT_KEY);
+        if (content == null || !content.isArray()) {
+            return;
+        }
+        for (JsonNode part : content) {
+            if ("output_text".equals(part.get("type").asText())
+                    && part.has("text") && !part.get("text").isNull()) {
+                text.append(part.get("text").asText());
+            }
+        }
+    }
+
     @Override
     protected void addToolCallsToConversation(List<Map<String, Object>> conversation, LlmResponse response) {
         for (LlmResponse.ToolCall tc : response.toolCalls()) {
@@ -226,7 +230,7 @@ public class OpenAiClient extends AbstractLlmClient {
             }
             conversation.add(Map.of(
                     "type", "function_call",
-                    "call_id", tc.id(),
+                    CALL_ID_KEY, tc.id(),
                     "name", tc.name(),
                     "arguments", argsJson
             ));
@@ -238,7 +242,7 @@ public class OpenAiClient extends AbstractLlmClient {
                                                 LlmResponse.ToolCall toolCall, String toolResult) {
         conversation.add(Map.of(
                 "type", "function_call_output",
-                "call_id", toolCall.id(),
+                CALL_ID_KEY, toolCall.id(),
                 "output", toolResult
         ));
     }
@@ -249,11 +253,11 @@ public class OpenAiClient extends AbstractLlmClient {
             JsonNode jsonResponse = objectMapper.readTree(rawResponse);
             JsonNode usage = jsonResponse.get("usage");
             if (usage != null) {
-                long promptTokens = usage.has("input_tokens") ? usage.get("input_tokens").asLong()
-                        : usage.has("prompt_tokens") ? usage.get("prompt_tokens").asLong() : 0;
-                long completionTokens = usage.has("output_tokens") ? usage.get("output_tokens").asLong()
-                        : usage.has("completion_tokens") ? usage.get("completion_tokens").asLong() : 0;
-                long totalTokens = usage.has("total_tokens") ? usage.get("total_tokens").asLong()
+                // The Responses API and Chat Completions name these differently.
+                long promptTokens = firstPresent(usage, "input_tokens", "prompt_tokens");
+                long completionTokens = firstPresent(usage, "output_tokens", "completion_tokens");
+                long totalTokens = usage.has("total_tokens")
+                        ? usage.get("total_tokens").asLong()
                         : promptTokens + completionTokens;
                 tokenUsageRepository.save(new LlmTokenUsage(
                         telegramUserId, promptTokens, completionTokens, totalTokens));
@@ -261,6 +265,16 @@ public class OpenAiClient extends AbstractLlmClient {
         } catch (Exception e) {
             log.warn("Failed to save token usage: {}", e.getMessage());
         }
+    }
+
+    /** Reads the first field present, so both API shapes are accepted. */
+    private static long firstPresent(JsonNode usage, String... fieldNames) {
+        for (String field : fieldNames) {
+            if (usage.has(field)) {
+                return usage.get(field).asLong();
+            }
+        }
+        return 0;
     }
 
     @Override

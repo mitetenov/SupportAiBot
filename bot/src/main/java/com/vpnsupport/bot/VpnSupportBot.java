@@ -26,6 +26,7 @@ import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
 
@@ -135,7 +136,8 @@ public class VpnSupportBot {
         }
 
         Message message = update.message();
-        if (message == null || message.from() == null || message.from().isBot()) {
+        // isBot() is a boxed Boolean and may be null; unboxing it directly would NPE.
+        if (message == null || message.from() == null || Boolean.TRUE.equals(message.from().isBot())) {
             return;
         }
 
@@ -314,7 +316,7 @@ public class VpnSupportBot {
             entity.setUsername(user.username());
             entity.setFirstName(user.firstName());
             entity.setLastName(user.lastName());
-            entity.setUpdatedAt(LocalDateTime.now());
+            entity.setUpdatedAt(LocalDateTime.now(ZoneOffset.UTC));
             userRepository.save(entity);
         } catch (Exception e) {
             log.warn("Failed to save user info: {}", e.getMessage());

@@ -1,7 +1,6 @@
 package com.vpnsupport.llm;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import com.vpnsupport.bot.ChatHistoryService;
@@ -15,7 +14,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -25,6 +23,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -72,8 +71,23 @@ class OpenAiClientIntegrationTest {
         properties.setTemperature(0.3);
 
         when(chatHistoryService.getHistory(anyLong())).thenReturn(List.of());
+        lenient().when(mcpRouter.listTools()).thenReturn(List.of());
 
-        client = new OpenAiClient(properties, objectMapper, mcpRouter,
+        client = newClient();
+    }
+
+    /**
+     * Builds a client against the current {@code mcpRouter} stubbing. Tool
+     * definitions are resolved in the constructor, so a test that needs a
+     * non-empty tool list must re-stub and rebuild.
+     */
+    private OpenAiClient newClient() {
+        OpenAiProperties properties = new OpenAiProperties();
+        properties.setBaseUrl(baseUrl);
+        properties.setModel("gpt-5.4-mini");
+        properties.setApiKey("sk-test-integration");
+        properties.setTemperature(0.3);
+        return new OpenAiClient(properties, objectMapper, mcpRouter,
                 chatHistoryService, faqEmbeddingService, tokenUsageRepository);
     }
 
@@ -124,8 +138,6 @@ class OpenAiClientIntegrationTest {
                 }
                 """;
 
-        when(mcpRouter.listTools()).thenReturn(List.of());
-
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> conversation = (List<Map<String, Object>>) OpenAiClient.class
                 .getDeclaredMethod("buildInitialConversation", String.class, long.class, String.class, String.class, String.class)
@@ -164,6 +176,7 @@ class OpenAiClientIntegrationTest {
         when(mcpRouter.listTools()).thenReturn(List.of(
                 new McpTool("nodes_list", "List all nodes", Map.of("type", "object", "properties", Map.of()))
         ));
+        client = newClient();
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> conversation = (List<Map<String, Object>>) OpenAiClient.class
@@ -190,8 +203,6 @@ class OpenAiClientIntegrationTest {
         responseStatusCode = 401;
         responseToReturn = "{\"error\": {\"message\": \"Invalid API key\", \"type\": \"invalid_request_error\"}}";
 
-        when(mcpRouter.listTools()).thenReturn(List.of());
-
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> conversation = (List<Map<String, Object>>) OpenAiClient.class
                 .getDeclaredMethod("buildInitialConversation", String.class, long.class, String.class, String.class, String.class)
@@ -216,8 +227,6 @@ class OpenAiClientIntegrationTest {
                     }
                 }
                 """;
-
-        when(mcpRouter.listTools()).thenReturn(List.of());
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> conversation = (List<Map<String, Object>>) OpenAiClient.class

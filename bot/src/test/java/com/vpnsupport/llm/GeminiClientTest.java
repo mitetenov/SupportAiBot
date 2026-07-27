@@ -53,13 +53,10 @@ class GeminiClientTest {
     }
 
     @Test
-    void buildRequestBodyShouldIncludeStaticSystemPrompt() throws Exception {
+    void buildRequestBodyShouldIncludeStaticSystemPrompt() {
         List<Map<String, Object>> contents = List.of();
 
-        var method = GeminiClient.class.getDeclaredMethod(
-                "buildRequestBody", List.class, String.class, long.class);
-        method.setAccessible(true);
-        ObjectNode body = (ObjectNode) method.invoke(client, contents, "FAQ", 12345L);
+        ObjectNode body = client.buildRequestBody(contents);
 
         String systemText = body.get("system_instruction")
                 .get("parts").get(0).get("text").asText();
@@ -71,16 +68,16 @@ class GeminiClientTest {
     }
 
     @Test
-    void shouldBuildInitialConversationForText() throws Exception {
+    void shouldBuildInitialConversationForText() {
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "FAQ", null, null);
 
-        assertTrue(!conv.isEmpty(), "Conversation should not be empty");
+        assertFalse(conv.isEmpty(), "Conversation should not be empty");
         Map<String, Object> last = conv.get(conv.size() - 1);
-        assertTrue("user".equals(last.get("role")));
+        assertEquals("user", last.get("role"));
     }
 
     @Test
-    void shouldBuildInitialConversationIncludeDynamicContext() throws Exception {
+    void shouldBuildInitialConversationIncludeDynamicContext() {
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 777L, "FAQ text", null, null);
 
         assertEquals("user", conv.get(0).get("role"));
@@ -94,7 +91,7 @@ class GeminiClientTest {
     }
 
     @Test
-    void shouldBuildInitialConversationWithoutFaqWhenNull() throws Exception {
+    void shouldBuildInitialConversationWithoutFaqWhenNull() {
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, null, null, null);
 
         @SuppressWarnings("unchecked")
@@ -105,7 +102,7 @@ class GeminiClientTest {
     }
 
     @Test
-    void shouldBuildInitialConversationWithoutFaqWhenEmpty() throws Exception {
+    void shouldBuildInitialConversationWithoutFaqWhenEmpty() {
         List<Map<String, Object>> conv = client.buildInitialConversation("Hello", 123L, "", null, null);
 
         @SuppressWarnings("unchecked")
@@ -116,14 +113,14 @@ class GeminiClientTest {
     }
 
     @Test
-    void shouldBuildInitialConversationForImage() throws Exception {
+    void shouldBuildInitialConversationForImage() {
         List<Map<String, Object>> conv = client.buildInitialConversation("Describe", 123L, "FAQ", "base64data", "image/png");
 
-        assertTrue(!conv.isEmpty());
+        assertFalse(conv.isEmpty());
         Map<String, Object> last = conv.get(conv.size() - 1);
-        assertTrue("user".equals(last.get("role")));
+        assertEquals("user", last.get("role"));
         @SuppressWarnings("unchecked")
         List<Object> parts = (List<Object>) last.get("parts");
-        assertTrue(parts.size() == 2, "Should have text and image parts");
+        assertEquals(2, parts.size(), "Should have text and image parts");
     }
 }

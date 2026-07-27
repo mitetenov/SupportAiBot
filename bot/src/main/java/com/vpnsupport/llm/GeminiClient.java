@@ -9,8 +9,6 @@ import com.vpnsupport.bot.LlmTokenUsage;
 import com.vpnsupport.bot.LlmTokenUsageRepository;
 import com.vpnsupport.config.GeminiProperties;
 import com.vpnsupport.rag.FaqEmbeddingService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -22,16 +20,26 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 @ConditionalOnProperty(name = "llm.provider", havingValue = "gemini")
 public class GeminiClient extends AbstractLlmClient {
 
-    private static final Logger log = LoggerFactory.getLogger(GeminiClient.class);
+    private static final String ROLE_KEY = "role";
+    private static final String PARTS_KEY = "parts";
+    private static final String FUNCTION_CALL_KEY = "functionCall";
+    private static final String THOUGHT_SIGNATURE_KEY = "thought_signature";
+
 
     private final WebClient webClient;
     private final String model;
-    private volatile List<JsonNode> cachedSanitizedTools;
+    /**
+     * Built once at construction: {@link McpRouter} already has the tool list by
+     * the time this bean is created, so the lazy double-checked locking this
+     * replaced never had anything to defer.
+     */
+    private final List<JsonNode> sanitizedTools;
 
     public GeminiClient(GeminiProperties properties, ObjectMapper objectMapper,
                         McpRouter mcpRouter, ChatHistoryService chatHistoryService,
@@ -46,19 +54,7 @@ public class GeminiClient extends AbstractLlmClient {
                 .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
                         HttpClient.create().responseTimeout(Duration.ofSeconds(60))))
                 .build();
-    }
-
-    private List<JsonNode> getSanitizedTools() {
-        List<JsonNode> tools = cachedSanitizedTools;
-        if (tools == null) {
-            synchronized (this) {
-                tools = cachedSanitizedTools;
-                if (tools == null) {
-                    cachedSanitizedTools = tools = buildSanitizedTools();
-                }
-            }
-        }
-        return tools;
+        this.sanitizedTools = buildSanitizedTools();
     }
 
     @Override
@@ -78,18 +74,18 @@ public class GeminiClient extends AbstractLlmClient {
             dynamicContext += "\n\n" + faqContext;
         }
         contents.add(Map.of(
-                "role", "user",
-                "parts", List.of(Map.of("text", "[Система: Контекст текущего пользователя]\n" + dynamicContext))
+                ROLE_KEY, "user",
+                PARTS_KEY, List.of(Map.of("text", "[Система: Контекст текущего пользователя]\n" + dynamicContext))
         ));
         contents.add(Map.of(
-                "role", "model",
-                "parts", List.of(Map.of("text", "Принято. Я готов помочь пользователю."))
+                ROLE_KEY, "model",
+                PARTS_KEY, List.of(Map.of("text", "Принято. Я готов помочь пользователю."))
         ));
 
         contents.addAll(chatHistoryService.toGeminiContents(telegramUserId));
 
         Map<String, Object> userContent = new LinkedHashMap<>();
-        userContent.put("role", "user");
+        userContent.put(ROLE_KEY, "user");
         List<Object> userParts = new ArrayList<>();
 
         if (base64Image != null && !base64Image.isEmpty()) {
@@ -101,7 +97,7 @@ public class GeminiClient extends AbstractLlmClient {
         } else {
             userParts.add(Map.of("text", userMessage));
         }
-        userContent.put("parts", userParts);
+        userContent.put(PARTS_KEY, userParts);
         contents.add(userContent);
 
         return contents;
@@ -109,8 +105,8 @@ public class GeminiClient extends AbstractLlmClient {
 
     @Override
     protected String callApi(List<Map<String, Object>> conversation, String faqContext, long telegramUserId) {
-        ObjectNode requestBody = buildRequestBody(conversation, faqContext, telegramUserId);
-        log.debug("Gemini request ({} tools available)", getSanitizedTools().size());
+        ObjectNode requestBody = buildRequestBody(conversation);
+        log.debug("Gemini request ({} tools available)", sanitizedTools.size());
 
         return webClient.post()
                 .uri("/models/{model}:generateContent", model)
@@ -144,7 +140,7 @@ public class GeminiClient extends AbstractLlmClient {
                         "Модель не вернула ответа. Попробуйте переформулировать вопрос.");
             }
 
-            JsonNode parts = content.get("parts");
+            JsonNode parts = content.get(PARTS_KEY);
             if (parts == null || !parts.isArray()) {
                 throw new LlmProcessingException("Empty parts",
                         "Модель не вернула ответа. Попробуйте переформулировать вопрос.");
@@ -162,16 +158,8 @@ public class GeminiClient extends AbstractLlmClient {
                 if (part.has("text") && !part.get("text").isNull()) {
                     textResponse.append(part.get("text").asText());
                 }
-                if (part.has("functionCall")) {
-                    JsonNode fc = part.get("functionCall");
-                    String fnName = fc.get("name").asText();
-                    JsonNode argsNode = fc.get("args");
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> arguments = argsNode != null && !argsNode.isNull()
-                            ? objectMapper.convertValue(argsNode, Map.class)
-                            : Map.of();
-                    String thoughtSig = fc.has("thought_signature") ? fc.get("thought_signature").asText() : null;
-                    functionCalls.add(new LlmResponse.ToolCall(fnName, "", arguments, thoughtSig));
+                if (part.has(FUNCTION_CALL_KEY)) {
+                    functionCalls.add(parseFunctionCall(part.get(FUNCTION_CALL_KEY)));
                 }
             }
 
@@ -184,10 +172,22 @@ public class GeminiClient extends AbstractLlmClient {
         }
     }
 
+    private LlmResponse.ToolCall parseFunctionCall(JsonNode fc) {
+        JsonNode argsNode = fc.get("args");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> arguments = argsNode != null && !argsNode.isNull()
+                ? objectMapper.convertValue(argsNode, Map.class)
+                : Map.of();
+        String thoughtSignature = fc.has(THOUGHT_SIGNATURE_KEY)
+                ? fc.get(THOUGHT_SIGNATURE_KEY).asText()
+                : null;
+        return new LlmResponse.ToolCall(fc.get("name").asText(), "", arguments, thoughtSignature);
+    }
+
     @Override
     protected void addToolCallsToConversation(List<Map<String, Object>> conversation, LlmResponse response) {
         Map<String, Object> modelContent = new LinkedHashMap<>();
-        modelContent.put("role", "model");
+        modelContent.put(ROLE_KEY, "model");
         List<Map<String, Object>> modelParts = new ArrayList<>();
 
         if (!response.rawParts().isEmpty()) {
@@ -201,12 +201,12 @@ public class GeminiClient extends AbstractLlmClient {
                 fc.put("name", tc.name());
                 fc.put("args", tc.arguments());
                 if (tc.thoughtSignature() != null) {
-                    fc.put("thought_signature", tc.thoughtSignature());
+                    fc.put(THOUGHT_SIGNATURE_KEY, tc.thoughtSignature());
                 }
-                modelParts.add(Map.of("functionCall", fc));
+                modelParts.add(Map.of(FUNCTION_CALL_KEY, fc));
             }
         }
-        modelContent.put("parts", modelParts);
+        modelContent.put(PARTS_KEY, modelParts);
         conversation.add(modelContent);
     }
 
@@ -224,11 +224,11 @@ public class GeminiClient extends AbstractLlmClient {
         functionResponse.put("name", toolCall.name());
         functionResponse.put("response", responseContent);
         if (toolCall.thoughtSignature() != null) {
-            functionResponse.put("thought_signature", toolCall.thoughtSignature());
+            functionResponse.put(THOUGHT_SIGNATURE_KEY, toolCall.thoughtSignature());
         }
         conversation.add(Map.of(
-                "role", "function",
-                "parts", List.of(Map.of("functionResponse", functionResponse))
+                ROLE_KEY, "function",
+                PARTS_KEY, List.of(Map.of("functionResponse", functionResponse))
         ));
     }
 
@@ -277,11 +277,12 @@ public class GeminiClient extends AbstractLlmClient {
         return List.copyOf(sanitized);
     }
 
-    private ObjectNode buildRequestBody(List<Map<String, Object>> contents, String faqContext, long telegramUserId) {
+    // Package-private so the test can call it without reflection.
+    ObjectNode buildRequestBody(List<Map<String, Object>> contents) {
         ObjectNode body = objectMapper.createObjectNode();
 
         ObjectNode systemInstruction = objectMapper.createObjectNode();
-        ArrayNode systemParts = systemInstruction.putArray("parts");
+        ArrayNode systemParts = systemInstruction.putArray(PARTS_KEY);
         systemParts.addObject().put("text", SupportPrompt.SYSTEM);
         body.set("system_instruction", systemInstruction);
 
@@ -290,7 +291,7 @@ public class GeminiClient extends AbstractLlmClient {
             contentsArray.add(objectMapper.valueToTree(msg));
         }
 
-        List<JsonNode> tools = getSanitizedTools();
+        List<JsonNode> tools = sanitizedTools;
         if (!tools.isEmpty()) {
             ArrayNode toolsArray = body.putArray("tools");
             ObjectNode toolsEntry = toolsArray.addObject();
@@ -307,43 +308,64 @@ public class GeminiClient extends AbstractLlmClient {
         return body;
     }
 
+    /** Fields Gemini's function-declaration schema does not accept. */
+    private static final Set<String> UNSUPPORTED_SCHEMA_FIELDS =
+            Set.of("$schema", "additionalProperties", "propertyNames");
+
+    /** Fields whose value is an array of nested schemas. */
+    private static final Set<String> SCHEMA_ARRAY_FIELDS = Set.of("anyOf", "oneOf", "allOf");
+
+    /**
+     * Rewrites a JSON Schema from the MCP server into the subset Gemini accepts
+     * in a function declaration.
+     */
     private ObjectNode sanitizeSchemaParams(JsonNode schema) {
         ObjectNode cleaned = objectMapper.createObjectNode();
         schema.fieldNames().forEachRemaining(field -> {
-            if ("$schema".equals(field) || "additionalProperties".equals(field) || "propertyNames".equals(field)) {
-                return;
-            }
-            JsonNode value = schema.get(field);
-            if ("const".equals(field)) {
-                ArrayNode enumValues = cleaned.putArray("enum");
-                enumValues.add(value);
-                return;
-            }
-            if ("any_of".equals(field)) {
-                ArrayNode anyOf = cleaned.putArray("anyOf");
-                if (value.isArray()) {
-                    for (JsonNode item : value) {
-                        anyOf.add(sanitizeSchemaParams(item));
-                    }
-                }
-                return;
-            }
-            if ("properties".equals(field) && value.isObject()) {
-                ObjectNode cleanedProps = objectMapper.createObjectNode();
-                value.fieldNames().forEachRemaining(propName ->
-                        cleanedProps.set(propName, sanitizeSchemaParams(value.get(propName))));
-                cleaned.set("properties", cleanedProps);
-            } else if ("items".equals(field) && value.isObject()) {
-                cleaned.set(field, sanitizeSchemaParams(value));
-            } else if (("anyOf".equals(field) || "oneOf".equals(field) || "allOf".equals(field)) && value.isArray()) {
-                ArrayNode arr = cleaned.putArray(field);
-                for (JsonNode item : value) {
-                    arr.add(sanitizeSchemaParams(item));
-                }
-            } else {
-                cleaned.set(field, value);
+            if (!UNSUPPORTED_SCHEMA_FIELDS.contains(field)) {
+                copySanitizedField(cleaned, field, schema.get(field));
             }
         });
         return cleaned;
+    }
+
+    private void copySanitizedField(ObjectNode cleaned, String field, JsonNode value) {
+        switch (field) {
+            case "const" -> cleaned.putArray("enum").add(value);
+            case "any_of" -> copySchemaArray(cleaned, "anyOf", value);
+            case "properties" -> copyProperties(cleaned, field, value);
+            case "items" -> copyNestedSchema(cleaned, field, value);
+            default -> {
+                if (SCHEMA_ARRAY_FIELDS.contains(field) && value.isArray()) {
+                    copySchemaArray(cleaned, field, value);
+                } else {
+                    cleaned.set(field, value);
+                }
+            }
+        }
+    }
+
+    private void copySchemaArray(ObjectNode cleaned, String targetField, JsonNode value) {
+        ArrayNode target = cleaned.putArray(targetField);
+        if (value.isArray()) {
+            for (JsonNode item : value) {
+                target.add(sanitizeSchemaParams(item));
+            }
+        }
+    }
+
+    private void copyProperties(ObjectNode cleaned, String field, JsonNode value) {
+        if (!value.isObject()) {
+            cleaned.set(field, value);
+            return;
+        }
+        ObjectNode cleanedProps = objectMapper.createObjectNode();
+        value.fieldNames().forEachRemaining(propName ->
+                cleanedProps.set(propName, sanitizeSchemaParams(value.get(propName))));
+        cleaned.set(field, cleanedProps);
+    }
+
+    private void copyNestedSchema(ObjectNode cleaned, String field, JsonNode value) {
+        cleaned.set(field, value.isObject() ? sanitizeSchemaParams(value) : value);
     }
 }
