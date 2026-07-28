@@ -8,7 +8,6 @@ import com.pengrad.telegrambot.model.MessageReactionUpdated;
 import com.pengrad.telegrambot.model.Update;
 import com.pengrad.telegrambot.model.User;
 import com.pengrad.telegrambot.model.reaction.ReactionType;
-import com.pengrad.telegrambot.model.reaction.ReactionTypeEmoji;
 import com.pengrad.telegrambot.request.CopyMessage;
 import com.pengrad.telegrambot.request.GetUpdates;
 import com.pengrad.telegrambot.request.SetMyCommands;
@@ -41,7 +40,6 @@ import java.util.List;
 public class VpnSupportBot {
 
     private static final Logger log = LoggerFactory.getLogger(VpnSupportBot.class);
-    private static final String DELIVERED_REACTION = "👍";
 
     private final TelegramBot telegramBot;
     private final LlmClient llmClient;
@@ -250,9 +248,7 @@ public class VpnSupportBot {
             } else {
                 deliverOperatorText(message, topicId, mapping.getUserId(), text);
             }
-            // A 👍 on the operator's own message instead of a reply: the topic
-            // used to be half-filled with "Отправлено пользователю."
-            acknowledgeDelivery(message.messageId());
+            confirmDelivery(message.messageId());
             conversationState.recordOperatorReply(mapping.getUserId());
         }, () -> log.debug("No user mapping found for topic {}", topicId));
     }
@@ -271,9 +267,15 @@ public class VpnSupportBot {
                         () -> messageSender.send(userId, messages.get("support.operator.prefix", text)));
     }
 
-    private void acknowledgeDelivery(int operatorMessageId) {
-        messageSender.setReaction(String.valueOf(supportGroupChatId), operatorMessageId,
-                List.of(new ReactionTypeEmoji(DELIVERED_REACTION)));
+    /**
+     * Confirms delivery in the topic as a reply.
+     *
+     * <p>Deliberately text rather than a reaction: the bot already forwards
+     * reactions between the user and the topic, so a reaction placed by the bot
+     * itself would sit alongside genuine ones and mean something different.
+     */
+    private void confirmDelivery(int operatorMessageId) {
+        messageSender.sendReply(supportGroupChatId, operatorMessageId, messages.get("support.sent"));
     }
 
     private void copyToUser(long userChatId, Message message) {

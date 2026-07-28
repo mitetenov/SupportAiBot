@@ -268,15 +268,34 @@ class VpnSupportBotTest {
         verify(messageSender).send(100L, "support.operator.prefix");
     }
 
+    /**
+     * A reply rather than a reaction: the bot also forwards reactions between
+     * the user and the topic, so one placed by the bot itself would sit next to
+     * genuine ones and mean something else entirely.
+     */
     @Test
-    void shouldAcknowledgeOperatorMessageWithAReactionNotAReply() {
+    void shouldConfirmDeliveryWithAReplyInTheTopic() {
         Message message = supportGroupMessage(42, "Готово", null, 900);
         when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
 
         bot.processUpdate(update(message));
 
-        verify(messageSender).setReaction(String.valueOf(SUPPORT_CHAT_ID), 900, List.of(new ReactionTypeEmoji("👍")));
-        verify(messageSender, never()).sendReply(eq(SUPPORT_CHAT_ID), anyInt(), anyString());
+        verify(messageSender).sendReply(SUPPORT_CHAT_ID, 900, "support.sent");
+        verify(messageSender, never()).setReaction(eq(String.valueOf(SUPPORT_CHAT_ID)), eq(900), any());
+    }
+
+    @Test
+    void shouldConfirmDeliveryForMediaToo() {
+        Message message = supportGroupMessage(42, "", null, 900);
+        when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
+
+        MessageIdResponse okResponse = mock(MessageIdResponse.class);
+        when(okResponse.isOk()).thenReturn(true);
+        when(telegramBot.execute(any(CopyMessage.class))).thenReturn(okResponse);
+
+        bot.processUpdate(update(message));
+
+        verify(messageSender).sendReply(SUPPORT_CHAT_ID, 900, "support.sent");
     }
 
     @Test
