@@ -3,6 +3,8 @@ package com.vpnsupport.bot;
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.model.reaction.ReactionType;
 import com.pengrad.telegrambot.request.BaseRequest;
+import com.pengrad.telegrambot.request.EditMessageCaption;
+import com.pengrad.telegrambot.request.EditMessageText;
 import com.pengrad.telegrambot.request.SendMessage;
 import com.pengrad.telegrambot.request.SetMessageReaction;
 import com.pengrad.telegrambot.response.BaseResponse;
@@ -26,35 +28,76 @@ public class TelegramMessageSender {
         this.telegramBot = telegramBot;
     }
 
-    public void send(long chatId, String text) {
-        send(chatId, null, text);
+    public Delivery send(long chatId, String text) {
+        return send(chatId, null, text);
     }
 
-    public void sendToTopic(long chatId, int topicId, String text) {
-        send(chatId, topicId, text);
+    public Delivery sendToTopic(long chatId, int topicId, String text) {
+        return send(chatId, topicId, text);
     }
 
-    private void send(long chatId, Integer topicId, String text) {
+    private Delivery send(long chatId, Integer topicId, String text) {
         if (text == null || text.isBlank()) {
-            return;
+            return Delivery.failed();
         }
+        List<Integer> sent = new ArrayList<>();
         for (String chunk : split(text)) {
             SendMessage request = new SendMessage(chatId, chunk);
             if (topicId != null) {
                 request.messageThreadId(topicId);
             }
-            execute(chatId, request);
+            Integer messageId = execute(chatId, request);
+            if (messageId == null) {
+                // Report the whole send as failed: a half-delivered message is
+                // not something the caller can sensibly act on.
+                return Delivery.failed();
+            }
+            sent.add(messageId);
         }
+        return Delivery.of(sent);
     }
 
-    public void sendReply(long chatId, int replyToMessageId, String text) {
+    public Delivery sendReply(long chatId, int replyToMessageId, String text) {
         List<String> chunks = split(text);
+        List<Integer> sent = new ArrayList<>();
         for (int i = 0; i < chunks.size(); i++) {
             SendMessage request = new SendMessage(chatId, chunks.get(i));
             if (i == 0) {
                 request.replyToMessageId(replyToMessageId);
             }
-            execute(chatId, request);
+            Integer messageId = execute(chatId, request);
+            if (messageId == null) {
+                return Delivery.failed();
+            }
+            sent.add(messageId);
+        }
+        return Delivery.of(sent);
+    }
+
+    /**
+     * Rewrites an already-sent message. Used to mirror an edit from one side of
+     * the conversation to the other.
+     */
+    public boolean edit(long chatId, int messageId, String newText, boolean isCaption) {
+        try {
+            BaseResponse response = isCaption
+                    ? telegramBot.execute(new EditMessageCaption(chatId, messageId).caption(newText))
+                    : telegramBot.execute(new EditMessageText(chatId, messageId, newText));
+            if (!response.isOk()) {
+                // "message is not modified" means the text already matches, which
+                // is a success as far as the caller is concerned.
+                boolean unchanged = response.description() != null
+                        && response.description().contains("message is not modified");
+                if (!unchanged) {
+                    log.warn("Failed to edit message {} in chat {}: {}",
+                            messageId, chatId, response.description());
+                }
+                return unchanged;
+            }
+            return true;
+        } catch (Exception e) {
+            log.error("Error editing message {} in chat {}", messageId, chatId, e);
+            return false;
         }
     }
 
@@ -83,14 +126,18 @@ public class TelegramMessageSender {
         }
     }
 
-    private void execute(long chatId, SendMessage request) {
+    /** @return the sent message ID, or null if the send failed */
+    private Integer execute(long chatId, SendMessage request) {
         try {
             SendResponse response = telegramBot.execute(request);
             if (!response.isOk()) {
                 log.error("Failed to send message to {}: {}", chatId, response.description());
+                return null;
             }
+            return response.message() != null ? response.message().messageId() : null;
         } catch (Exception e) {
             log.error("Error sending message to {}", chatId, e);
+            return null;
         }
     }
 

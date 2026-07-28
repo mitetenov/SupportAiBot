@@ -26,7 +26,9 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -47,6 +49,7 @@ class VpnSupportBotTest {
 
     private static final long SUPPORT_CHAT_ID = -100123L;
     private static final long USER_CHAT_ID = 100L;
+    private static final Delivery DELIVERED = Delivery.of(List.of(555));
 
     @Mock private TelegramBot telegramBot;
     @Mock private TelegramMessageSender messageSender;
@@ -83,6 +86,12 @@ class VpnSupportBotTest {
         lenient().when(messages.get(anyString())).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(messages.get(anyString(), any())).thenAnswer(inv -> inv.getArgument(0));
 
+        // Sends succeed unless a test says otherwise.
+        lenient().when(messageSender.send(anyLong(), anyString())).thenReturn(DELIVERED);
+        lenient().when(messageSender.sendReply(anyLong(), anyInt(), anyString())).thenReturn(DELIVERED);
+        lenient().when(messageSender.sendToTopic(anyLong(), anyInt(), anyString())).thenReturn(DELIVERED);
+        lenient().when(messageSender.edit(anyLong(), anyInt(), anyString(), anyBoolean())).thenReturn(true);
+
         bot = new VpnSupportBot(
                 telegramBot, llmClient, forwarder, topicMappingRepository,
                 messageMappingRepository, messageSender, chatHistoryService,
@@ -114,6 +123,14 @@ class VpnSupportBotTest {
         Update update = mock(Update.class);
         lenient().when(update.message()).thenReturn(message);
         lenient().when(update.messageReaction()).thenReturn(null);
+        lenient().when(update.editedMessage()).thenReturn(null);
+        return update;
+    }
+
+    private Update editUpdate(Message message) {
+        Update update = mock(Update.class);
+        lenient().when(update.messageReaction()).thenReturn(null);
+        lenient().when(update.editedMessage()).thenReturn(message);
         return update;
     }
 
@@ -143,6 +160,168 @@ class VpnSupportBotTest {
     private MessageMapping messageMapping(Integer topicMessageId, Integer topicId,
                                           Long userChatId, Integer userMessageId) {
         return new MessageMapping(topicMessageId, topicId, userChatId, userMessageId);
+    }
+
+    private MessageMapping operatorMapping(Integer topicMessageId, Integer topicId,
+                                           Long userChatId, Integer userMessageId) {
+        return new MessageMapping(topicMessageId, topicId, userChatId, userMessageId,
+                MessageMapping.Direction.OPERATOR_TO_USER);
+    }
+
+    private Message editedUserMessage(String newText, int messageId) {
+        Message msg = userMessage(newText, messageId);
+        lenient().when(msg.caption()).thenReturn(null);
+        return msg;
+    }
+
+    // -------------------------------------------------- failed delivery notice
+
+    @Test
+    void shouldTellTheTopicWhenTheMessageDidNotReachTheUser() {
+        Message message = supportGroupMessage(42, "Готово", null, 900);
+        when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
+        when(messageSender.send(eq(100L), anyString())).thenReturn(Delivery.failed());
+
+        bot.processUpdate(update(message));
+
+        // Previously a blocked user produced a log line and a cheerful
+        // "Отправлено пользователю." — the operator had no way to know.
+        verify(messageSender).sendReply(SUPPORT_CHAT_ID, 900, "support.not.sent");
+        verify(messageSender, never()).sendReply(SUPPORT_CHAT_ID, 900, "support.sent");
+    }
+
+    @Test
+    void shouldNotCountAFailedDeliveryAsOperatorActivity() {
+        Message message = supportGroupMessage(42, "Готово", null, 900);
+        when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
+        when(messageSender.send(eq(100L), anyString())).thenReturn(Delivery.failed());
+
+        bot.processUpdate(update(message));
+
+        // Suppressing the AI because "an operator replied" would be wrong when
+        // the reply never arrived.
+        org.junit.jupiter.api.Assertions.assertFalse(conversationState.isOperatorRecentlyActive(100L));
+    }
+
+    @Test
+    void shouldRecordTheOperatorMessageSoALaterEditCanBeMirrored() {
+        Message message = supportGroupMessage(42, "Готово", null, 900);
+        when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
+
+        bot.processUpdate(update(message));
+
+        org.mockito.ArgumentCaptor<MessageMapping> saved =
+                org.mockito.ArgumentCaptor.forClass(MessageMapping.class);
+        verify(messageMappingRepository).save(saved.capture());
+        assertEquals(MessageMapping.Direction.OPERATOR_TO_USER, saved.getValue().getDirection());
+        assertEquals(900, saved.getValue().getTopicMessageId());
+        assertEquals(555, saved.getValue().getUserMessageId());
+    }
+
+    @Test
+    void shouldNotRecordAMappingWhenTheAnswerWasSplitAcrossMessages() {
+        Message message = supportGroupMessage(42, "Готово", null, 900);
+        when(topicMappingRepository.findByTopicId(42)).thenReturn(Optional.of(topicMapping(100L, 42)));
+        when(messageSender.send(eq(100L), anyString())).thenReturn(Delivery.of(List.of(555, 556)));
+
+        bot.processUpdate(update(message));
+
+        // An edit cannot be mapped onto two messages, so nothing is stored.
+        verify(messageMappingRepository, never()).save(any());
+    }
+
+    // ------------------------------------------------------- edit propagation
+
+    @Test
+    void shouldMirrorAUserEditIntoTheTopicCopy() {
+        when(messageMappingRepository.findByUserChatIdAndUserMessageId("100", 111))
+                .thenReturn(Optional.of(messageMapping(300, 200, USER_CHAT_ID, 111)));
+
+        bot.processUpdate(editUpdate(editedUserMessage("не работает на айфоне", 111)));
+
+        verify(messageSender).edit(SUPPORT_CHAT_ID, 300, "не работает на айфоне", false);
+        verify(messageSender).sendToTopic(SUPPORT_CHAT_ID, 200, "support.user.edited");
+    }
+
+    @Test
+    void shouldEditTheCaptionWhenTheUserEditedAPhotoCaption() {
+        Message edited = userMessage(null, 111);
+        when(edited.caption()).thenReturn("вот скриншот");
+        when(messageMappingRepository.findByUserChatIdAndUserMessageId("100", 111))
+                .thenReturn(Optional.of(messageMapping(300, 200, USER_CHAT_ID, 111)));
+
+        bot.processUpdate(editUpdate(edited));
+
+        // The topic holds a copy of the photo, so its text is a caption.
+        verify(messageSender).edit(SUPPORT_CHAT_ID, 300, "вот скриншот", true);
+    }
+
+    @Test
+    void shouldMirrorAnOperatorEditIntoTheUserChat() {
+        Message edited = supportGroupMessage(42, "Уточняю: перезагрузите роутер", null, 900);
+        when(messageMappingRepository.findByTopicMessageId(900))
+                .thenReturn(Optional.of(operatorMapping(900, 42, USER_CHAT_ID, 555)));
+
+        bot.processUpdate(editUpdate(edited));
+
+        verify(messageSender).edit(USER_CHAT_ID, 555, "support.operator.prefix", false);
+    }
+
+    @Test
+    void shouldMirrorAnOperatorEditWithoutThePrefixWhenItWasAReply() {
+        Message repliedTo = mock(Message.class);
+        Message edited = supportGroupMessage(42, "Уточняю: перезагрузите роутер", repliedTo, 900);
+        when(messageMappingRepository.findByTopicMessageId(900))
+                .thenReturn(Optional.of(operatorMapping(900, 42, USER_CHAT_ID, 555)));
+
+        bot.processUpdate(editUpdate(edited));
+
+        // Delivered as a reply originally, so it carried no "Поддержка:" prefix.
+        verify(messageSender).edit(USER_CHAT_ID, 555, "Уточняю: перезагрузите роутер", false);
+    }
+
+    @Test
+    void shouldReportWhenMirroringAnOperatorEditFails() {
+        Message edited = supportGroupMessage(42, "Новый текст", null, 900);
+        when(messageMappingRepository.findByTopicMessageId(900))
+                .thenReturn(Optional.of(operatorMapping(900, 42, USER_CHAT_ID, 555)));
+        when(messageSender.edit(anyLong(), anyInt(), anyString(), anyBoolean())).thenReturn(false);
+
+        bot.processUpdate(editUpdate(edited));
+
+        verify(messageSender).sendReply(SUPPORT_CHAT_ID, 900, "support.not.sent");
+    }
+
+    @Test
+    void shouldIgnoreAnEditOfAMessageThatWasNeverMirrored() {
+        when(messageMappingRepository.findByUserChatIdAndUserMessageId("100", 111))
+                .thenReturn(Optional.empty());
+
+        bot.processUpdate(editUpdate(editedUserMessage("новый текст", 111)));
+
+        verify(messageSender, never()).edit(anyLong(), anyInt(), anyString(), anyBoolean());
+    }
+
+    @Test
+    void shouldNotMirrorAnEditAcrossTheWrongDirection() {
+        // A topic message that is a copy of the *user's* message, not an
+        // operator message: editing it in the topic must not touch the user.
+        when(messageMappingRepository.findByTopicMessageId(300))
+                .thenReturn(Optional.of(messageMapping(300, 42, USER_CHAT_ID, 111)));
+
+        bot.processUpdate(editUpdate(supportGroupMessage(42, "правка", null, 300)));
+
+        verify(messageSender, never()).edit(anyLong(), anyInt(), anyString(), anyBoolean());
+    }
+
+    @Test
+    void shouldIgnoreAnEditThatLeftNoText() {
+        Message edited = userMessage(null, 111);
+        when(edited.caption()).thenReturn(null);
+
+        bot.processUpdate(editUpdate(edited));
+
+        verifyNoInteractions(messageMappingRepository);
     }
 
     // ------------------------------------------------------- unsupported media

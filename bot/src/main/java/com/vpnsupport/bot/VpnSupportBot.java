@@ -98,7 +98,7 @@ public class VpnSupportBot {
     public void start() {
         publishCommandMenu();
 
-        GetUpdates getUpdates = new GetUpdates().allowedUpdates("message", "message_reaction");
+        GetUpdates getUpdates = new GetUpdates().allowedUpdates("message", "edited_message", "message_reaction");
         telegramBot.setUpdatesListener(updates -> {
             for (Update update : updates) {
                 taskExecutor.execute(() -> processUpdate(update));
@@ -130,6 +130,12 @@ public class VpnSupportBot {
         MessageReactionUpdated reaction = update.messageReaction();
         if (reaction != null) {
             handleReactionUpdated(reaction);
+            return;
+        }
+
+        Message edited = update.editedMessage();
+        if (edited != null) {
+            handleEditedMessage(edited);
             return;
         }
 
@@ -243,53 +249,148 @@ public class VpnSupportBot {
 
         topicMappingRepository.findByTopicId(topicId).ifPresentOrElse(mapping -> {
             String text = message.text() != null ? message.text().trim() : "";
-            if (text.isEmpty()) {
-                copyToUser(mapping.getUserId(), message);
-            } else {
-                deliverOperatorText(message, topicId, mapping.getUserId(), text);
+            Delivery delivery = text.isEmpty()
+                    ? copyToUser(mapping.getUserId(), message)
+                    : deliverOperatorText(message, topicId, mapping.getUserId(), text);
+
+            reportDelivery(message.messageId(), delivery);
+            if (delivery.delivered()) {
+                conversationState.recordOperatorReply(mapping.getUserId());
             }
-            confirmDelivery(message.messageId());
-            conversationState.recordOperatorReply(mapping.getUserId());
         }, () -> log.debug("No user mapping found for topic {}", topicId));
     }
 
-    private void deliverOperatorText(Message message, Integer topicId, long userId, String text) {
+    private Delivery deliverOperatorText(Message message, Integer topicId, long userId, String text) {
         Message repliedTo = message.replyToMessage();
-        if (repliedTo == null) {
-            messageSender.send(userId, messages.get("support.operator.prefix", text));
-            return;
+
+        Delivery delivery;
+        long deliveredToChatId = userId;
+        if (repliedTo != null) {
+            var replyTarget = messageMappingRepository
+                    .findByTopicMessageIdAndTopicId(repliedTo.messageId(), topicId);
+            if (replyTarget.isPresent()) {
+                deliveredToChatId = replyTarget.get().getUserChatId();
+                delivery = messageSender.sendReply(
+                        deliveredToChatId, replyTarget.get().getUserMessageId(), text);
+            } else {
+                delivery = messageSender.send(userId, messages.get("support.operator.prefix", text));
+            }
+        } else {
+            delivery = messageSender.send(userId, messages.get("support.operator.prefix", text));
         }
 
-        messageMappingRepository.findByTopicMessageIdAndTopicId(repliedTo.messageId(), topicId)
-                .ifPresentOrElse(
-                        msgMapping -> messageSender.sendReply(
-                                msgMapping.getUserChatId(), msgMapping.getUserMessageId(), text),
-                        () -> messageSender.send(userId, messages.get("support.operator.prefix", text)));
+        rememberOperatorMessage(message.messageId(), topicId, deliveredToChatId, delivery);
+        return delivery;
     }
 
     /**
-     * Confirms delivery in the topic as a reply.
+     * Records which message in the user's chat carries this operator message, so
+     * a later edit can be mirrored. Skipped when the text was long enough to be
+     * split — an edit cannot be mapped onto several messages.
+     */
+    private void rememberOperatorMessage(int operatorMessageId, Integer topicId,
+                                         long userChatId, Delivery delivery) {
+        delivery.singleMessageId().ifPresent(userMessageId -> {
+            try {
+                messageMappingRepository.save(new MessageMapping(operatorMessageId, topicId,
+                        userChatId, userMessageId, MessageMapping.Direction.OPERATOR_TO_USER));
+            } catch (Exception e) {
+                log.warn("Failed to record operator message mapping: {}", e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Tells the topic what happened to the operator's message.
      *
      * <p>Deliberately text rather than a reaction: the bot already forwards
      * reactions between the user and the topic, so a reaction placed by the bot
      * itself would sit alongside genuine ones and mean something different.
      */
-    private void confirmDelivery(int operatorMessageId) {
-        messageSender.sendReply(supportGroupChatId, operatorMessageId, messages.get("support.sent"));
+    private void reportDelivery(int operatorMessageId, Delivery delivery) {
+        // Keys spelled out at the call site rather than assembled into a
+        // variable, so BotMessagesTest can see them and guarantee they resolve.
+        String notice = delivery.delivered()
+                ? messages.get("support.sent")
+                : messages.get("support.not.sent");
+        messageSender.sendReply(supportGroupChatId, operatorMessageId, notice);
     }
 
-    private void copyToUser(long userChatId, Message message) {
+    private Delivery copyToUser(long userChatId, Message message) {
         try {
             MessageIdResponse response = telegramBot.execute(
                     new CopyMessage(userChatId, supportGroupChatId, message.messageId()));
-            if (!response.isOk()) {
-                log.warn("Failed to copy support message to user {}: {}", userChatId, response.description());
-                messageSender.send(userChatId, messages.get("support.fallback.media"));
+            if (response.isOk() && response.messageId() != null) {
+                return Delivery.of(List.of(response.messageId()));
             }
+            log.warn("Failed to copy support message to user {}: {}", userChatId, response.description());
+            return messageSender.send(userChatId, messages.get("support.fallback.media"));
         } catch (Exception e) {
             log.error("Error copying support message to user {}", userChatId, e);
-            messageSender.send(userChatId, messages.get("support.fallback"));
+            return messageSender.send(userChatId, messages.get("support.fallback"));
         }
+    }
+
+    // ---------------------------------------------------------------- edits
+
+    /**
+     * Mirrors an edit onto the counterpart message, so both sides keep seeing
+     * the same text. Editing in Telegram leaves no trace in the other chat
+     * otherwise: the operator would go on reading a question the user has
+     * already rewritten, and vice versa.
+     */
+    private void handleEditedMessage(Message edited) {
+        String newText = editedContent(edited);
+        if (newText == null || newText.isBlank()) {
+            return;
+        }
+
+        if (edited.chat().id() == supportGroupChatId) {
+            mirrorOperatorEdit(edited, newText);
+        } else {
+            mirrorUserEdit(edited, newText);
+        }
+    }
+
+    /** An edit changes either the text of a message or the caption of media. */
+    private static String editedContent(Message edited) {
+        return edited.text() != null ? edited.text().trim()
+                : edited.caption() != null ? edited.caption().trim()
+                : null;
+    }
+
+    private void mirrorUserEdit(Message edited, String newText) {
+        long chatId = edited.chat().id();
+        messageMappingRepository
+                .findByUserChatIdAndUserMessageId(String.valueOf(chatId), edited.messageId())
+                .filter(m -> m.getDirection() == MessageMapping.Direction.USER_TO_TOPIC)
+                .ifPresent(m -> {
+                    // The topic holds a copy of the user's message, so a photo
+                    // there is still a photo and its text lives in the caption.
+                    boolean isCaption = edited.text() == null;
+                    boolean ok = messageSender.edit(
+                            supportGroupChatId, m.getTopicMessageId(), newText, isCaption);
+                    if (ok) {
+                        messageSender.sendToTopic(supportGroupChatId, m.getTopicId(),
+                                messages.get("support.user.edited"));
+                    }
+                });
+    }
+
+    private void mirrorOperatorEdit(Message edited, String newText) {
+        messageMappingRepository.findByTopicMessageId(edited.messageId())
+                .filter(m -> m.getDirection() == MessageMapping.Direction.OPERATOR_TO_USER)
+                .ifPresent(m -> {
+                    // Reproduce the shape the message was delivered in: a reply
+                    // carries the raw text, a standalone message the prefix.
+                    String delivered = edited.replyToMessage() != null
+                            ? newText
+                            : messages.get("support.operator.prefix", newText);
+                    boolean ok = messageSender.edit(
+                            m.getUserChatId(), m.getUserMessageId(), delivered, false);
+                    reportDelivery(edited.messageId(),
+                            ok ? Delivery.of(List.of(m.getUserMessageId())) : Delivery.failed());
+                });
     }
 
     private void handleReactionUpdated(MessageReactionUpdated reaction) {
