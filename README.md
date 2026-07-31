@@ -52,7 +52,7 @@ docker compose exec support-bot wget -qO- http://localhost:8080/actuator/health
 | `GEMINI_API_KEY` | при gemini | — | API-ключ Google Gemini |
 | `GEMINI_MODEL` | при gemini | — | Модель Gemini |
 | `OPENAI_API_KEY` | при openai | — | API-ключ OpenAI |
-| `OPENAI_MODEL` | при openai | — | Модель OpenAI (напр. `gpt-5.5-mini`) |
+| `OPENAI_MODEL` | при openai | — | Модель OpenAI (напр. `gpt-5.6-luna`) |
 | `OPENAI_EMBEDDING_MODEL` | при embedding=openai | `text-embedding-3-small` | Модель эмбеддингов OpenAI |
 | `REMNAWAVE_BASE_URL` | да | — | URL панели Remnawave |
 | `REMNAWAVE_API_TOKEN` | да | — | JWT API-токен Remnawave |
@@ -140,8 +140,8 @@ JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn -pl bot test
 | Провайдер | Модели |
 |---|---|
 | **DeepSeek** | `deepseek-v4-flash`, `deepseek-v4-pro` |
-| **Gemini** | `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-omni-flash` |
-| **OpenAI** | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.5-mini` |
+| **Gemini** | `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` |
+| **OpenAI** | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` |
 
 | | DeepSeek | Gemini | OpenAI |
 |---|---|---|---|
