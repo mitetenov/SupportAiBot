@@ -1,0 +1,115 @@
+package com.vpnsupport.rag;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Guards the FAQ content itself. The bot copies these answers verbatim, so a
+ * wrong section name or a missing keyword reaches users directly — and none of
+ * the code-level tests would notice.
+ */
+class FaqContentTest {
+
+    private static final String CONNECTION_TAB = "«Подключиться»";
+    private static final String CABINET_SECTION = "«Подключить устройство»";
+
+    private static List<Map<String, Object>> faq() throws IOException {
+        try (InputStream is = FaqContentTest.class.getResourceAsStream("/faq/faq.json")) {
+            return new ObjectMapper().readValue(is, new TypeReference<>() {
+            });
+        }
+    }
+
+    static Stream<Map<String, Object>> entries() throws IOException {
+        return faq().stream();
+    }
+
+    @ParameterizedTest
+    @MethodSource("entries")
+    void everyEntryShouldHaveAQuestionAnswerAndKeywords(Map<String, Object> entry) {
+        assertFalse(String.valueOf(entry.get("question")).isBlank());
+        assertFalse(String.valueOf(entry.get("answer")).isBlank());
+        assertTrue(entry.get("keywords") instanceof List<?> k && !k.isEmpty(),
+                "entry has no keywords: " + entry.get("question"));
+    }
+
+    /**
+     * The setup instruction is the single place that knows how to install on
+     * every platform. An answer that points at the cabinet for connecting a
+     * device has to name the section, or the user lands on a dashboard and has
+     * to hunt.
+     */
+    @ParameterizedTest
+    @MethodSource("entries")
+    void anAnswerNamingTheConnectionTabShouldAlsoNameTheCabinetSection(Map<String, Object> entry) {
+        String answer = String.valueOf(entry.get("answer"));
+        if (answer.contains(CONNECTION_TAB) && answer.contains("lk.peipivo.top")) {
+            assertTrue(answer.contains(CABINET_SECTION),
+                    "names the bot tab but not the cabinet section: " + entry.get("question"));
+        }
+    }
+
+    @ParameterizedTest
+    @MethodSource("entries")
+    void noAnswerShouldRepeatTheCabinetSection(Map<String, Object> entry) {
+        String answer = String.valueOf(entry.get("answer"));
+        int occurrences = answer.split(CABINET_SECTION, -1).length - 1;
+        assertTrue(occurrences <= 1,
+                "cabinet section named twice: " + entry.get("question"));
+    }
+
+    /**
+     * Users ask this in several ways. The question text carries the most weight
+     * in retrieval, so all of these have to appear somewhere findable.
+     */
+    @Test
+    void theSetupEntryShouldCoverTheWaysUsersAskAboutInstalling() throws IOException {
+        Map<String, Object> setup = faq().stream()
+                .filter(e -> String.valueOf(e.get("question")).startsWith("Как установить"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no installation entry in the FAQ"));
+
+        String haystack = (setup.get("question") + " " + setup.get("keywords")).toLowerCase();
+        for (String phrasing : List.of("установить", "настроить", "подключить", "скачать",
+                "iphone", "android", "windows", "mac", "linux")) {
+            assertTrue(haystack.contains(phrasing),
+                    "installation entry does not mention '" + phrasing + "'");
+        }
+
+        String answer = String.valueOf(setup.get("answer"));
+        assertTrue(answer.contains("@PeipivoSalesBot") && answer.contains(CONNECTION_TAB));
+        assertTrue(answer.contains(CABINET_SECTION));
+    }
+
+    /**
+     * The whole point of routing to the ready-made instruction is that the bot
+     * does not describe the steps itself.
+     */
+    @Test
+    void theSetupEntryShouldNotSpellOutInstallationSteps() throws IOException {
+        String answer = faq().stream()
+                .filter(e -> String.valueOf(e.get("question")).startsWith("Как установить"))
+                .map(e -> String.valueOf(e.get("answer")).toLowerCase())
+                .findFirst()
+                .orElseThrow();
+
+        for (String improvised : List.of("app store", "google play", "apk",
+                "вставьте ссылку", "добавьте подписку", "скопируйте ссылку")) {
+            assertFalse(answer.contains(improvised),
+                    "the answer walks the user through installation instead of linking it: "
+                            + improvised);
+        }
+    }
+}
