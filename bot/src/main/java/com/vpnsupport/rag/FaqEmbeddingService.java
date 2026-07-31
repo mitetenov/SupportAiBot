@@ -26,12 +26,16 @@ public class FaqEmbeddingService {
     private static final double MIN_VECTOR_SIMILARITY = 0.65;
 
     /**
-     * {@code ts_rank} floor for the lexical channel. {@code websearch_to_tsquery}
-     * ANDs its terms, so any non-trivial rank means every term of the query is
-     * present in the entry — a strong signal even when the phrasing is nothing
-     * like the FAQ question.
+     * {@code ts_rank} floor for the lexical channel.
+     *
+     * <p>Deliberately near zero. {@code websearch_to_tsquery} ANDs its terms, so
+     * a match already means every word of the query is present — the rank that
+     * follows reflects term frequency and entry length, not relevance, and is a
+     * poor thing to filter on. Measured against the real corpus, correct matches
+     * ranged from 0.0398 to 0.5458: the previous 0.05 floor cut off a legitimate
+     * hit ("как настроить впн на пк" scores 0.0398 on the setup entry).
      */
-    private static final double MIN_FTS_RANK = 0.05;
+    private static final double MIN_FTS_RANK = 0.01;
 
     /** RRF damping constant; 60 is the value from the original Cormack et al. paper. */
     private static final int RRF_K = 60;

@@ -25,7 +25,7 @@ class SupportPromptTest {
      */
     @Test
     void systemShouldSendInstallationQuestionsToTheReadyMadeInstruction() {
-        assertTrue(SupportPrompt.SYSTEM.contains("УСТАНОВКА И ПЕРВОЕ ПОДКЛЮЧЕНИЕ"),
+        assertTrue(SupportPrompt.SYSTEM.contains("никогда не объясняй сам"),
                 "the prompt must forbid improvising installation steps");
         assertTrue(SupportPrompt.SYSTEM.contains("«Подключиться»"),
                 "the prompt must name the tab in @PeipivoSalesBot");
@@ -33,12 +33,24 @@ class SupportPromptTest {
                 "the prompt must name the section in the cabinet");
     }
 
+    /**
+     * Scoping the rule to "first connection" invited the model to decide the
+     * rule did not apply to somebody adding a second device — and improvise the
+     * steps again. Connecting a device is the same job either way.
+     */
+    @Test
+    void theConnectionRuleShouldCoverAdditionalDevicesToo() {
+        assertTrue(SupportPrompt.SYSTEM.contains("ПОДКЛЮЧЕНИЕ УСТРОЙСТВА"));
+        assertTrue(SupportPrompt.SYSTEM.contains("ПЕРВОГО устройства и для ЛЮБОГО СЛЕДУЮЩЕГО"));
+        assertTrue(SupportPrompt.SYSTEM.contains("под тем же аккаунтом"),
+                "a returning user must not be sent to create a new account");
+    }
+
     @Test
     void systemShouldStillAllowTroubleshootingForAlreadyConnectedUsers() {
-        // The installation rule is scoped: a user who is connected and has a
-        // problem still goes through the diagnostics section.
-        assertTrue(SupportPrompt.SYSTEM.contains(
-                "Это касается только установки и первого подключения"));
+        // The connection rule covers any device, but it must not swallow
+        // diagnostics: a connected user with a problem goes to section Б.
+        assertTrue(SupportPrompt.SYSTEM.contains("Правило не отменяет диагностику"));
     }
 
     @Test
