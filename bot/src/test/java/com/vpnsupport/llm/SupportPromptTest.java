@@ -17,6 +17,30 @@ class SupportPromptTest {
         assertTrue(SupportPrompt.SYSTEM.contains("[ESCALATE]"));
     }
 
+    /**
+     * Without this rule the model improvises installation steps from the product
+     * constraints — "download Happ and paste the subscription link" — whenever
+     * retrieval fails to surface the setup entry. The ready-made instruction
+     * detects the platform itself, so it must always win.
+     */
+    @Test
+    void systemShouldSendInstallationQuestionsToTheReadyMadeInstruction() {
+        assertTrue(SupportPrompt.SYSTEM.contains("УСТАНОВКА И ПЕРВОЕ ПОДКЛЮЧЕНИЕ"),
+                "the prompt must forbid improvising installation steps");
+        assertTrue(SupportPrompt.SYSTEM.contains("«Подключиться»"),
+                "the prompt must name the tab in @PeipivoSalesBot");
+        assertTrue(SupportPrompt.SYSTEM.contains("«Подключить устройство»"),
+                "the prompt must name the section in the cabinet");
+    }
+
+    @Test
+    void systemShouldStillAllowTroubleshootingForAlreadyConnectedUsers() {
+        // The installation rule is scoped: a user who is connected and has a
+        // problem still goes through the diagnostics section.
+        assertTrue(SupportPrompt.SYSTEM.contains(
+                "Это касается только установки и первого подключения"));
+    }
+
     @Test
     void withTelegramUserIdShouldAppendId() {
         String result = SupportPrompt.withTelegramUserId(12345L);

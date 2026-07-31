@@ -38,6 +38,13 @@ public class FaqEmbeddingService {
 
     private static final int EMBEDDING_CACHE_SIZE = 256;
 
+    /**
+     * Spellings of the product's own name, appended to every entry so a query
+     * written in Cyrillic still matches a corpus written in Latin.
+     * See {@link #withGlobalAliases(String)}.
+     */
+    private static final List<String> GLOBAL_SEARCH_ALIASES = List.of("vpn", "впн", "вэпэн");
+
     /** Sentinel for "could not embed"; never a valid result. */
     private static final float[] EMPTY_EMBEDDING = new float[0];
 
@@ -179,7 +186,8 @@ public class FaqEmbeddingService {
     }
 
     public void indexFaq(String question, String answer, String keywords) {
-        String embedText = question + (keywords != null && !keywords.isBlank() ? " " + keywords : "") + "\n" + answer;
+        String searchable = withGlobalAliases(keywords);
+        String embedText = question + " " + searchable + "\n" + answer;
         float[] embedding = embeddingProvider.embed(embedText);
         if (embedding == null || embedding.length != embeddingProvider.getDimension()) {
             log.warn("Failed to embed FAQ: {}", question);
@@ -188,8 +196,26 @@ public class FaqEmbeddingService {
 
         jdbcTemplate.update(
                 "INSERT INTO faq (id, question, answer, embedding, keywords) VALUES (?, ?, ?, ?::vector, ?)",
-                UUID.randomUUID().toString(), question, answer, vectorToString(embedding), keywords);
-        log.debug("Indexed FAQ: {} keywords={}", question, keywords);
+                UUID.randomUUID().toString(), question, answer, vectorToString(embedding), searchable);
+        log.debug("Indexed FAQ: {} keywords={}", question, searchable);
+    }
+
+    /**
+     * Adds the spellings of the product's own name to every entry.
+     *
+     * <p>The FAQ writes "VPN" in Latin; Russian users routinely type "впн".
+     * {@code websearch_to_tsquery} ANDs its terms, so a single unmatched word
+     * sinks the whole query: measured against the real corpus, "как настроить
+     * впн на пк" matched zero entries while "как настроить vpn на пк" matched
+     * the right one.
+     *
+     * <p>Making the term match everywhere is the point. In a VPN support base
+     * every entry is about VPN, so the word carries no information and should
+     * not decide anything — the remaining words do the discriminating.
+     */
+    private static String withGlobalAliases(String keywords) {
+        String base = keywords != null && !keywords.isBlank() ? keywords + ", " : "";
+        return base + String.join(", ", GLOBAL_SEARCH_ALIASES);
     }
 
     public void clearFaq() {

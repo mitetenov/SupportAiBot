@@ -3,6 +3,7 @@ package com.vpnsupport.rag;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -219,8 +220,41 @@ class FaqEmbeddingServiceTest {
         service.indexFaq("test question", "test answer", null);
 
         verify(jdbcTemplate).update(eq("INSERT INTO faq (id, question, answer, embedding, keywords) VALUES (?, ?, ?, ?::vector, ?)"),
-                anyString(), eq("test question"), eq("test answer"), anyString(), isNull());
+                anyString(), eq("test question"), eq("test answer"), anyString(), eq("vpn, впн, вэпэн"));
         verify(embeddingProvider).embed(contains("test question"));
+    }
+
+    /**
+     * The FAQ writes "VPN" in Latin and users type "впн";
+     * websearch_to_tsquery ANDs its terms, so without this the whole query
+     * matched nothing.
+     */
+    @Test
+    void shouldIndexEveryEntryUnderTheCyrillicSpellingOfVpnToo() {
+        when(embeddingProvider.embed(anyString())).thenReturn(new float[]{1.0f});
+        when(embeddingProvider.getDimension()).thenReturn(1);
+
+        service.indexFaq("Как настроить VPN на Windows?", "Откройте инструкцию.", "винда, пк");
+
+        ArgumentCaptor<String> stored = ArgumentCaptor.forClass(String.class);
+        verify(jdbcTemplate).update(anyString(), anyString(), anyString(), anyString(),
+                anyString(), stored.capture());
+
+        assertTrue(stored.getValue().contains("винда"), "original keywords must survive");
+        assertTrue(stored.getValue().contains("впн"));
+        assertTrue(stored.getValue().contains("vpn"));
+    }
+
+    @Test
+    void shouldPutTheAliasesInTheEmbeddedTextAsWell() {
+        when(embeddingProvider.embed(anyString())).thenReturn(new float[]{1.0f});
+        when(embeddingProvider.getDimension()).thenReturn(1);
+
+        service.indexFaq("Вопрос", "Ответ", "ключ");
+
+        ArgumentCaptor<String> embedded = ArgumentCaptor.forClass(String.class);
+        verify(embeddingProvider).embed(embedded.capture());
+        assertTrue(embedded.getValue().contains("впн"));
     }
 
     @Test
