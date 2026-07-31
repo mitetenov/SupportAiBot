@@ -115,6 +115,47 @@ class FaqContentTest {
     }
 
     /**
+     * Connecting a device is the same job whether it is the first one or the
+     * fourth, so both entries must route to the same instruction. The
+     * additional-device entry also has to be findable from how people phrase
+     * it — "настроить впн на втором телефоне" matched nothing until it carried
+     * both the verb and the device names.
+     */
+    @Test
+    void theAdditionalDeviceEntryShouldRouteToTheSameInstruction() throws IOException {
+        Map<String, Object> entry = faq().stream()
+                .filter(e -> String.valueOf(e.get("question")).startsWith("Как подключить еще одно устройство"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no additional-device entry in the FAQ"));
+
+        String answer = String.valueOf(entry.get("answer"));
+        assertTrue(answer.contains("@PeipivoSalesBot") && answer.contains(CONNECTION_TAB));
+        assertTrue(answer.contains(CABINET_SECTION));
+        assertTrue(answer.contains("тем же аккаунтом"),
+                "a returning user must be told not to create a new account");
+
+        String keywords = String.valueOf(entry.get("keywords")).toLowerCase();
+        for (String phrasing : List.of("настроить", "подключить", "второе устройство",
+                "телефон", "ноутбук", "пк")) {
+            assertTrue(keywords.contains(phrasing),
+                    "additional-device entry does not mention '" + phrasing + "'");
+        }
+    }
+
+    /** The general entry must not read as first-time-only either. */
+    @Test
+    void theSetupEntryShouldAlsoCoverAddingAnotherDevice() throws IOException {
+        String answer = faq().stream()
+                .filter(e -> String.valueOf(e.get("question")).startsWith("Как установить"))
+                .map(e -> String.valueOf(e.get("answer")))
+                .findFirst()
+                .orElseThrow();
+
+        assertTrue(answer.contains("ещё одно устройство"));
+        assertTrue(answer.contains("тем же аккаунтом"));
+    }
+
+    /**
      * The whole point of routing to the ready-made instruction is that the bot
      * does not describe the steps itself.
      */
