@@ -104,14 +104,14 @@ public class StartupValidator implements ApplicationRunner {
                         "DEEPSEEK_API_KEY не задан. Получите ключ на https://platform.deepseek.com/api_keys "
                         + "и добавьте в .env: DEEPSEEK_API_KEY=sk-...");
                 requireText(deepSeekProperties.getModel(),
-                        "DEEPSEEK_MODEL не задан. Укажите модель, например: DEEPSEEK_MODEL=deepseek-chat");
+                        "DEEPSEEK_MODEL не задан. Укажите модель, например: DEEPSEEK_MODEL=deepseek-v4-flash");
                 break;
             case GEMINI:
                 requireText(geminiProperties.getApiKey(),
                         "GEMINI_API_KEY не задан. Получите ключ в Google AI Studio: "
                         + "https://aistudio.google.com/apikey и добавьте в .env: GEMINI_API_KEY=...");
                 requireText(geminiProperties.getModel(),
-                        "GEMINI_MODEL не задан. Укажите модель, например: GEMINI_MODEL=gemini-3.5-flash-light");
+                        "GEMINI_MODEL не задан. Укажите модель, например: GEMINI_MODEL=gemini-3.5-flash-lite");
                 break;
             case OPENAI:
                 validateOpenAiApiKey();
