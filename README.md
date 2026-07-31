@@ -12,7 +12,7 @@ Telegram-бот техподдержки VPN-сервиса. Принимает 
                          Форум-группа поддержки
 ```
 
-- **LLM**: DeepSeek V4 Flash, Gemini 2.5 Flash или OpenAI (переключается через `LLM_PROVIDER`)
+- **LLM**: DeepSeek, Gemini или OpenAI (переключается через `LLM_PROVIDER`, список моделей — ниже)
 - **MCP**: [mcp-remnawave](https://github.com/TrackLine/mcp-remnawave) по HTTP-транспорту. Модели доступны только 5 allow-list инструментов: `users_get_by_telegram_id`, `nodes_list`, `nodes_get`, `hwid_devices_list` и — при `REMNAWAVE_READONLY=false` — `hwid_device_delete`. Остальные инструменты сервера боту не видны и не вызываемы.
 - **RAG**: гибридный поиск по FAQ-базе — векторные эмбеддинги (Gemini/OpenAI) и полнотекстовый поиск PostgreSQL `tsvector` по русскому словарю объединяются через Reciprocal Rank Fusion
 - **Форвардинг**: каждому пользователю — отдельный топик в форум-группе
@@ -52,7 +52,7 @@ docker compose exec support-bot wget -qO- http://localhost:8080/actuator/health
 | `GEMINI_API_KEY` | при gemini | — | API-ключ Google Gemini |
 | `GEMINI_MODEL` | при gemini | — | Модель Gemini |
 | `OPENAI_API_KEY` | при openai | — | API-ключ OpenAI |
-| `OPENAI_MODEL` | при openai | — | Модель OpenAI (напр. `gpt-4o-mini`) |
+| `OPENAI_MODEL` | при openai | — | Модель OpenAI (напр. `gpt-5.5-mini`) |
 | `OPENAI_EMBEDDING_MODEL` | при embedding=openai | `text-embedding-3-small` | Модель эмбеддингов OpenAI |
 | `REMNAWAVE_BASE_URL` | да | — | URL панели Remnawave |
 | `REMNAWAVE_API_TOKEN` | да | — | JWT API-токен Remnawave |
@@ -139,9 +139,9 @@ JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn -pl bot test
 
 | Провайдер | Модели |
 |---|---|
-| **DeepSeek** | `deepseek-v4-flash`, `deepseek-chat` |
-| **Gemini** | `gemini-3.5-flash-light`, `gemini-3.5-flash`, `gemini-3.1-flash-lite`, `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-flash-latest` |
-| **OpenAI** | `gpt-5.6-luna`, `gpt-5.4-mini`, `gpt-5-turbo`, `gpt-4o`, `gpt-4o-mini` |
+| **DeepSeek** | `deepseek-v4-flash`, `deepseek-v4-pro` |
+| **Gemini** | `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-omni-flash` |
+| **OpenAI** | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.5-mini` |
 
 | | DeepSeek | Gemini | OpenAI |
 |---|---|---|---|
