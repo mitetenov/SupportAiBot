@@ -94,6 +94,27 @@ class FaqContentTest {
     }
 
     /**
+     * Postgres full-text search ANDs the terms of a query, so one unmatched
+     * word sinks the whole thing. Measured against the real corpus, every
+     * phrasing below returned zero entries because the device name was only
+     * stored in Latin while users type Cyrillic.
+     */
+    @Test
+    void theSetupEntryShouldCarryCyrillicSpellingsOfDeviceNames() throws IOException {
+        String keywords = faq().stream()
+                .filter(e -> String.valueOf(e.get("question")).startsWith("Как установить"))
+                .map(e -> String.valueOf(e.get("keywords")).toLowerCase())
+                .findFirst()
+                .orElseThrow();
+
+        for (String cyrillic : List.of("макбук", "мак", "виндовс", "линукс", "убунту",
+                "айфон", "андроид", "планшет", "ноутбук", "пк", "телефон")) {
+            assertTrue(keywords.contains(cyrillic),
+                    "users type '" + cyrillic + "' but the entry only has the Latin spelling");
+        }
+    }
+
+    /**
      * The whole point of routing to the ready-made instruction is that the bot
      * does not describe the steps itself.
      */
