@@ -174,4 +174,24 @@ class FaqContentTest {
                             + improvised);
         }
     }
+
+    @Test
+    void theNaServersEntryShouldCoverHappIncompatibilityAndIncySolution() throws IOException {
+        Map<String, Object> entry = faq().stream()
+                .filter(e -> String.valueOf(e.get("question")).contains("n/a"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no n/a servers entry in the FAQ"));
+
+        String answer = String.valueOf(entry.get("answer"));
+        assertTrue(answer.toLowerCase().contains("happ"));
+        assertTrue(answer.toLowerCase().contains("incy"));
+        assertTrue(answer.contains("@PeipivoSalesBot") && answer.contains(CONNECTION_TAB));
+        assertTrue(answer.contains(CABINET_SECTION));
+
+        String haystack = (entry.get("question") + " " + entry.get("keywords")).toLowerCase();
+        for (String phrasing : List.of("n/a", "na", "happ", "incy", "обновлен")) {
+            assertTrue(haystack.contains(phrasing),
+                    "n/a servers entry does not mention '" + phrasing + "'");
+        }
+    }
 }
