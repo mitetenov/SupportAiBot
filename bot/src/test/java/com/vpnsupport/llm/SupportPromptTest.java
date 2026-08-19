@@ -103,5 +103,6 @@ class SupportPromptTest {
         assertTrue(SupportPrompt.SYSTEM.contains("Happ") && SupportPrompt.SYSTEM.contains("Incy"));
         assertTrue(SupportPrompt.SYSTEM.contains("n/a"));
         assertTrue(SupportPrompt.SYSTEM.contains("несовместим"));
+        assertTrue(SupportPrompt.SYSTEM.contains("НЕ вызывай nodes_list"));
     }
 }
