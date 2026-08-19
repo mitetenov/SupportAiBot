@@ -97,4 +97,11 @@ class SupportPromptTest {
         assertNotNull(result);
         assertTrue(result.contains("Telegram ID: -1"));
     }
+
+    @Test
+    void systemShouldMentionHappIncompatibilityAndIncySolution() {
+        assertTrue(SupportPrompt.SYSTEM.contains("Happ") && SupportPrompt.SYSTEM.contains("Incy"));
+        assertTrue(SupportPrompt.SYSTEM.contains("n/a"));
+        assertTrue(SupportPrompt.SYSTEM.contains("несовместим"));
+    }
 }
