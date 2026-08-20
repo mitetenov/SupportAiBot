@@ -6,8 +6,8 @@
 
 ```
 push → SupportAiBot (master)
-  └─ test (mvn test) → build → mitetenov/supportbot:latest + :{version} + :{sha}
-                                  └─ Deploy (вручную, workflow_dispatch) → SSH на сервер
+  └─ test (pytest & ruff) → build → mitetenov/supportbot:latest + :{version} + :{sha}
+                                       └─ Deploy (вручную, workflow_dispatch) → SSH на сервер
 
 push → mcp-remnawave (main)
   └─ build → GitHub Release (mcp-release.zip) + mitetenov/remnawave-mcp:latest + :v{version} + :{sha}
@@ -20,10 +20,10 @@ push → mcp-remnawave (main)
 
 | Job | Когда | Что делает |
 |-----|-------|------------|
-| `test` | всегда, включая PR | `mvn -B test -pl bot` на JDK 21. Это merge-gate: именно его стоит требовать в branch protection |
+| `test` | всегда, включая PR | `ruff check .` и `pytest -v` на Python 3.12 (`uv`). Это merge-gate: именно его стоит требовать в branch protection |
 | `build` | только не-PR (`master`, ручной запуск) | multi-arch образ (linux/amd64 + linux/arm64), пуш в Docker Hub |
 
-Теги образа: `latest`, `:{version из pom.xml}`, `:{sha}`.
+Теги образа: `latest`, `:{version из pyproject.toml}`, `:{sha}`.
 
 `.github/workflows/deploy.yml` — отдельный ручной workflow (`workflow_dispatch`,
 на вход тег). Ходит по SSH на сервер, выставляет `BOT_TAG` и делает

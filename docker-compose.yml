@@ -14,12 +14,11 @@ services:
     networks:
       - internal
     healthcheck:
-      # BusyBox wget: the image no longer carries curl.
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/actuator/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 120s
+      start_period: 30s
 
   mcp-remnawave:
     # Pinned, not :latest — the MCP gates its tool surface on the panel version
