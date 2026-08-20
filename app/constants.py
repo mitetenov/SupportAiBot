@@ -71,6 +71,9 @@ MESSAGES: dict[str, str] = {
     "bot.gaps.empty": "Пробелы в знаниях пока не обнаружены.",
     "bot.gaps.header": "Топ пробелов в знаниях:",
     "bot.gaps.row": "{0}. [{1} раз] {2}\n   ({3})",
+    "bot.stats.cleared": "Статистика токенов очищена: удалено {0} записей.",
+    "bot.gaps.cleared": "Пробелы в знаниях очищены: удалено {0} записей.",
+    "bot.clear.failed": "Не удалось выполнить очистку, данные на месте. Детали: {0}",
     # Support group messages
     "support.operator.prefix": "Поддержка: {0}",
     "support.sent": "Отправлено пользователю.",

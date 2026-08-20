@@ -17,6 +17,9 @@ class MockDatabaseSessionManager:
     def __init__(self):
         self.users: dict[int, User] = {}
         self.token_usages: list[LlmTokenUsage] = []
+        #: What a DELETE reports back, and what it raises instead when set.
+        self.delete_rowcount: int = 0
+        self.delete_error: Exception | None = None
 
     @asynccontextmanager
     async def session(self):
@@ -36,6 +39,12 @@ class MockDatabaseSessionManager:
         async def execute_mock(stmt, params=None):
             result_mock = MagicMock()
             stmt_str = str(stmt)
+            if stmt_str.strip().upper().startswith("DELETE"):
+                if self.delete_error is not None:
+                    raise self.delete_error
+                self.token_usages.clear()
+                result_mock.rowcount = self.delete_rowcount
+                return result_mock
             if "llm_token_usage" in stmt_str:
                 grouped = defaultdict(
                     lambda: {"total": 0, "prompt": 0, "completion": 0, "count": 0}
@@ -247,3 +256,110 @@ async def test_admin_gaps(mock_db):
     assert "Топ пробелов в знаниях:" in text
     assert "1. [7 раз] как вернуть деньги" in text
     assert "2. [3 раз] не приходит смс" in text
+
+
+def _clearing_handler(mock_db, gap_service=None, delete_rowcount: int = 5):
+    """A handler whose database reports how many rows a DELETE removed."""
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    mock_db.delete_rowcount = delete_rowcount
+    handler = SupportCommandHandler(
+        sender=TelegramMessageSender(bot),
+        db_manager=mock_db,
+        knowledge_gap_service=gap_service or MagicMock(),
+        admin_telegram_ids={111},
+    )
+    return handler, bot
+
+
+class TestClearingGaps:
+    """/gaps clear empties the knowledge gap table."""
+
+    @pytest.mark.asyncio
+    async def test_reports_how_many_gaps_were_removed(self, mock_db):
+        gap_service = MagicMock()
+        gap_service.clear_all = AsyncMock(return_value=7)
+        handler, bot = _clearing_handler(mock_db, gap_service)
+
+        handled = await handler.handle_admin_command(900, 111, "/gaps clear")
+
+        assert handled
+        gap_service.clear_all.assert_awaited_once()
+        assert "7" in bot.send_message.call_args[1]["text"]
+
+    @pytest.mark.asyncio
+    async def test_an_empty_table_still_answers(self, mock_db):
+        gap_service = MagicMock()
+        gap_service.clear_all = AsyncMock(return_value=0)
+        handler, bot = _clearing_handler(mock_db, gap_service)
+
+        await handler.handle_admin_command(900, 111, "/gaps clear")
+
+        assert "0" in bot.send_message.call_args[1]["text"]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_delete_is_not_reported_as_cleared(self, mock_db):
+        gap_service = MagicMock()
+        gap_service.clear_all = AsyncMock(side_effect=RuntimeError("connection lost"))
+        handler, bot = _clearing_handler(mock_db, gap_service)
+
+        handled = await handler.handle_admin_command(900, 111, "/gaps clear")
+
+        assert handled
+        assert "очищен" not in bot.send_message.call_args[1]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_plain_gaps_still_shows_the_report(self, mock_db):
+        gap_service = MagicMock()
+        gap_service.get_top_gaps = AsyncMock(return_value=[])
+        gap_service.clear_all = AsyncMock()
+        handler, _ = _clearing_handler(mock_db, gap_service)
+
+        await handler.handle_admin_command(900, 111, "/gaps")
+
+        gap_service.clear_all.assert_not_awaited()
+
+
+class TestClearingStats:
+    """/stats clear empties the token usage table."""
+
+    @pytest.mark.asyncio
+    async def test_reports_how_many_records_were_removed(self, mock_db):
+        handler, bot = _clearing_handler(mock_db, delete_rowcount=5)
+
+        handled = await handler.handle_admin_command(900, 111, "/stats clear")
+
+        assert handled
+        assert "5" in bot.send_message.call_args[1]["text"]
+        assert mock_db.token_usages == []
+
+    @pytest.mark.asyncio
+    async def test_a_failed_delete_is_not_reported_as_cleared(self, mock_db):
+        handler, bot = _clearing_handler(mock_db)
+        mock_db.delete_error = RuntimeError("connection lost")
+
+        handled = await handler.handle_admin_command(900, 111, "/stats clear")
+
+        assert handled
+        assert "очищен" not in bot.send_message.call_args[1]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_a_numeric_argument_is_still_a_leaderboard(self, mock_db):
+        handler, bot = _clearing_handler(mock_db)
+
+        await handler.handle_admin_command(900, 111, "/stats 5")
+
+        assert "очищен" not in bot.send_message.call_args[1]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_a_non_admin_cannot_clear_anything(mock_db):
+    gap_service = MagicMock()
+    gap_service.clear_all = AsyncMock()
+    handler, bot = _clearing_handler(mock_db, gap_service)
+
+    assert await handler.handle_admin_command(900, 222, "/gaps clear") is False
+    assert await handler.handle_admin_command(900, 222, "/stats clear") is False
+
+    gap_service.clear_all.assert_not_awaited()
+    bot.send_message.assert_not_called()
