@@ -16,9 +16,18 @@ from app.storage.schema import FAQ_FTS_EXPRESSION, ensure_faq_search_schema
 
 logger = logging.getLogger(__name__)
 
+#: Rows each hybrid search returns. Left at 3 deliberately: measured over
+#: benchmarks/, raising it to 5 does not change rank 1 on a single query and
+#: changes recall on none, while every extra row is FAQ text in the prompt of
+#: every request.
 SEARCH_LIMIT: int = 3
 MAX_RESULTS: int = 5
-MIN_VECTOR_SIMILARITY: float = 0.65
+#: Floor for the vector branch. 0.65 was never measured and turned out to be far
+#: too strict for the short imperative questions people actually send ("как
+#: оплатить", "Триал есть?"): it retrieved the right entry for half of them.
+#: 0.45 takes that to 93% while the off-topic controls in benchmarks/ still match
+#: nothing; junk first appears at 0.35.
+MIN_VECTOR_SIMILARITY: float = 0.45
 MIN_FTS_RANK: float = 0.01
 RRF_K: int = 60
 EMBEDDING_CACHE_SIZE: int = 256
@@ -437,6 +446,15 @@ class FaqEmbeddingService:
         The fallback lookups do not depend on the primary one, so all of them go
         to the database at once rather than adding a round trip each to the
         answer the user is waiting for.
+
+        Fallback hits are appended below the primary ranking rather than sorted
+        in with it. A canned topic query matches its own FAQ entry almost
+        exactly, so on a shared RRF scale it outscores whatever the user asked
+        about — and the keyword lists that trigger these searches are broad
+        enough ("подписк", "обнов", "ошибк") to fire on most support questions.
+        Measured over the queries in benchmarks/, letting them compete costs 25
+        points of rank-1 accuracy and buys no recall. They can still fill
+        positions the primary search left empty, which is what they are for.
         """
         searches = [self.search(query, exclude)]
         if self._looks_like_connection_issue(query):
@@ -446,12 +464,15 @@ class FaqEmbeddingService:
 
         primary, *fallbacks = await asyncio.gather(*searches)
 
-        results = list(primary)
+        results = self._by_score(primary)
         for fallback in fallbacks:
-            self._merge_deduped(results, fallback)
-
-        results.sort(key=lambda r: r.rrf_score, reverse=True)
+            self._merge_deduped(results, self._by_score(fallback))
         return results[:MAX_RESULTS]
+
+    @staticmethod
+    def _by_score(results: Sequence[FaqResult]) -> list[FaqResult]:
+        """One search's hits, best RRF score first."""
+        return sorted(results, key=lambda r: r.rrf_score, reverse=True)
 
     @staticmethod
     def _merge_deduped(target: list[FaqResult], source: list[FaqResult]) -> None:

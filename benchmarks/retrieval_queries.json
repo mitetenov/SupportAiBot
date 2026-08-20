@@ -1,33 +1,37 @@
 {
-  "about": "Retrieval benchmark set. Every query is real: taken from production /gaps output (19.07-31.07.2026) or from a support-group thread an operator had to answer by hand. 'expected' lists the FAQ questions any of which is a correct top hit; an empty list means the search must return nothing at all.",
+  "about": "Retrieval benchmark set. Every query is real: taken from production /gaps output (19.07-31.07.2026) or from a support-group thread an operator had to answer by hand. 'expected' lists the FAQ questions any of which is a correct top hit; an empty list means the search must return nothing at all. Cases flagged 'tuned_for' had their exact wording added to an FAQ entry's keywords, so they measure that edit rather than the retrieval settings; the harness scores them separately.",
   "cases": [
     {
       "query": "как оплатить",
       "source": "gaps",
       "expected": [
         "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?"
-      ]
+      ],
+      "tuned_for": true
     },
     {
       "query": "Оплатить подписку",
       "source": "gaps",
       "expected": [
         "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?"
-      ]
+      ],
+      "tuned_for": true
     },
     {
       "query": "Оплатить",
       "source": "gaps",
       "expected": [
         "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?"
-      ]
+      ],
+      "tuned_for": true
     },
     {
       "query": "Хочу продлить подписку",
       "source": "gaps",
       "expected": [
         "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?"
-      ]
+      ],
+      "tuned_for": true
     },
     {
       "query": "Триал есть?",
@@ -93,28 +97,32 @@
       "source": "gaps",
       "expected": [
         "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает"
-      ]
+      ],
+      "tuned_for": true
     },
     {
       "query": "Есть подписка , впн не работает",
       "source": "gaps",
       "expected": [
         "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает"
-      ]
+      ],
+      "tuned_for": true
     },
     {
       "query": "Как подключить на компе?",
       "source": "gaps",
       "expected": [
         "Как установить / настроить / подключить VPN на iPhone, Android, Windows, Mac, Android TV, Linux? Где скачать приложение? Как начать пользоваться?"
-      ]
+      ],
+      "tuned_for": true
     },
     {
       "query": "А как подключить телик?",
       "source": "gaps",
       "expected": [
         "Как установить / настроить / подключить VPN на iPhone, Android, Windows, Mac, Android TV, Linux? Где скачать приложение? Как начать пользоваться?"
-      ]
+      ],
+      "tuned_for": true
     },
     {
       "query": "Добрый день! перестали грузиться фото и видео на китайских сервисах с VPN (в частности WeChat). Есть ли у вас какие-то рекомендации?",
