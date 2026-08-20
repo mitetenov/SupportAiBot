@@ -464,6 +464,23 @@ class TestExpiredSessionDetection:
     def test_400_about_a_session_counts(self) -> None:
         assert looks_like_expired_session(httpx.Response(400, text="No valid session ID")) is True
 
+    def test_the_wording_mcp_remnawave_actually_uses_counts(self) -> None:
+        """The message a restarted mcp-remnawave really sends, captured live.
+
+        It never mentions the session, so a predicate looking only for that word
+        left the client holding a dead session forever — which is the whole
+        failure this detection exists to catch.
+        """
+        body = '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Bad Request: Server not initialized"},"id":null}'
+        assert looks_like_expired_session(httpx.Response(400, text=body)) is True
+
+    def test_already_initialized_is_not_an_expired_session(self) -> None:
+        """The handshake's own 400 must not be read as a dead session."""
+        assert (
+            looks_like_expired_session(httpx.Response(400, text="Server already initialized"))
+            is False
+        )
+
     def test_an_ordinary_bad_request_does_not(self) -> None:
         assert looks_like_expired_session(httpx.Response(400, text="Invalid arguments")) is False
 

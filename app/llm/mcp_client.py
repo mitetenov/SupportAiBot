@@ -26,12 +26,22 @@ class McpSessionExpired(McpException):
     """
 
 
+#: What a server says when it no longer knows us. mcp-remnawave answers a
+#: restarted-out-from-under-us request with 400 "Bad Request: Server not
+#: initialized" rather than anything mentioning the session, so matching on the
+#: word "session" alone missed the one case this all exists for. "already
+#: initialized" — the opposite problem, seen during the handshake — does not
+#: contain "not initialized" and is handled in _initialize_session.
+_EXPIRED_SESSION_MARKERS: tuple[str, ...] = ("session", "not initialized")
+
+
 def looks_like_expired_session(response: httpx.Response) -> bool:
     """Whether this error response means "your session is gone", not "bad request"."""
     if response.status_code == 404:
         return True
-    if response.status_code in (400, 401) and "session" in response.text.lower():
-        return True
+    if response.status_code in (400, 401):
+        body = response.text.lower()
+        return any(marker in body for marker in _EXPIRED_SESSION_MARKERS)
     return False
 
 
