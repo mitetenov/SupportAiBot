@@ -137,12 +137,15 @@ export $(grep -v '^#' .env | xargs)
 python3 -m app.main
 ```
 
-Запуск тестов и линтера:
+Запуск тестов, линтера и проверки типов — те же команды, что и в merge-gate CI:
 ```bash
 uv run pytest -v
 uv run ruff check .
 uv run ruff format --check .
+uv run mypy
 ```
+
+`pytest` считает покрытие и падает ниже 85% (порог в `pyproject.toml`, тот же локально и в CI).
 
 Зависимости закреплены в `uv.lock`. После правки `pyproject.toml` обновите его командой `uv lock` — CI падает, если файлы разошлись.
 
