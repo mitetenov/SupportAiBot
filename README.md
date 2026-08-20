@@ -17,6 +17,7 @@ Telegram-бот техподдержки VPN-сервиса на Python 3.12+. �
 - **MCP**: [mcp-remnawave](https://github.com/mitetenov/mcp-remnawave) 3.2.x по HTTP-транспорту, панель Remnawave 3.3.x. Сервер поднят в режиме support (`REMNAWAVE_IS_SUPPORT=true`): он отдаёт 16 пользовательских инструментов и вырезает VPN-креды из каждого ответа панели. Поверх этого бот сужает список до 5 allow-list инструментов: `users_get_by_telegram_id`, `nodes_list`, `nodes_get`, `hwid_devices_list` и — при `REMNAWAVE_MCP_READONLY=false` — `hwid_device_delete`. Остальные инструменты сервера боту не видны и не вызываемы.
 - **RAG**: гибридный поиск по FAQ-базе — векторные эмбеддинги (Gemini/OpenAI) и полнотекстовый поиск PostgreSQL `tsvector` по русскому словарю объединяются через Reciprocal Rank Fusion ($k=60$).
 - **Форвардинг**: каждому пользователю — отдельный топик в форум-группе с поддержкой синхронизации реакций.
+- **Отправка**: весь исходящий трафик идёт через `TelegramMessageSender` — он режет сообщения длиннее 4096 символов по переводам строк и гасит ошибки отправки, чтобы недоставленный ответ не отменял пересылку обращения оператору.
 
 ### Защита персональных данных
 
@@ -26,7 +27,7 @@ Telegram-бот техподдержки VPN-сервиса на Python 3.12+. �
 
 ```bash
 git clone https://github.com/mitetenov/SupportAiBot.git && cd SupportAiBot
-cp .env.example .env   # заполнить переменные
+cp .env.example .env   # заполнить переменные — его читают все три сервиса
 docker compose pull
 docker compose up -d
 docker compose exec support-bot python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
@@ -118,11 +119,16 @@ docker compose up -d --force-recreate support-bot
 
 Требуется **Python 3.12+**.
 
-Установка зависимостей:
+Установка зависимостей из lock-файла (те же версии, что и в образе):
+```bash
+uv sync --extra dev
+```
+
+Без `uv` — но тогда версии не закреплены:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 Запуск приложения:
@@ -133,14 +139,28 @@ python3 -m app.main
 
 Запуск тестов и линтера:
 ```bash
-pytest -v
-ruff check .
+uv run pytest -v
+uv run ruff check .
+uv run ruff format --check .
 ```
+
+Зависимости закреплены в `uv.lock`. После правки `pyproject.toml` обновите его командой `uv lock` — CI падает, если файлы разошлись.
 
 ## Хранилище
 
 - PostgreSQL 17 + PGVector — маппинг пользователь↔топик, гибридный FAQ-поиск (векторы + FTS)
 - Docker volume `pgvector-data` для персистентности
+- Схема создаётся при старте (`create_all` + явный DDL для `faq` и `knowledge_gaps`). Миграций нет: существующие таблицы не изменяются, поэтому изменение модели на живой базе нужно применять руками.
+
+## Фоновые задачи
+
+Три очистки крутятся всё время, пока бот жив:
+
+| Задача | Период | Что делает |
+|---|---|---|
+| `chat-history-eviction` | 1 ч | Удаляет сообщения старше `CHAT_HISTORY_TTL_DAYS` и выгружает неактивные диалоги из памяти |
+| `rate-limiter-eviction` | 10 мин | Чистит записи rate-limiter'а |
+| `conversation-state-eviction` | 15 мин | Чистит просроченные последние запросы и метки активности оператора |
 
 ## Выбор LLM
 
