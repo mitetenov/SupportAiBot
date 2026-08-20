@@ -24,7 +24,7 @@ class TestStorageModelsSchema:
     """Validate table definitions, columns, constraints, and indexes."""
 
     def test_user_model_schema(self) -> None:
-        assert User.__tablename__ == "users"
+        assert User.__tablename__ == "user_names"
         mapper = inspect(User)
         columns = {c.name: c for c in mapper.columns}
 

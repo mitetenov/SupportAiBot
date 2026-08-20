@@ -9,22 +9,11 @@ from typing import Any
 
 from sqlalchemy import delete, select
 
+from app.llm.rejection import is_rejection
 from app.storage.database import DatabaseSessionManager
 from app.storage.models import ChatMessage
 
 logger = logging.getLogger(__name__)
-
-REJECTION_PHRASES: tuple[str, ...] = (
-    "не то",
-    "не та",
-    "не это",
-    "не подходит",
-    "не помог",
-    "другой вариант",
-    "другая инструкция",
-    "другое",
-    "нет,",
-)
 
 
 class ChatHistoryService:
@@ -128,9 +117,7 @@ class ChatHistoryService:
         """Reset rejected FAQ questions if the incoming message is a new topic, not a rejection."""
         if user_message is None or not user_message.strip():
             return
-        lower = user_message.lower()
-        is_rejection = any(phrase in lower for phrase in REJECTION_PHRASES)
-        if not is_rejection:
+        if not is_rejection(user_message):
             self._rejected_faq_questions.pop(user_id, None)
 
     async def clear(self, user_id: int) -> None:

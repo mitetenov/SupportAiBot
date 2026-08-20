@@ -12,7 +12,7 @@ from app.storage.database import Base
 class User(Base):
     """Telegram user profile tracking."""
 
-    __tablename__ = "users"
+    __tablename__ = "user_names"
 
     telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
