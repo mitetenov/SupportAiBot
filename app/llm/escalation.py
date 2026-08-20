@@ -40,8 +40,3 @@ class EscalationPolicy:
         if raw_response is None:
             return ""
         return raw_response.replace(cls.ESCALATE_MARKER, "").strip()
-
-    # CamelCase aliases for Java parity / convenience
-    modelRequestedEscalation = model_requested_escalation
-    userRequestsHuman = user_requests_human
-    stripMarker = strip_marker

@@ -47,7 +47,7 @@ class TestEscalationPolicy:
         assert EscalationPolicy.user_requests_human("") is False
         assert EscalationPolicy.user_requests_human("   ") is False
 
-    def test_camel_case_method_aliases(self) -> None:
-        assert EscalationPolicy.modelRequestedEscalation("текст [ESCALATE]") is True
-        assert EscalationPolicy.stripMarker("ответ [ESCALATE]") == "ответ"
-        assert EscalationPolicy.userRequestsHuman("позовите оператора") is True
+    def test_class_methods_consistency(self) -> None:
+        assert EscalationPolicy.model_requested_escalation("текст [ESCALATE]") is True
+        assert EscalationPolicy.strip_marker("ответ [ESCALATE]") == "ответ"
+        assert EscalationPolicy.user_requests_human("позовите оператора") is True

@@ -27,6 +27,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        enable_decoding=False,
     )
 
     # Database (PostgreSQL / PGVector)
@@ -50,7 +51,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_support_group_chat_id: int = 0
     telegram_support_admin_username: str = ""
-    telegram_support_admin_telegram_ids: set[int] | str = Field(default_factory=set)
+    telegram_support_admin_telegram_ids: set[int] = Field(default_factory=set)
     telegram_buffer_window_ms: int = 2500
     telegram_buffer_max_messages: int = 5
 

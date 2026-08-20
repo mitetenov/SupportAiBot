@@ -33,5 +33,5 @@ class TestRejectionDetector:
 
     def test_rejection_detector_class_methods(self) -> None:
         assert RejectionDetector.is_rejection("это не то") is True
-        assert RejectionDetector.isRejection("не подходит") is True
+        assert RejectionDetector.is_rejection("не подходит") is True
         assert RejectionDetector.is_rejection("обычный вопрос") is False

@@ -31,9 +31,6 @@ class RejectionDetector:
         lower = message.lower()
         return any(phrase in lower for phrase in cls.REJECTION_PHRASES)
 
-    # CamelCase alias for Java parity
-    isRejection = is_rejection
-
 
 def is_rejection(message: str | None) -> bool:
     """Convenience function to check if a message is a rejection."""
