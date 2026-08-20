@@ -1,5 +1,6 @@
 """HTTP client for Model Context Protocol (MCP) JSON-RPC 2.0 communication."""
 
+import inspect
 import json
 import logging
 import uuid
@@ -98,14 +99,24 @@ class HttpMcpClient(McpClientInterface):
     def _get_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
             self._http_client = httpx.AsyncClient(
-                base_url=self.base_url,
                 timeout=httpx.Timeout(self.REQUEST_TIMEOUT),
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json, text/event-stream",
-                },
             )
         return self._http_client
+
+    async def _post(self, payload: dict[str, Any]) -> httpx.Response:
+        """POST a JSON-RPC envelope to the MCP endpoint.
+
+        The absolute URL and the protocol headers are supplied per request rather
+        than baked into the client: an injected client is shared with the rest of
+        the application and carries neither.
+        """
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if self._session_id:
+            headers[self.SESSION_HEADER] = self._session_id
+        return await self._get_client().post(self.base_url, json=payload, headers=headers)
 
     def list_tools(self) -> list[McpTool]:
         """Return cached list of available tools."""
@@ -140,9 +151,20 @@ class HttpMcpClient(McpClientInterface):
                 e,
                 exc_info=True,
             )
-            if self.admin_notifier is not None and hasattr(self.admin_notifier, "notify_error"):
-                self.admin_notifier.notify_error(f"MCP HTTP init failed for {self.base_url}", e)
+            await self._notify_admins(f"MCP HTTP init failed for {self.base_url}", e)
             return False
+
+    async def _notify_admins(self, context: str, error: Exception) -> None:
+        """Forward a failure to the support group, tolerating a missing notifier."""
+        notify = getattr(self.admin_notifier, "notify_error", None)
+        if notify is None:
+            return
+        try:
+            result = notify(context, error=error)
+            if inspect.isawaitable(result):
+                await result
+        except Exception as e:
+            logger.warning("Failed to notify admins about %s: %s", context, e)
 
     async def _initialize_session(self) -> bool:
         self._request_id += 1
@@ -161,10 +183,9 @@ class HttpMcpClient(McpClientInterface):
             },
         }
 
-        client = self._get_client()
         logger.debug("MCP initialize request [%d]", self._request_id)
 
-        response = await client.post("", json=req)
+        response = await self._post(req)
 
         # Check for session ID in response headers (case-insensitive)
         session_header = response.headers.get(self.SESSION_HEADER)
@@ -224,14 +245,9 @@ class HttpMcpClient(McpClientInterface):
             "method": method,
             "params": params if params is not None else {},
         }
-        headers: dict[str, str] = {}
-        if self._session_id:
-            headers[self.SESSION_HEADER] = self._session_id
-
-        client = self._get_client()
         logger.debug("MCP request [%d]: %s", self._request_id, method)
 
-        response = await client.post("", json=req, headers=headers)
+        response = await self._post(req)
         if response.is_error:
             raise McpException(f"MCP HTTP error: {response.status_code} - {response.text}")
 
@@ -248,12 +264,7 @@ class HttpMcpClient(McpClientInterface):
                 "method": method,
                 "params": params if params is not None else {},
             }
-            headers: dict[str, str] = {}
-            if self._session_id:
-                headers[self.SESSION_HEADER] = self._session_id
-
-            client = self._get_client()
-            await client.post("", json=notification, headers=headers)
+            await self._post(notification)
         except Exception as e:
             logger.warning("Failed to send MCP notification %s: %s", method, e)
 
@@ -269,8 +280,7 @@ class HttpMcpClient(McpClientInterface):
             return json.dumps(result) if not isinstance(result, str) else result
         except Exception as e:
             logger.error("Failed to call tool: %s: %s", tool_name, e, exc_info=True)
-            if self.admin_notifier is not None and hasattr(self.admin_notifier, "notify_error"):
-                self.admin_notifier.notify_error(f"MCP tool call failed: {tool_name}", e)
+            await self._notify_admins(f"MCP tool call failed: {tool_name}", e)
             return json.dumps({"error": str(e) if str(e) else "unknown error"})
 
     def shutdown(self) -> None:

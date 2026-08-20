@@ -42,11 +42,13 @@ class McpRouter:
     def __init__(
         self,
         clients: list[McpClientInterface] | None = None,
-        readonly: bool = False,
+        readonly: bool | None = None,
         settings: Settings | None = None,
     ) -> None:
-        if settings is not None:
-            readonly = settings.remnawave_mcp_readonly
+        # An explicit readonly= wins; settings only supply the default. The other
+        # way round, passing both silently discarded the caller's argument.
+        if readonly is None:
+            readonly = settings.remnawave_mcp_readonly if settings is not None else False
         self.readonly = readonly
         self.clients: list[McpClientInterface] = list(clients) if clients is not None else []
         self.allowed_tools: set[str] = set(
