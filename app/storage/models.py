@@ -161,6 +161,8 @@ class Faq(Base):
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(Vector, nullable=True)
     keywords: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    #: File name under faq/images/, sent to the user after the answer text.
+    image: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     def __repr__(self) -> str:
         return f"<Faq id={self.id} question={self.question[:30]}>"

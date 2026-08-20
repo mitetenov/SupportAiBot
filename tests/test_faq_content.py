@@ -118,3 +118,53 @@ class TestGapsOperatorsAnsweredByHand:
     def test_the_prompt_offers_the_proxy_fallback_during_diagnosis(self) -> None:
         assert "TUN" in SupportPrompt.SYSTEM
         assert "Proxy" in SupportPrompt.SYSTEM
+
+
+class TestIllustratedEntries:
+    """An entry may name a screenshot; the file has to actually ship with it."""
+
+    def test_every_named_image_exists_in_the_image_directory(
+        self, entries: list[dict[str, Any]]
+    ) -> None:
+        missing = [
+            e["image"]
+            for e in entries
+            if e.get("image") and not (Path("faq/images") / e["image"]).is_file()
+        ]
+        assert not missing, f"faq.json names images that are not in faq/images/: {missing}"
+
+    def test_the_button_question_is_covered_and_illustrated(
+        self, entries: list[dict[str, Any]]
+    ) -> None:
+        """Six repeats in /gaps and no entry at all — every instruction said
+        "press the left button" and nothing said where that button is."""
+        entry = find(entries, "где кнопка обновить")
+        assert "в её правой части" in entry["answer"].lower()
+        assert entry.get("image")
+
+    def test_no_entry_sends_people_to_the_left_of_the_vpn_label(
+        self, entries: list[dict[str, Any]]
+    ) -> None:
+        """The two icons sit to the RIGHT of "VPN", with the three-dot menu
+        further right — faq/images/happ-buttons.png shows exactly that.
+
+        Eight entries used to open by sending people to the left, which is very
+        likely why "где кнопка обновить?" was the most repeated question in the
+        whole /gaps report. "Left" and "right" are still correct *within* the
+        pair; it is the pair's position that was wrong.
+        """
+        wrong = [e["question"] for e in entries if "слева от надписи vpn" in e["answer"].lower()]
+        assert not wrong, f"these entries put the buttons on the wrong side: {wrong}"
+
+    def test_the_answers_that_open_with_those_buttons_carry_the_picture(
+        self, entries: list[dict[str, Any]]
+    ) -> None:
+        """A connection answer's first step is pressing them, so it is worth showing."""
+        expected_illustrated = [
+            e["question"]
+            for e in entries
+            if "«Обновить подписку»" in e["answer"] and "«Пинг»" in e["answer"]
+        ]
+        assert expected_illustrated
+        missing = [q for q in expected_illustrated if not find(entries, q[:30]).get("image")]
+        assert not missing, f"these instruct pressing the buttons but show nothing: {missing}"

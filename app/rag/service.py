@@ -59,6 +59,7 @@ HYBRID_SEARCH_SQL = text(f"""
     WITH vector_candidates AS (
         SELECT question,
                answer,
+               image,
                1 - (embedding <=> CAST(:vector_str AS vector)) AS vector_sim
         FROM faq
         WHERE embedding IS NOT NULL
@@ -67,13 +68,14 @@ HYBRID_SEARCH_SQL = text(f"""
         LIMIT :candidates
     ),
     vector_ranked AS (
-        SELECT question, answer, vector_sim,
+        SELECT question, answer, image, vector_sim,
                ROW_NUMBER() OVER (ORDER BY vector_sim DESC) AS vector_pos
         FROM vector_candidates
     ),
     fts_candidates AS (
         SELECT question,
                answer,
+               image,
                ts_rank({FAQ_FTS_EXPRESSION}, websearch_to_tsquery('russian', :clean_query))
                    AS fts_rank
         FROM faq
@@ -83,13 +85,14 @@ HYBRID_SEARCH_SQL = text(f"""
         LIMIT :candidates
     ),
     fts_ranked AS (
-        SELECT question, answer, fts_rank,
+        SELECT question, answer, image, fts_rank,
                ROW_NUMBER() OVER (ORDER BY fts_rank DESC) AS fts_pos
         FROM fts_candidates
     ),
     fused AS (
         SELECT COALESCE(v.question, f.question) AS question,
                COALESCE(v.answer, f.answer)     AS answer,
+               COALESCE(v.image, f.image)       AS image,
                COALESCE(v.vector_sim, 0)        AS vector_sim,
                COALESCE(f.fts_rank, 0)          AS fts_rank,
                COALESCE(1.0 / (:rrf_k + v.vector_pos), 0)
@@ -97,7 +100,7 @@ HYBRID_SEARCH_SQL = text(f"""
         FROM vector_ranked v
         FULL OUTER JOIN fts_ranked f ON v.question = f.question
     )
-    SELECT question, answer, vector_sim, fts_rank, rrf_score
+    SELECT question, answer, image, vector_sim, fts_rank, rrf_score
     FROM fused
     WHERE vector_sim >= :min_vector_sim OR fts_rank >= :min_fts_rank
     ORDER BY rrf_score DESC
@@ -105,12 +108,13 @@ HYBRID_SEARCH_SQL = text(f"""
 """)
 
 INSERT_FAQ_SQL = text("""
-    INSERT INTO faq (id, question, answer, embedding, keywords)
-    VALUES (:id, :question, :answer, CAST(:vector_str AS vector), :keywords)
+    INSERT INTO faq (id, question, answer, embedding, keywords, image)
+    VALUES (:id, :question, :answer, CAST(:vector_str AS vector), :keywords, :image)
 """)
 
 VECTOR_SEARCH_SQL = text("""
-    SELECT question, answer, 1 - (embedding <=> CAST(:vector_str AS vector)) AS vector_sim
+    SELECT question, answer, image,
+           1 - (embedding <=> CAST(:vector_str AS vector)) AS vector_sim
     FROM faq
     WHERE embedding IS NOT NULL
       AND NOT (question = ANY(CAST(:excluded AS text[])))
@@ -287,7 +291,13 @@ class FaqEmbeddingService:
         vec = await self.embed(text_input)
         return self.vector_to_string(vec) if vec else None
 
-    async def index_faq(self, question: str, answer: str, keywords: str | None) -> None:
+    async def index_faq(
+        self,
+        question: str,
+        answer: str,
+        keywords: str | None,
+        image: str | None = None,
+    ) -> None:
         """Embed and insert a single FAQ item into PostgreSQL."""
         searchable = self.with_global_aliases(keywords)
         embedding = await self.embed(self.embed_text(question, answer, searchable))
@@ -299,7 +309,7 @@ class FaqEmbeddingService:
         async with self.db_manager.session() as session:
             await session.execute(
                 INSERT_FAQ_SQL,
-                self._faq_row(question, answer, searchable, embedding),
+                self._faq_row(question, answer, searchable, embedding, image),
             )
         logger.debug("Indexed FAQ: %s with keywords: %s", question, searchable)
 
@@ -331,7 +341,9 @@ class FaqEmbeddingService:
                 if not vector or len(vector) != dimension:
                     logger.warning("Failed to embed FAQ: %s", entry.question)
                     continue
-                rows.append(self._faq_row(entry.question, entry.answer, searchable, vector))
+                rows.append(
+                    self._faq_row(entry.question, entry.answer, searchable, vector, entry.image)
+                )
 
         if not rows:
             logger.error("No FAQ entry could be embedded — search will find nothing")
@@ -349,7 +361,12 @@ class FaqEmbeddingService:
         return f"{question} {searchable_keywords}\n{answer}"
 
     def _faq_row(
-        self, question: str, answer: str, keywords: str, embedding: list[float]
+        self,
+        question: str,
+        answer: str,
+        keywords: str,
+        embedding: list[float],
+        image: str | None = None,
     ) -> dict[str, object]:
         """Build the parameter set for one INSERT_FAQ_SQL row."""
         return {
@@ -358,6 +375,7 @@ class FaqEmbeddingService:
             "answer": answer,
             "vector_str": self.vector_to_string(embedding),
             "keywords": keywords,
+            "image": image,
         }
 
     async def search(self, query: str, exclude: set[str] | None = None) -> list[FaqResult]:
@@ -399,6 +417,7 @@ class FaqEmbeddingService:
                         answer=str(row.answer),
                         similarity=float(row.vector_sim),
                         rrf_score=float(row.rrf_score),
+                        image=str(row.image) if row.image else None,
                     )
                     for row in rows
                 ]
@@ -431,6 +450,7 @@ class FaqEmbeddingService:
                                 answer=str(row.answer),
                                 similarity=similarity,
                                 rrf_score=similarity,
+                                image=str(row.image) if row.image else None,
                             )
                         )
                 return results

@@ -40,8 +40,15 @@ class SupportGroupForwarder:
         user: Any,
         bot_response: str,
         needs_escalation: bool,
+        illustration_message_id: int | None = None,
     ) -> None:
-        """Copies batch messages into user topic and appends bot response."""
+        """Copies batch messages into user topic and appends bot response.
+
+        ``illustration_message_id`` is a picture the bot has already sent to the
+        user. It is copied out of their chat like any other message, which puts
+        it in the thread for the operator to point at and records the mapping
+        that makes a reply to it land back on the user's copy.
+        """
         user_id = getattr(user, "id", user_chat_id)
         user_name = self.resolve_user_name(user)
         topic_id = await self.topic_manager.resolve_topic_id(user_id, user_name)
@@ -52,6 +59,7 @@ class SupportGroupForwarder:
 
         if not user_message_ids:
             await self._send_bot_response(topic_id, user_name, bot_response, needs_escalation)
+            await self._forward_illustration(user_chat_id, illustration_message_id, topic_id)
             return
 
         # Recreate topic on first failure only
@@ -73,6 +81,18 @@ class SupportGroupForwarder:
             await self._forward_user_message(user_chat_id, msg_id, topic_id)
 
         await self._send_bot_response(topic_id, user_name, bot_response, needs_escalation)
+        await self._forward_illustration(user_chat_id, illustration_message_id, topic_id)
+
+    async def _forward_illustration(
+        self,
+        user_chat_id: int,
+        illustration_message_id: int | None,
+        topic_id: int,
+    ) -> None:
+        """Mirror the picture the user just received into the topic, if there was one."""
+        if illustration_message_id is None:
+            return
+        await self._forward_user_message(user_chat_id, illustration_message_id, topic_id)
 
     async def _forward_user_message(
         self,

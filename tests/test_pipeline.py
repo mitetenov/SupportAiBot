@@ -11,6 +11,7 @@ from app.bot.pipeline import UserMessagePipeline
 from app.bot.rate_limiter import UserRateLimiter
 from app.bot.sender import TelegramMessageSender
 from app.llm.base import LlmProcessingException, LlmReply
+from app.rag.types import FaqContext, FaqResult
 
 
 class DummyChat:
@@ -88,7 +89,7 @@ async def test_pipeline_normal_flow():
     llm_client.chat.assert_called_once_with("не работает впн", 100)
     bot.send_message.assert_called_once_with(chat_id=100, text="Попробуйте обновить подписку")
     forwarder.forward_to_support.assert_called_once_with(
-        100, [1], batch.user, "Попробуйте обновить подписку", False
+        100, [1], batch.user, "Попробуйте обновить подписку", False, illustration_message_id=None
     )
     gap_service.evaluate.assert_called_once()
     assert conv_state.last_query(100).text == "не работает впн"
@@ -120,7 +121,7 @@ async def test_pipeline_strips_escalate_and_flags_admin():
 
     bot.send_message.assert_called_once_with(chat_id=100, text="Оформим возврат средств.")
     forwarder.forward_to_support.assert_called_once_with(
-        100, [1], batch.user, "Оформим возврат средств.", True
+        100, [1], batch.user, "Оформим возврат средств.", True, illustration_message_id=None
     )
 
 
@@ -389,3 +390,108 @@ async def test_should_record_the_caption_when_the_user_wrote_one():
 
     gap_service.evaluate.assert_awaited_once()
     assert gap_service.evaluate.await_args.args[0] == "почему n/a на всех серверах?"
+
+
+def _illustrated_context(image: str | None) -> FaqContext:
+    return FaqContext(
+        text="FAQ...",
+        results=[FaqResult("Где кнопка?", "Слева", 0.8, 0.03, image=image)],
+        max_similarity=0.8,
+        best_question="Где кнопка?",
+    )
+
+
+def _pipeline(llm_client, sender, forwarder, gap_service) -> UserMessagePipeline:
+    typing_indicator = MagicMock()
+    typing_indicator.start = MagicMock(return_value=MagicMock())
+    return UserMessagePipeline(
+        llm_client=llm_client,
+        sender=sender,
+        forwarder=forwarder,
+        rate_limiter=UserRateLimiter(min_interval=0.0),
+        knowledge_gap_service=gap_service,
+        conversation_state=ConversationState(),
+        typing_indicator=typing_indicator,
+    )
+
+
+def _parts(image: str | None):
+    llm_client = MagicMock()
+    llm_client.chat = AsyncMock(
+        return_value=LlmReply(text="Нажмите левую кнопку", faq_context=_illustrated_context(image))
+    )
+    sender = MagicMock(spec=TelegramMessageSender)
+    sender.send = AsyncMock()
+    sender.send_photo = AsyncMock(return_value=907)
+    forwarder = MagicMock()
+    forwarder.forward_to_support = AsyncMock()
+    gap_service = MagicMock()
+    gap_service.evaluate = AsyncMock()
+    return llm_client, sender, forwarder, gap_service
+
+
+class TestIllustrations:
+    """The top FAQ hit may name a screenshot to send after the answer."""
+
+    @pytest.mark.asyncio
+    async def test_sends_the_picture_named_by_the_top_hit(self) -> None:
+        llm_client, sender, forwarder, gaps = _parts("happ-buttons.png")
+        await _pipeline(llm_client, sender, forwarder, gaps).handle(make_batch("где кнопка?"))
+
+        sender.send_photo.assert_awaited_once()
+        assert sender.send_photo.await_args.args[1].name == "happ-buttons.png"
+
+    @pytest.mark.asyncio
+    async def test_the_answer_text_goes_out_before_the_picture(self) -> None:
+        llm_client, sender, forwarder, gaps = _parts("happ-buttons.png")
+        order: list[str] = []
+        sender.send = AsyncMock(side_effect=lambda *a, **k: order.append("text"))
+        sender.send_photo = AsyncMock(side_effect=lambda *a, **k: order.append("photo") or 907)
+
+        await _pipeline(llm_client, sender, forwarder, gaps).handle(make_batch("где кнопка?"))
+
+        assert order == ["text", "photo"]
+
+    @pytest.mark.asyncio
+    async def test_sends_nothing_when_the_top_hit_has_no_picture(self) -> None:
+        llm_client, sender, forwarder, gaps = _parts(None)
+        await _pipeline(llm_client, sender, forwarder, gaps).handle(make_batch("сколько стоит?"))
+
+        sender.send_photo.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_hands_the_operator_topic_the_picture_the_user_received(self) -> None:
+        llm_client, sender, forwarder, gaps = _parts("happ-buttons.png")
+        await _pipeline(llm_client, sender, forwarder, gaps).handle(make_batch("где кнопка?"))
+
+        assert forwarder.forward_to_support.await_args.kwargs["illustration_message_id"] == 907
+
+    @pytest.mark.asyncio
+    async def test_a_picture_that_could_not_be_sent_does_not_hold_up_the_forward(self) -> None:
+        llm_client, sender, forwarder, gaps = _parts("happ-buttons.png")
+        sender.send_photo = AsyncMock(return_value=None)
+
+        await _pipeline(llm_client, sender, forwarder, gaps).handle(make_batch("где кнопка?"))
+
+        forwarder.forward_to_support.assert_awaited_once()
+        assert forwarder.forward_to_support.await_args.kwargs["illustration_message_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_does_not_send_the_same_picture_twice_in_one_conversation(self) -> None:
+        llm_client, sender, forwarder, gaps = _parts("happ-buttons.png")
+        pipeline = _pipeline(llm_client, sender, forwarder, gaps)
+
+        await pipeline.handle(make_batch("где кнопка обновить?"))
+        await pipeline.handle(make_batch("всё равно не работает"))
+
+        sender.send_photo.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_second_conversation_gets_the_picture_again(self) -> None:
+        llm_client, sender, forwarder, gaps = _parts("happ-buttons.png")
+        pipeline = _pipeline(llm_client, sender, forwarder, gaps)
+
+        await pipeline.handle(make_batch("где кнопка обновить?", user_id=100))
+        await pipeline.handle(make_batch("где кнопка обновить?", user_id=200))
+
+        assert sender.send_photo.await_count == 2

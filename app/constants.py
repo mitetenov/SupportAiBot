@@ -1,7 +1,26 @@
 """Application-wide constants, message templates, prompts, and regexes."""
 
 import re
+from pathlib import Path
 from typing import Any
+
+#: Illustrations an FAQ entry can name, shipped in the image alongside faq.json.
+FAQ_IMAGE_DIR: Path = Path("faq/images")
+
+
+def faq_image_path(name: str | None) -> Path | None:
+    """Resolve an FAQ illustration name to a path inside FAQ_IMAGE_DIR.
+
+    The name arrives from faq.json, which is ours, but it still ends up in a
+    filesystem read — so anything that would escape the directory is refused
+    rather than trusted.
+    """
+    if not name or not name.strip():
+        return None
+    root = FAQ_IMAGE_DIR.resolve()
+    candidate = (FAQ_IMAGE_DIR / name.strip()).resolve()
+    return candidate if root in candidate.parents else None
+
 
 # User-facing and internal messages (replicated from messages.properties)
 MESSAGES: dict[str, str] = {
@@ -117,9 +136,11 @@ class SupportPrompt:
         "• Единственный протокол — VLESS. Не предлагай смену протокола и не упоминай другие (Shadowsocks, Trojan, "
         "WireGuard, OpenVPN и т.д.).\n"
         "• В пользовательском приложении (Happ или Incy) нет «настроек сервера» и нет жеста «потянуть список вниз». "
-        "На главном экране есть: левая кнопка «Обновить подписку», правая «Пинг», и три точки справа от надписи VPN — "
-        "в них копируется ссылка (URL) на подписку. Три точки называй только когда речь именно о ссылке на подписку "
-        "(перенос в другое приложение, передача на своё второе устройство); в диагностике подключения — нет.\n"
+        "Всё нужное — в правой части строки «VPN» на главном экране: круговые стрелки «Обновить подписку», "
+        "правее них спидометр «Пинг», а ещё правее три точки, в которых копируется ссылка (URL) на подписку. "
+        "Кнопки называй левой и правой только внутри этой пары — сама пара находится СПРАВА от надписи VPN, не слева. "
+        "Три точки называй только когда речь именно о ссылке на подписку (перенос в другое приложение, "
+        "передача на своё второе устройство); в диагностике подключения — нет.\n"
         "• ПОДКЛЮЧЕНИЕ УСТРОЙСТВА — никогда не объясняй сам. Не перечисляй шаги, не давай ссылок на скачивание, "
         "не рассказывай, как добавить подписку или вставить ссылку. Есть готовая инструкция, которая сама определяет "
         "платформу пользователя. На любой вопрос вида «как установить / настроить / подключить на <устройство>», "

@@ -106,3 +106,54 @@ class TestCopyAndReact:
         bot.set_message_reaction = AsyncMock(side_effect=RuntimeError("message not found"))
         await sender.set_reaction(1, 2, [])
         bot.set_message_reaction.assert_awaited_once()
+
+
+class TestSendPhoto:
+    """Sending an illustration must never be able to cost the user their answer."""
+
+    @pytest.mark.asyncio
+    async def test_uploads_the_file_and_returns_the_message_id(self, tmp_path) -> None:
+        picture = tmp_path / "happ-buttons.png"
+        picture.write_bytes(b"\x89PNG fake")
+
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock(return_value=MagicMock(message_id=501, photo=[]))
+
+        message_id = await sender.send_photo(100, picture)
+
+        assert message_id == 501
+        assert bot.send_photo.await_args.kwargs["chat_id"] == 100
+
+    @pytest.mark.asyncio
+    async def test_reuses_the_file_id_telegram_returned_instead_of_uploading_again(
+        self, tmp_path
+    ) -> None:
+        picture = tmp_path / "happ-buttons.png"
+        picture.write_bytes(b"\x89PNG fake")
+
+        sender, bot = make_sender()
+        uploaded = MagicMock(message_id=501, photo=[MagicMock(file_id="FILE_ID_FROM_TELEGRAM")])
+        bot.send_photo = AsyncMock(return_value=uploaded)
+
+        await sender.send_photo(100, picture)
+        await sender.send_photo(200, picture)
+
+        assert bot.send_photo.await_args.kwargs["photo"] == "FILE_ID_FROM_TELEGRAM"
+
+    @pytest.mark.asyncio
+    async def test_a_missing_file_is_skipped_rather_than_raised(self, tmp_path) -> None:
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock()
+
+        assert await sender.send_photo(100, tmp_path / "not-there.png") is None
+        bot.send_photo.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_send_is_swallowed(self, tmp_path) -> None:
+        picture = tmp_path / "happ-buttons.png"
+        picture.write_bytes(b"\x89PNG fake")
+
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock(side_effect=RuntimeError("flood wait"))
+
+        assert await sender.send_photo(100, picture) is None

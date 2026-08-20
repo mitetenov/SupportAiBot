@@ -164,3 +164,52 @@ class TestConversationState:
 
         assert state.last_query(self.USER_ID) is not None
         assert state.is_operator_recently_active(self.USER_ID) is True
+
+
+class TestIllustrationsAlreadySent:
+    """The same screenshot must not arrive twice in one conversation.
+
+    Every connection answer opens by telling the user to press the two buttons,
+    so several different FAQ entries carry the same picture. Without this the
+    user gets it again on each follow-up.
+    """
+
+    def test_reports_a_picture_the_user_has_not_been_sent(self) -> None:
+        state = ConversationState()
+        assert state.was_illustration_sent(1, "happ-buttons.png") is False
+
+    def test_remembers_a_picture_once_it_has_been_sent(self) -> None:
+        state = ConversationState()
+        state.record_illustration_sent(1, "happ-buttons.png")
+        assert state.was_illustration_sent(1, "happ-buttons.png") is True
+
+    def test_keeps_users_apart(self) -> None:
+        state = ConversationState()
+        state.record_illustration_sent(1, "happ-buttons.png")
+        assert state.was_illustration_sent(2, "happ-buttons.png") is False
+
+    def test_a_different_picture_is_still_new(self) -> None:
+        state = ConversationState()
+        state.record_illustration_sent(1, "happ-buttons.png")
+        assert state.was_illustration_sent(1, "lk-profile.png") is False
+
+    def test_forgets_once_the_conversation_goes_cold(self) -> None:
+        now = [1000.0]
+        state = ConversationState(last_query_ttl=60.0, time_func=lambda: now[0])
+        state.record_illustration_sent(1, "happ-buttons.png")
+        now[0] += 61.0
+        assert state.was_illustration_sent(1, "happ-buttons.png") is False
+
+    def test_start_over_clears_it(self) -> None:
+        state = ConversationState()
+        state.record_illustration_sent(1, "happ-buttons.png")
+        state.clear(1)
+        assert state.was_illustration_sent(1, "happ-buttons.png") is False
+
+    def test_eviction_prunes_it(self) -> None:
+        now = [1000.0]
+        state = ConversationState(last_query_ttl=60.0, time_func=lambda: now[0])
+        state.record_illustration_sent(1, "happ-buttons.png")
+        now[0] += 61.0
+        assert state.evict_expired() >= 1
+        assert state.was_illustration_sent(1, "happ-buttons.png") is False
