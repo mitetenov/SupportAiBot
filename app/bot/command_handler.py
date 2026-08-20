@@ -2,8 +2,9 @@
 
 import logging
 from collections.abc import Iterable
+from typing import Any, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import CursorResult, delete, func, select
 
 from app.bot.sender import TelegramMessageSender
 from app.constants import get_message
@@ -19,6 +20,9 @@ class SupportCommandHandler:
 
     STATS_ID_THRESHOLD: int = 100
     DEFAULT_STATS_LIMIT: int = 10
+    #: Sub-command that wipes whichever table the command belongs to.
+    CLEAR_ARGUMENT: str = "clear"
+    MAX_ERROR_LENGTH: int = 300
 
     def __init__(
         self,
@@ -70,8 +74,8 @@ class SupportCommandHandler:
             await self.handle_stats(chat_id, text)
             return True
 
-        if text == "/gaps":
-            await self.handle_gaps(chat_id)
+        if text.startswith("/gaps"):
+            await self.handle_gaps_command(chat_id, text)
             return True
 
         return False
@@ -79,6 +83,10 @@ class SupportCommandHandler:
     async def handle_stats(self, chat_id: int, command: str) -> None:
         """Parse /stats arguments and display leaderboard or per-user consumption."""
         parts = command.split()
+        if len(parts) == 2 and parts[1].lower() == self.CLEAR_ARGUMENT:
+            await self.clear_stats(chat_id)
+            return
+
         if len(parts) == 2:
             try:
                 num = int(parts[1])
@@ -165,6 +173,46 @@ class SupportCommandHandler:
             self.format_number(row.total_tokens or 0),
         )
         await self.sender.send(chat_id, text)
+
+    async def handle_gaps_command(self, chat_id: int, command: str) -> None:
+        """Route /gaps to the report or, with the clear argument, to the wipe."""
+        parts = command.split()
+        if len(parts) == 2 and parts[1].lower() == self.CLEAR_ARGUMENT:
+            await self.clear_gaps(chat_id)
+            return
+        await self.handle_gaps(chat_id)
+
+    async def clear_gaps(self, chat_id: int) -> None:
+        """Delete every recorded knowledge gap and report the count."""
+        try:
+            removed = await self.knowledge_gap_service.clear_all()
+        except Exception as e:
+            logger.error("Failed to clear knowledge gaps: %s", e, exc_info=True)
+            await self.sender.send(chat_id, get_message("bot.clear.failed", self._describe(e)))
+            return
+        await self.sender.send(chat_id, get_message("bot.gaps.cleared", removed))
+
+    async def clear_stats(self, chat_id: int) -> None:
+        """Delete every recorded token usage row and report the count."""
+        try:
+            async with self.db_manager.session() as session:
+                # Only a cursor result carries the row count a DELETE reports.
+                result = cast(CursorResult[Any], await session.execute(delete(LlmTokenUsage)))
+            removed = int(result.rowcount or 0)
+        except Exception as e:
+            logger.error("Failed to clear token usage stats: %s", e, exc_info=True)
+            await self.sender.send(chat_id, get_message("bot.clear.failed", self._describe(e)))
+            return
+        logger.info("Cleared token usage stats: %d rows removed", removed)
+        await self.sender.send(chat_id, get_message("bot.stats.cleared", removed))
+
+    @classmethod
+    def _describe(cls, cause: Exception) -> str:
+        """A short, bounded description of a failure for the admin chat."""
+        message = str(cause) or cause.__class__.__name__
+        if len(message) > cls.MAX_ERROR_LENGTH:
+            message = message[: cls.MAX_ERROR_LENGTH] + "..."
+        return message
 
     async def handle_gaps(self, chat_id: int) -> None:
         """Query top detected knowledge gaps and render summary."""

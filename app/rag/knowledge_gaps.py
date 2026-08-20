@@ -3,12 +3,14 @@
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any, cast
 
-from sqlalchemy import text
+from sqlalchemy import CursorResult, delete, text
 
 from app.rag.embedding import EmbeddingProvider
 from app.rag.service import FaqContext, FaqEmbeddingService
 from app.storage.database import DatabaseSessionManager
+from app.storage.models import KnowledgeGap
 from app.storage.schema import ensure_knowledge_gap_schema
 
 logger = logging.getLogger(__name__)
@@ -331,6 +333,21 @@ class KnowledgeGapService:
         except Exception as e:
             logger.warning("Failed to get top knowledge gaps: %s", e)
             return []
+
+    async def clear_all(self) -> int:
+        """Delete every recorded gap, returning how many rows went.
+
+        Unlike the read paths here, a failure is raised rather than swallowed:
+        reporting "cleared" for a delete that never happened would leave the
+        admin believing the table is empty when it is not.
+        """
+        async with self.db_manager.session() as session:
+            # A DELETE always answers with a cursor result; only that one
+            # carries the row count, which Result[Any] does not declare.
+            result = cast(CursorResult[Any], await session.execute(delete(KnowledgeGap)))
+        removed = int(result.rowcount or 0)
+        logger.info("Cleared knowledge gaps: %d rows removed", removed)
+        return removed
 
     @staticmethod
     def _truncate(s: str, max_length: int) -> str:

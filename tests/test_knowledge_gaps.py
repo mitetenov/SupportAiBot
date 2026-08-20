@@ -338,3 +338,57 @@ class TestDeduplicationWithoutEmbedding:
         assert "FROM knowledge_gaps" in str(lookup_call.args[0])
         assert "user_query = :user_query" in str(lookup_call.args[0])
         assert lookup_call.args[1]["user_query"] == "где кнопка обновить?"
+
+
+class TestClearingGaps:
+    """/gaps clear wipes the table and reports how much it removed."""
+
+    @staticmethod
+    def _service(rowcount: int | None = 7, error: Exception | None = None) -> KnowledgeGapService:
+        from contextlib import asynccontextmanager
+
+        session = MagicMock()
+        result = MagicMock()
+        result.rowcount = rowcount
+        session.execute = AsyncMock(side_effect=error, return_value=result)
+
+        db_manager = MagicMock()
+
+        @asynccontextmanager
+        async def session_cm():
+            yield session
+
+        db_manager.session = session_cm
+        service = KnowledgeGapService(
+            db_manager=db_manager, faq_service=MagicMock(), embedding_provider=MagicMock()
+        )
+        service.session = session  # type: ignore[attr-defined]
+        return service
+
+    @pytest.mark.asyncio
+    async def test_reports_how_many_gaps_were_deleted(self) -> None:
+        service = self._service(rowcount=7)
+
+        assert await service.clear_all() == 7
+
+    @pytest.mark.asyncio
+    async def test_an_empty_table_clears_to_zero(self) -> None:
+        service = self._service(rowcount=0)
+
+        assert await service.clear_all() == 0
+
+    @pytest.mark.asyncio
+    async def test_a_database_failure_is_not_reported_as_a_successful_clear(self) -> None:
+        service = self._service(error=RuntimeError("connection lost"))
+
+        with pytest.raises(RuntimeError, match="connection lost"):
+            await service.clear_all()
+
+    @pytest.mark.asyncio
+    async def test_deletes_from_the_knowledge_gaps_table(self) -> None:
+        service = self._service()
+
+        await service.clear_all()
+
+        statement = str(service.session.execute.await_args.args[0])  # type: ignore[attr-defined]
+        assert "DELETE FROM knowledge_gaps" in statement
