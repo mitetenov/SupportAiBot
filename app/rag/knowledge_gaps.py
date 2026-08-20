@@ -39,6 +39,17 @@ FIND_SIMILAR_GAP_SQL = text("""
     LIMIT 1
 """)
 
+#: Fallback lookup for gaps stored without an embedding. Cosine dedup only sees
+#: rows where the vector is present, so without this an embedding outage turns
+#: every repeat of the same question into another row of one.
+FIND_GAP_BY_QUERY_SQL = text("""
+    SELECT id
+    FROM knowledge_gaps
+    WHERE user_query = :user_query
+    ORDER BY id
+    LIMIT 1
+""")
+
 UPDATE_GAP_COUNT_SQL = text("""
     UPDATE knowledge_gaps
     SET gap_count = gap_count + 1, last_seen = :last_seen
@@ -199,39 +210,52 @@ class KnowledgeGapService:
         """Insert or increment count for an existing similar knowledge gap."""
         vector_str = await self.faq_service.embed_query_as_vector(user_query)
 
-        if not vector_str:
-            await self._insert_gap(
-                user_query=user_query,
-                vector_str=None,
-                telegram_user_id=telegram_user_id,
-                best_faq_question=best_faq_question,
-                max_similarity=max_similarity,
-                faq_count=faq_count,
-                trigger_reason=trigger_reason,
-                bot_response=bot_response,
-            )
+        if vector_str:
+            existing_id = await self._find_similar_gap(vector_str)
+        else:
+            existing_id = await self._find_gap_by_query(user_query)
+
+        if existing_id is not None:
+            await self._increment_gap(existing_id)
             return
 
-        existing_id = await self._find_similar_gap(vector_str)
-        if existing_id is not None:
-            now = datetime.now(UTC)
-            async with self.db_manager.session() as session:
-                await session.execute(
-                    UPDATE_GAP_COUNT_SQL,
-                    {"id": existing_id, "last_seen": now},
-                )
-            logger.debug("Incremented gap count for existing gap id=%d", existing_id)
-        else:
-            await self._insert_gap(
-                user_query=user_query,
-                vector_str=vector_str,
-                telegram_user_id=telegram_user_id,
-                best_faq_question=best_faq_question,
-                max_similarity=max_similarity,
-                faq_count=faq_count,
-                trigger_reason=trigger_reason,
-                bot_response=bot_response,
+        await self._insert_gap(
+            user_query=user_query,
+            vector_str=vector_str or None,
+            telegram_user_id=telegram_user_id,
+            best_faq_question=best_faq_question,
+            max_similarity=max_similarity,
+            faq_count=faq_count,
+            trigger_reason=trigger_reason,
+            bot_response=bot_response,
+        )
+
+    async def _increment_gap(self, gap_id: int) -> None:
+        """Bump the repeat counter and last-seen stamp of an existing gap."""
+        async with self.db_manager.session() as session:
+            await session.execute(
+                UPDATE_GAP_COUNT_SQL,
+                {"id": gap_id, "last_seen": datetime.now(UTC)},
             )
+        logger.debug("Incremented gap count for existing gap id=%d", gap_id)
+
+    async def _find_gap_by_query(self, user_query: str) -> int | None:
+        """Find a gap recorded under exactly this query text.
+
+        Used when the query could not be embedded: an exact repeat is the one
+        duplicate that can still be recognised without a vector.
+        """
+        try:
+            async with self.db_manager.session() as session:
+                result = await session.execute(
+                    FIND_GAP_BY_QUERY_SQL,
+                    {"user_query": user_query},
+                )
+                row = result.fetchone()
+                return int(row.id) if row else None
+        except Exception as e:
+            logger.warning("Failed to search knowledge gaps by query text: %s", e)
+            return None
 
     async def _find_similar_gap(self, vector_str: str) -> int | None:
         """Find an existing gap with cosine similarity above threshold."""

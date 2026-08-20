@@ -249,6 +249,7 @@ def setup_router(
                 text=prompt,
                 base64_image=result.base64_image,
                 mime_type=result.mime_type,
+                user_text=caption or None,
             )
             message_buffer.submit(user_id, buffered, pipeline.handle)
             return

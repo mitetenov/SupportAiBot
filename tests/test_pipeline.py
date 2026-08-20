@@ -40,6 +40,7 @@ def make_batch(
     message_ids: list[int] | None = None,
     base64_image: str | None = None,
     mime_type: str | None = None,
+    user_text: str | None = None,
 ) -> MessageBatch:
     msg = DummyMessage(message_ids[0] if message_ids else 1, user_id)
     return MessageBatch(
@@ -49,6 +50,7 @@ def make_batch(
         message_ids=message_ids or [1],
         base64_image=base64_image,
         mime_type=mime_type,
+        user_text=text if user_text is None else user_text,
     )
 
 
@@ -301,3 +303,89 @@ async def test_turns_for_different_users_still_run_together():
     )
 
     assert peak == 2, "one user's turn blocked another user's"
+
+
+@pytest.mark.asyncio
+async def test_should_not_record_a_knowledge_gap_for_a_captionless_screenshot():
+    """The bot's own photo prompt is not a question anyone asked.
+
+    Recorded as a gap it can never match the FAQ, so it climbs the /gaps report
+    and displaces the questions users actually typed.
+    """
+    llm_client = MagicMock()
+    llm_client.chat_with_image = AsyncMock(return_value=LlmReply(text="Вижу ошибку подключения"))
+
+    forwarder = MagicMock()
+    forwarder.forward_to_support = AsyncMock()
+
+    gap_service = MagicMock()
+    gap_service.evaluate = AsyncMock()
+
+    sender = MagicMock(spec=TelegramMessageSender)
+    sender.send = AsyncMock()
+
+    typing_indicator = MagicMock()
+    typing_indicator.start = MagicMock(return_value=MagicMock())
+
+    pipeline = UserMessagePipeline(
+        llm_client=llm_client,
+        sender=sender,
+        forwarder=forwarder,
+        rate_limiter=UserRateLimiter(min_interval=0.0),
+        knowledge_gap_service=gap_service,
+        conversation_state=ConversationState(),
+        typing_indicator=typing_indicator,
+    )
+
+    batch = make_batch(
+        "Посмотри на скриншот и помоги решить проблему.",
+        base64_image="BASE64_DATA",
+        mime_type="image/png",
+        user_text="",
+    )
+    await pipeline.handle(batch)
+
+    llm_client.chat_with_image.assert_awaited_once()
+    assert llm_client.chat_with_image.await_args.args[0] == (
+        "Посмотри на скриншот и помоги решить проблему."
+    )
+    gap_service.evaluate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_should_record_the_caption_when_the_user_wrote_one():
+    llm_client = MagicMock()
+    llm_client.chat_with_image = AsyncMock(return_value=LlmReply(text="Вижу ошибку подключения"))
+
+    forwarder = MagicMock()
+    forwarder.forward_to_support = AsyncMock()
+
+    gap_service = MagicMock()
+    gap_service.evaluate = AsyncMock()
+
+    sender = MagicMock(spec=TelegramMessageSender)
+    sender.send = AsyncMock()
+
+    typing_indicator = MagicMock()
+    typing_indicator.start = MagicMock(return_value=MagicMock())
+
+    pipeline = UserMessagePipeline(
+        llm_client=llm_client,
+        sender=sender,
+        forwarder=forwarder,
+        rate_limiter=UserRateLimiter(min_interval=0.0),
+        knowledge_gap_service=gap_service,
+        conversation_state=ConversationState(),
+        typing_indicator=typing_indicator,
+    )
+
+    batch = make_batch(
+        "почему n/a на всех серверах?",
+        base64_image="BASE64_DATA",
+        mime_type="image/png",
+        user_text="почему n/a на всех серверах?",
+    )
+    await pipeline.handle(batch)
+
+    gap_service.evaluate.assert_awaited_once()
+    assert gap_service.evaluate.await_args.args[0] == "почему n/a на всех серверах?"

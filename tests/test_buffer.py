@@ -251,3 +251,60 @@ async def test_drain_on_an_idle_buffer_does_nothing():
     await buffer.drain(sink)
 
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_should_not_treat_a_generated_photo_prompt_as_something_the_user_wrote():
+    """A captionless screenshot leaves the user with nothing to attribute to them.
+
+    The prompt sent to the model is written by the bot. Recording it as the
+    user's question puts a message the user never typed into the knowledge-gap
+    report, where it is guaranteed never to match the FAQ.
+    """
+    delivered: list[MessageBatch] = []
+    buffer = UserMessageBuffer(window_ms=60, max_messages=5)
+
+    buffer.submit(
+        100,
+        BufferedMessage(
+            message=make_msg(1),
+            text="Посмотри на скриншот и помоги решить проблему.",
+            user_text=None,
+            base64_image="BASE64_DATA",
+            mime_type="image/png",
+        ),
+        delivered.append,
+    )
+
+    await asyncio.sleep(0.15)
+    buffer.shutdown()
+
+    batch = delivered[0]
+    assert batch.text == "Посмотри на скриншот и помоги решить проблему."
+    assert batch.user_text == ""
+
+
+@pytest.mark.asyncio
+async def test_should_keep_only_the_parts_the_user_actually_wrote():
+    delivered: list[MessageBatch] = []
+    buffer = UserMessageBuffer(window_ms=60, max_messages=5)
+
+    buffer.submit(100, BufferedMessage.from_text(make_msg(1), "вот скрин"), delivered.append)
+    buffer.submit(
+        100,
+        BufferedMessage(
+            message=make_msg(2),
+            text="Посмотри на скриншот и помоги решить проблему.",
+            user_text=None,
+            base64_image="BASE64_DATA",
+            mime_type="image/png",
+        ),
+        delivered.append,
+    )
+
+    await asyncio.sleep(0.15)
+    buffer.shutdown()
+
+    batch = delivered[0]
+    assert batch.text == "вот скрин\nПосмотри на скриншот и помоги решить проблему."
+    assert batch.user_text == "вот скрин"
