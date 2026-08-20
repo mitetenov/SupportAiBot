@@ -1,0 +1,449 @@
+"""FAQ vector embedding service with PGVector hybrid search and Reciprocal Rank Fusion."""
+
+import logging
+import re
+import uuid
+from collections import OrderedDict
+from dataclasses import dataclass
+from typing import ClassVar
+
+from sqlalchemy import text
+
+from app.rag.embedding import EmbeddingProvider
+from app.storage.database import DatabaseSessionManager
+
+logger = logging.getLogger(__name__)
+
+SEARCH_LIMIT: int = 3
+MAX_RESULTS: int = 5
+MIN_VECTOR_SIMILARITY: float = 0.65
+MIN_FTS_RANK: float = 0.01
+RRF_K: int = 60
+EMBEDDING_CACHE_SIZE: int = 256
+
+GLOBAL_SEARCH_ALIASES: list[str] = ["vpn", "впн", "вэпэн"]
+
+CONNECTION_FAQ_QUERY: str = "Не могу подключиться к VPN / не работает / не заходит"
+REFERRAL_FAQ_QUERY: str = (
+    "Реферальная программа, партнёрка, реферальная ссылка, пригласить друга, бонусы, рефералы"
+)
+
+HYBRID_SEARCH_SQL = text("""
+    WITH scored AS (
+        SELECT question,
+               answer,
+               1 - (embedding <=> CAST(:vector_str AS vector)) AS vector_sim,
+               ts_rank(to_tsvector('russian',
+                           question || ' ' || COALESCE(keywords, '') || ' ' || answer),
+                       websearch_to_tsquery('russian', :clean_query)) AS fts_rank
+        FROM faq
+        WHERE embedding IS NOT NULL
+    ),
+    ranked AS (
+        SELECT question, answer, vector_sim, fts_rank,
+               RANK() OVER (ORDER BY vector_sim DESC) AS vector_pos,
+               RANK() OVER (ORDER BY fts_rank DESC)   AS fts_pos
+        FROM scored
+    )
+    SELECT question, answer, vector_sim, fts_rank,
+           (1.0 / (:rrf_k + vector_pos))
+           + CASE WHEN fts_rank > 0 THEN 1.0 / (:rrf_k + fts_pos) ELSE 0 END AS rrf_score
+    FROM ranked
+    WHERE vector_sim >= :min_vector_sim OR fts_rank >= :min_fts_rank
+    ORDER BY rrf_score DESC
+    LIMIT :limit
+""")
+
+VECTOR_SEARCH_SQL = text("""
+    SELECT question, answer, 1 - (embedding <=> CAST(:vector_str AS vector)) AS vector_sim
+    FROM faq
+    WHERE embedding IS NOT NULL
+    ORDER BY embedding <=> CAST(:vector_str AS vector)
+    LIMIT :limit
+""")
+
+
+@dataclass(frozen=True)
+class FaqResult:
+    """A single retrieved FAQ entry."""
+
+    question: str
+    answer: str
+    similarity: float
+    rrf_score: float
+
+
+@dataclass(frozen=True)
+class FaqContext:
+    """Retrieved FAQ entries and formatting for LLM context."""
+
+    text: str
+    results: list[FaqResult]
+    max_similarity: float
+    best_question: str | None
+
+    EMPTY: ClassVar["FaqContext"]
+
+    def is_empty(self) -> bool:
+        """Return True if no FAQ results were matched."""
+        return len(self.results) == 0
+
+    def questions(self) -> set[str]:
+        """Return set of question titles in order."""
+        return {r.question for r in self.results}
+
+
+FaqContext.EMPTY = FaqContext(text="", results=[], max_similarity=0.0, best_question=None)
+
+
+class FaqEmbeddingService:
+    """Service for indexing, hybrid searching, and managing FAQ vector embeddings."""
+
+    def __init__(
+        self,
+        db_manager: DatabaseSessionManager,
+        embedding_provider: EmbeddingProvider,
+    ) -> None:
+        self.db_manager = db_manager
+        self.embedding_provider = embedding_provider
+        self.ready: bool = False
+        self.embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
+
+    def is_ready(self) -> bool:
+        """Return whether the FAQ service is initialized and ready for searching."""
+        return self.ready
+
+    def mark_ready(self) -> None:
+        """Mark the FAQ service as ready for search queries."""
+        self.ready = True
+        logger.info("FAQ service marked as ready for search")
+
+    async def init_schema(self) -> None:
+        """Initialize PostgreSQL table schemas, vector extension, and indices for FAQ."""
+        logger.info("Initializing FAQ database schema")
+        dim = self.embedding_provider.get_dimension()
+
+        async with self.db_manager.session() as session:
+            try:
+                await session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            except Exception as e:
+                logger.warning("Could not execute CREATE EXTENSION vector: %s", e)
+
+            await session.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS faq (
+                    id VARCHAR(36) PRIMARY KEY,
+                    question VARCHAR(2000) NOT NULL,
+                    answer VARCHAR(4000) NOT NULL
+                )
+                """)
+            )
+
+            try:
+                await session.execute(text("ALTER TABLE faq DROP COLUMN IF EXISTS embedding"))
+                await session.execute(text(f"ALTER TABLE faq ADD COLUMN embedding vector({dim})"))
+                await session.execute(text("ALTER TABLE faq DROP COLUMN IF EXISTS image"))
+                await session.execute(text("ALTER TABLE faq DROP COLUMN IF EXISTS images"))
+                await session.execute(
+                    text("ALTER TABLE faq ADD COLUMN IF NOT EXISTS keywords VARCHAR(2000)")
+                )
+            except Exception as e:
+                logger.warning("FAQ column alteration warning: %s", e)
+
+            try:
+                await session.execute(
+                    text("""
+                    CREATE INDEX IF NOT EXISTS faq_embedding_idx
+                    ON faq USING hnsw (embedding vector_cosine_ops)
+                    """)
+                )
+                await session.execute(
+                    text("""
+                    CREATE INDEX IF NOT EXISTS faq_fts_idx
+                    ON faq USING gin (to_tsvector('russian', question || ' ' || COALESCE(keywords, '') || ' ' || answer))
+                    """)
+                )
+            except Exception as e:
+                logger.warning("Could not create FAQ search indices: %s", e)
+
+            await session.execute(
+                text("""
+                CREATE TABLE IF NOT EXISTS faq_metadata (
+                    key VARCHAR(50) PRIMARY KEY,
+                    val VARCHAR(256) NOT NULL
+                )
+                """)
+            )
+
+        logger.info("FAQ database schema initialized successfully")
+
+    async def get_faq_hash(self) -> str | None:
+        """Get the stored SHA-256 hash of the indexed FAQ file."""
+        try:
+            async with self.db_manager.session() as session:
+                result = await session.execute(
+                    text("SELECT val FROM faq_metadata WHERE key = 'faq_hash'")
+                )
+                row = result.fetchone()
+                return str(row[0]) if row else None
+        except Exception as e:
+            logger.warning("Failed to fetch FAQ hash: %s", e)
+            return None
+
+    async def update_faq_hash(self, hash_val: str) -> None:
+        """Update the stored SHA-256 hash of the indexed FAQ file."""
+        async with self.db_manager.session() as session:
+            await session.execute(
+                text("""
+                INSERT INTO faq_metadata (key, val) VALUES ('faq_hash', :hash_val)
+                ON CONFLICT (key) DO UPDATE SET val = EXCLUDED.val
+                """),
+                {"hash_val": hash_val},
+            )
+
+    async def get_faq_count(self) -> int:
+        """Get the number of indexed FAQ rows in PostgreSQL."""
+        try:
+            async with self.db_manager.session() as session:
+                result = await session.execute(text("SELECT COUNT(*) FROM faq"))
+                row = result.fetchone()
+                return int(row[0]) if row else 0
+        except Exception as e:
+            logger.warning("Failed to get FAQ count: %s", e)
+            return 0
+
+    async def clear_faq(self) -> None:
+        """Delete all entries from the FAQ table and mark service unready."""
+        self.ready = False
+        async with self.db_manager.session() as session:
+            await session.execute(text("DELETE FROM faq"))
+        logger.info("Cleared all FAQ table entries")
+
+    @classmethod
+    def with_global_aliases(cls, keywords: str | None) -> str:
+        """Append global search aliases to keywords to boost Russian query recall."""
+        base = f"{keywords.strip()}, " if keywords and keywords.strip() else ""
+        return base + ", ".join(GLOBAL_SEARCH_ALIASES)
+
+    @classmethod
+    def vector_to_string(cls, vector: list[float]) -> str:
+        """Convert a list of floats to pgvector string literal representation."""
+        return "[" + ",".join(str(x) for x in vector) + "]"
+
+    async def embed(self, text_input: str) -> list[float]:
+        """Produce an embedding vector with LRU caching."""
+        if not text_input or not text_input.strip():
+            return []
+
+        if text_input in self.embedding_cache:
+            self.embedding_cache.move_to_end(text_input)
+            return self.embedding_cache[text_input]
+
+        vec = await self.embedding_provider.embed(text_input)
+        if not vec or len(vec) != self.embedding_provider.get_dimension():
+            return []
+
+        self.embedding_cache[text_input] = vec
+        if len(self.embedding_cache) > EMBEDDING_CACHE_SIZE:
+            self.embedding_cache.popitem(last=False)
+
+        return vec
+
+    async def embed_query(self, text_input: str) -> list[float] | None:
+        """Embed query and return list or None on failure."""
+        vec = await self.embed(text_input)
+        return vec if vec else None
+
+    async def embed_query_as_vector(self, text_input: str) -> str | None:
+        """Embed query and format as pgvector literal string or None."""
+        vec = await self.embed(text_input)
+        return self.vector_to_string(vec) if vec else None
+
+    async def index_faq(self, question: str, answer: str, keywords: str | None) -> None:
+        """Embed and insert a single FAQ item into PostgreSQL."""
+        searchable = self.with_global_aliases(keywords)
+        embed_text = f"{question} {searchable}\n{answer}"
+        embedding = await self.embed(embed_text)
+
+        if not embedding or len(embedding) != self.embedding_provider.get_dimension():
+            logger.warning("Failed to embed FAQ: %s", question)
+            return
+
+        vector_str = self.vector_to_string(embedding)
+        async with self.db_manager.session() as session:
+            await session.execute(
+                text("""
+                INSERT INTO faq (id, question, answer, embedding, keywords)
+                VALUES (:id, :question, :answer, CAST(:vector_str AS vector), :keywords)
+                """),
+                {
+                    "id": str(uuid.uuid4()),
+                    "question": question,
+                    "answer": answer,
+                    "vector_str": vector_str,
+                    "keywords": searchable,
+                },
+            )
+        logger.debug("Indexed FAQ: %s with keywords: %s", question, searchable)
+
+    async def search(self, query: str) -> list[FaqResult]:
+        """Perform hybrid search combining vector cosine distance and Russian FTS with RRF."""
+        if not self.ready or not query or not query.strip():
+            return []
+
+        vector_str = await self.embed_query_as_vector(query)
+        if not vector_str:
+            return []
+
+        raw_clean = re.sub(r"[^a-zA-Zа-яА-Я0-9\s]", " ", query).strip()
+        clean_query = raw_clean if raw_clean else query
+
+        try:
+            async with self.db_manager.session() as session:
+                result = await session.execute(
+                    HYBRID_SEARCH_SQL,
+                    {
+                        "vector_str": vector_str,
+                        "clean_query": clean_query,
+                        "rrf_k": RRF_K,
+                        "min_vector_sim": MIN_VECTOR_SIMILARITY,
+                        "min_fts_rank": MIN_FTS_RANK,
+                        "limit": SEARCH_LIMIT,
+                    },
+                )
+                rows = result.fetchall()
+                return [
+                    FaqResult(
+                        question=str(row.question),
+                        answer=str(row.answer),
+                        similarity=float(row.vector_sim),
+                        rrf_score=float(row.rrf_score),
+                    )
+                    for row in rows
+                ]
+        except Exception as e:
+            logger.warning("FAQ hybrid search failed, falling back to pure vector search: %s", e)
+            return await self._search_pure_vector(vector_str)
+
+    async def _search_pure_vector(self, vector_str: str) -> list[FaqResult]:
+        """Fallback to pure vector cosine search when FTS or hybrid fails."""
+        try:
+            async with self.db_manager.session() as session:
+                result = await session.execute(
+                    VECTOR_SEARCH_SQL,
+                    {
+                        "vector_str": vector_str,
+                        "limit": SEARCH_LIMIT,
+                    },
+                )
+                rows = result.fetchall()
+                results: list[FaqResult] = []
+                for row in rows:
+                    similarity = float(row.vector_sim)
+                    if similarity >= MIN_VECTOR_SIMILARITY:
+                        results.append(
+                            FaqResult(
+                                question=str(row.question),
+                                answer=str(row.answer),
+                                similarity=similarity,
+                                rrf_score=similarity,
+                            )
+                        )
+                return results
+        except Exception as e:
+            logger.warning("FAQ pure vector search failed: %s", e)
+            return []
+
+    async def search_with_fallback(self, query: str) -> list[FaqResult]:
+        """Perform search with connection and referral fallback queries and deduplication."""
+        results = list(await self.search(query))
+
+        if self._looks_like_connection_issue(query):
+            conn_results = await self.search(CONNECTION_FAQ_QUERY)
+            self._merge_deduped(results, conn_results)
+
+        if self._looks_like_referral_query(query):
+            ref_results = await self.search(REFERRAL_FAQ_QUERY)
+            self._merge_deduped(results, ref_results)
+
+        results.sort(key=lambda r: r.rrf_score, reverse=True)
+        return results[:MAX_RESULTS]
+
+    @staticmethod
+    def _merge_deduped(target: list[FaqResult], source: list[FaqResult]) -> None:
+        """Merge source results into target list without duplicate question titles."""
+        existing_questions = {r.question for r in target}
+        for item in source:
+            if item.question not in existing_questions:
+                existing_questions.add(item.question)
+                target.append(item)
+
+    async def build_faq_context(
+        self,
+        user_query: str,
+        exclude_questions: set[str] | None = None,
+    ) -> FaqContext:
+        """Retrieve FAQ entries for LLM context, filter excluded questions, and format instructions."""
+        results = await self.search_with_fallback(user_query)
+        if exclude_questions:
+            results = [r for r in results if r.question not in exclude_questions]
+
+        if not results:
+            return FaqContext.EMPTY
+
+        sb = "FAQ (скопируй инструкцию дословно в ответ, не добавляй своих шагов):\n"
+        for r in results:
+            sb += f"Вопрос: {r.question}\nИнструкция: {r.answer}\n\n"
+
+        max_similarity = max((r.similarity for r in results), default=0.0)
+        return FaqContext(
+            text=sb,
+            results=results,
+            max_similarity=max_similarity,
+            best_question=results[0].question,
+        )
+
+    @staticmethod
+    def _looks_like_connection_issue(query: str | None) -> bool:
+        """Determine if the query describes a VPN connection, server, or speed issue."""
+        if not query or not query.strip():
+            return False
+        lower = query.lower()
+        keywords = (
+            "подключ",
+            "не работ",
+            "не заход",
+            "vpn",
+            "впн",
+            "скорост",
+            "медлен",
+            "сайт",
+            "instagram",
+            "ошибк",
+            "отвали",
+            "обрыв",
+            "обнов",
+            "подписк",
+            "пинг",
+            "сервер",
+        )
+        return any(kw in lower for kw in keywords)
+
+    @staticmethod
+    def _looks_like_referral_query(query: str | None) -> bool:
+        """Determine if the query asks about referral program or partner bonuses."""
+        if not query or not query.strip():
+            return False
+        lower = query.lower()
+        keywords = (
+            "реферал",
+            "партнёр",
+            "партнер",
+            "partner",
+            "приглас",
+            "приглаш",
+            "друг",
+            "друз",
+            "бонус",
+        )
+        return any(kw in lower for kw in keywords)
