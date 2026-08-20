@@ -12,9 +12,10 @@ from app.llm.base import (
     AbstractLlmClient,
     LlmProcessingException,
     LlmResponse,
+    TokenUsage,
     ToolCall,
 )
-from app.storage.models import LlmTokenUsage
+from app.retry import post_with_retry
 
 if TYPE_CHECKING:
     from app.llm.mcp_router import McpRouter
@@ -142,7 +143,7 @@ class OpenAiClient(AbstractLlmClient):
         conversation: list[dict[str, Any]],
         faq_context: str,
         telegram_user_id: int,
-    ) -> str:
+    ) -> dict[str, Any]:
         url = f"{self.base_url}/responses"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -153,7 +154,13 @@ class OpenAiClient(AbstractLlmClient):
             "OpenAI Responses API request (%d tools available)", len(self.tool_definitions)
         )
 
-        response = await self.http_client.post(url, json=body, headers=headers)
+        response = await post_with_retry(
+            self.http_client,
+            url,
+            headers=headers,
+            json=body,
+            description="OpenAI Responses API",
+        )
         if response.status_code == 401:
             err_msg = (
                 f"OpenAI API error (model={self.model}): 401 - {response.text} | "
@@ -172,14 +179,13 @@ class OpenAiClient(AbstractLlmClient):
                 "Произошла ошибка при обработке запроса. Попробуйте позже.",
             )
 
-        return response.text
+        return self.decode_json(response)
 
-    def parse_response(self, raw_response: str) -> LlmResponse:
+    def parse_response(self, payload: dict[str, Any]) -> LlmResponse:
         try:
-            json_response = json.loads(raw_response)
-            output = json_response.get("output")
+            output = payload.get("output")
             if not output or not isinstance(output, list):
-                logger.error("No output array in OpenAI Responses API response: %s", raw_response)
+                logger.error("No output array in OpenAI Responses API response: %s", payload)
                 raise LlmProcessingException(
                     "Empty output",
                     "Не удалось получить ответ от модели. Попробуйте позже.",
@@ -211,7 +217,7 @@ class OpenAiClient(AbstractLlmClient):
 
             full_text = "".join(text_builder)
             if not full_text and not tool_calls:
-                logger.warning("No text or tool calls in OpenAI response: %s", raw_response)
+                logger.warning("No text or tool calls in OpenAI response: %s", payload)
                 raise LlmProcessingException(
                     "Empty response",
                     "Модель не вернула ответа. Попробуйте переформулировать вопрос.",
@@ -255,23 +261,14 @@ class OpenAiClient(AbstractLlmClient):
             }
         )
 
-    async def save_usage(self, raw_response: str, telegram_user_id: int) -> None:
-        if self.db_manager is None:
-            return
-        try:
-            json_response = json.loads(raw_response)
-            usage = json_response.get("usage")
-            if usage:
-                prompt_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
-                completion_tokens = usage.get("output_tokens", usage.get("completion_tokens", 0))
-                total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
-                async with self.db_manager.session() as session:
-                    record = LlmTokenUsage(
-                        telegram_id=telegram_user_id,
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        total_tokens=total_tokens,
-                    )
-                    session.add(record)
-        except Exception as e:
-            logger.warning("Failed to save token usage: %s", e)
+    def extract_usage(self, payload: dict[str, Any]) -> TokenUsage | None:
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return None
+        prompt_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+        completion_tokens = usage.get("output_tokens", usage.get("completion_tokens", 0))
+        return TokenUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=usage.get("total_tokens", prompt_tokens + completion_tokens),
+        )

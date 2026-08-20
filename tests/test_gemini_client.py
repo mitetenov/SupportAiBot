@@ -1,5 +1,6 @@
 """Tests for GeminiClient (Gemini REST API, schema sanitization, thought signature, vision)."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -117,7 +118,7 @@ class TestGeminiClient:
             }
         }
         """
-        response = gemini_client.parse_response(raw_response)
+        response = gemini_client.parse_response(json.loads(raw_response))
         assert response.text == "Let me check your devices."
         assert len(response.tool_calls) == 1
         tc = response.tool_calls[0]
@@ -144,7 +145,7 @@ class TestGeminiClient:
             }]
         }
         """
-        response = gemini_client.parse_response(raw_response)
+        response = gemini_client.parse_response(json.loads(raw_response))
         conversation = []
         gemini_client.add_tool_calls_to_conversation(conversation, response)
 
@@ -208,7 +209,7 @@ class TestGeminiClient:
         mock_ctx.__aenter__.return_value = mock_session
         gemini_client.db_manager.session.return_value = mock_ctx
 
-        await gemini_client.save_usage(raw_response, 123)
+        await gemini_client.save_usage(json.loads(raw_response), 123)
 
         assert mock_session.add.called
         added_usage = mock_session.add.call_args[0][0]
@@ -221,5 +222,5 @@ class TestGeminiClient:
     def test_parse_response_empty_candidates_throws(self, gemini_client: GeminiClient):
         raw = '{"promptFeedback": {"blockReason": "SAFETY"}}'
         with pytest.raises(LlmProcessingException) as exc_info:
-            gemini_client.parse_response(raw)
+            gemini_client.parse_response(json.loads(raw))
         assert "Empty candidates" in str(exc_info.value)

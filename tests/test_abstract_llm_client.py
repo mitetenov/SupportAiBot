@@ -10,6 +10,7 @@ from app.llm.base import (
     AbstractLlmClient,
     LlmProcessingException,
     LlmResponse,
+    TokenUsage,
     ToolCall,
 )
 from app.llm.mcp_router import McpRouter
@@ -83,7 +84,7 @@ class ScriptedClient(AbstractLlmClient):
         conversation: list[dict[str, Any]],
         faq_context: str,
         telegram_user_id: int,
-    ) -> str:
+    ) -> dict[str, Any]:
         self.conversations.append(list(conversation))
         self.last_faq_context_seen = faq_context or ""
         if not self.script:
@@ -91,11 +92,11 @@ class ScriptedClient(AbstractLlmClient):
         next_item = self.script.popleft()
         if isinstance(next_item, Exception):
             raise next_item
-        # Return mock string; parse_response below will return next_item if we stash it
+        # parse_response below hands back whatever the script stashed here.
         self._current_response = next_item
-        return "{}"
+        return {}
 
-    def parse_response(self, raw_response: str) -> LlmResponse:
+    def parse_response(self, payload: dict[str, Any]) -> LlmResponse:
         return getattr(self, "_current_response", LlmResponse(text=""))
 
     def add_tool_calls_to_conversation(
@@ -112,8 +113,8 @@ class ScriptedClient(AbstractLlmClient):
     ) -> None:
         conversation.append({"kind": "tool-result", "name": tool_call.name, "content": tool_result})
 
-    async def save_usage(self, raw_response: str, telegram_user_id: int) -> None:
-        pass
+    def extract_usage(self, payload: dict[str, Any]) -> TokenUsage | None:
+        return None
 
 
 def context_with(*questions: str) -> FaqContext:

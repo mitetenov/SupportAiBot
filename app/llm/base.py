@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+import httpx
+
 from app.llm.rejection import is_rejection
 from app.rag.types import FaqContext
+from app.storage.models import LlmTokenUsage
 
 if TYPE_CHECKING:
     from app.llm.mcp_router import McpRouter
@@ -24,6 +28,15 @@ class LlmReply:
 
     text: str
     faq_context: FaqContext = field(default_factory=lambda: FaqContext.EMPTY)
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    """What one API call cost, in the provider-neutral shape we store."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 @dataclass(frozen=True)
@@ -210,9 +223,9 @@ class AbstractLlmClient(ABC, LlmClient):
 
         while iteration < self.MAX_TOOL_ITERATIONS:
             try:
-                raw_response = await self.call_api(conversation, faq_context.text, telegram_user_id)
-                await self.save_usage(raw_response, telegram_user_id)
-                llm_response = self.parse_response(raw_response)
+                payload = await self.call_api(conversation, faq_context.text, telegram_user_id)
+                await self.save_usage(payload, telegram_user_id)
+                llm_response = self.parse_response(payload)
 
                 if llm_response.has_tool_calls():
                     await self.run_tool_calls(conversation, llm_response, telegram_user_id)
@@ -333,6 +346,54 @@ class AbstractLlmClient(ABC, LlmClient):
             return s[: cls.TOOL_RESULT_MAX_LOG_LENGTH] + "..."
         return s
 
+    def decode_json(self, response: httpx.Response) -> dict[str, Any]:
+        """Turn one provider response into the dict every other step reads.
+
+        The body used to be handed on as a string and parsed again by
+        parse_response and once more by save_usage — three passes over the same
+        payload on every turn, and up to five turns per answer.
+        """
+        try:
+            payload = json.loads(response.text)
+        except ValueError as e:
+            logger.error("%s returned a body that is not JSON: %s", self.get_provider_name(), e)
+            raise LlmProcessingException(
+                f"{self.get_provider_name()} returned malformed JSON: {e}",
+                "Ошибка обработки ответа модели.",
+            ) from e
+
+        if not isinstance(payload, dict):
+            raise LlmProcessingException(
+                f"{self.get_provider_name()} returned {type(payload).__name__}, expected an object",
+                "Ошибка обработки ответа модели.",
+            )
+        return payload
+
+    async def save_usage(self, payload: dict[str, Any], telegram_user_id: int) -> None:
+        """Persist what the call cost. Providers only say where the numbers are."""
+        if self.db_manager is None:
+            return
+        try:
+            usage = self.extract_usage(payload)
+            if usage is None:
+                return
+            async with self.db_manager.session() as session:
+                session.add(
+                    LlmTokenUsage(
+                        telegram_id=telegram_user_id,
+                        prompt_tokens=usage.prompt_tokens,
+                        completion_tokens=usage.completion_tokens,
+                        total_tokens=usage.total_tokens,
+                    )
+                )
+        except Exception as e:
+            logger.warning("Failed to save token usage: %s", e)
+
+    @abstractmethod
+    def extract_usage(self, payload: dict[str, Any]) -> TokenUsage | None:
+        """Read the provider's token counters, or None when it reported none."""
+        ...
+
     @abstractmethod
     def build_initial_conversation(
         self,
@@ -352,13 +413,13 @@ class AbstractLlmClient(ABC, LlmClient):
         conversation: list[dict[str, Any]],
         faq_context: str,
         telegram_user_id: int,
-    ) -> str:
-        """Execute HTTP request to provider API."""
+    ) -> dict[str, Any]:
+        """Execute the HTTP request and return the decoded response body."""
         ...
 
     @abstractmethod
-    def parse_response(self, raw_response: str) -> LlmResponse:
-        """Parse raw response string into structured LlmResponse."""
+    def parse_response(self, payload: dict[str, Any]) -> LlmResponse:
+        """Turn a decoded response body into a structured LlmResponse."""
         ...
 
     @abstractmethod
@@ -378,11 +439,6 @@ class AbstractLlmClient(ABC, LlmClient):
         tool_result: str,
     ) -> None:
         """Add tool execution result to conversation history."""
-        ...
-
-    @abstractmethod
-    async def save_usage(self, raw_response: str, telegram_user_id: int) -> None:
-        """Save token usage metrics to storage."""
         ...
 
     @abstractmethod
