@@ -80,6 +80,10 @@ MESSAGES: dict[str, str] = {
     "support.media.received": "[Пользователь прислал вложение, которое бот не обрабатывает]",
     "support.ratelimited": "[AI не отвечал — пользователь пишет слишком часто]",
     "support.ai.suppressed": "[AI не отвечал — оператор недавно был активен]",
+    # Operator /ask command
+    "support.ask.usage": "Использование: /ask <вопрос>. Ответ ИИ уйдёт пользователю от лица бота.",
+    "support.ask.header": "Ответ ИИ отправлен пользователю:\n\n{0}",
+    "support.ask.error": "Не удалось получить ответ ИИ, пользователю ничего не отправлено. Детали: {0}",
     # Admin notifications
     "admin.error.prefix": "[ОШИБКА БОТА]",
     "admin.error.details": "Детали ошибки:",

@@ -15,6 +15,7 @@ from app.bot.command_handler import SupportCommandHandler
 from app.bot.conversation_state import ConversationState
 from app.bot.forwarder import SupportGroupForwarder
 from app.bot.maintenance import MaintenanceScheduler, build_default_jobs
+from app.bot.operator_ask import OperatorAskCommand
 from app.bot.photo_downloader import PhotoDownloader
 from app.bot.pipeline import UserMessagePipeline
 from app.bot.rate_limiter import UserRateLimiter
@@ -217,6 +218,13 @@ async def main() -> None:
             conversation_state=conversation_state,
             typing_indicator=typing_indicator,
         )
+        operator_ask = OperatorAskCommand(
+            llm_client=llm_client,
+            sender=sender,
+            conversation_state=conversation_state,
+            typing_indicator=typing_indicator,
+            support_group_chat_id=settings.telegram_support_group_chat_id,
+        )
         command_handler = SupportCommandHandler(
             sender=sender,
             db_manager=db_manager,
@@ -241,6 +249,7 @@ async def main() -> None:
             message_buffer=message_buffer,
             pipeline=pipeline,
             conversation_state=conversation_state,
+            operator_ask=operator_ask,
             support_group_chat_id=settings.telegram_support_group_chat_id,
         )
 

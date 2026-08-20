@@ -6,11 +6,12 @@ from typing import Any
 from app.bot.buffer import MessageBatch
 from app.bot.conversation_state import ConversationState
 from app.bot.forwarder import SupportGroupForwarder
+from app.bot.illustrations import IllustrationSender
 from app.bot.keyed_lock import KeyedLock
 from app.bot.rate_limiter import UserRateLimiter
 from app.bot.sender import TelegramMessageSender
 from app.bot.typing import TypingIndicator
-from app.constants import faq_image_path, get_message
+from app.constants import get_message
 from app.llm.base import LlmClient, LlmProcessingException
 from app.llm.escalation import EscalationPolicy
 from app.rag.knowledge_gaps import KnowledgeGapService
@@ -40,6 +41,7 @@ class UserMessagePipeline:
         self.knowledge_gap_service = knowledge_gap_service
         self.conversation_state = conversation_state
         self.typing_indicator = typing_indicator
+        self.illustrations = IllustrationSender(sender, conversation_state)
         # One turn per user at a time. Two batches answered concurrently for the
         # same person interleave their writes to the chat history, and the model
         # sees a conversation neither of them actually had.
@@ -107,7 +109,7 @@ class UserMessagePipeline:
                 response = get_message("bot.llm.empty")
 
             await self.sender.send(chat_id, response)
-            illustration_message_id = await self._send_illustration(
+            illustration_message_id = await self.illustrations.send_first(
                 chat_id, user_id, reply.faq_context
             )
 
@@ -143,37 +145,6 @@ class UserMessagePipeline:
             await self.report_failure(batch, user, get_message("bot.llm.error"), e, chat_id)
         finally:
             session.close()
-
-    async def _send_illustration(self, chat_id: int, user_id: int, faq_context: Any) -> int | None:
-        """Send the screenshot named by the best-matching FAQ entry, if it names one.
-
-        The entry that came back first is the one the answer was most likely
-        built from, so its picture is the one to show. Getting that wrong costs
-        a stray screenshot under a correct answer, which is why this is decided
-        here from the retrieval result rather than by asking the model to mark
-        it — a marker would cost tokens on every request instead.
-
-        Sent at most once per conversation: several entries name the same
-        picture, because pressing the two buttons is the opening step of every
-        connection answer, and a user working through a problem would otherwise
-        be handed the same screenshot on every turn.
-        """
-        results = getattr(faq_context, "results", None) or []
-        if not results:
-            return None
-
-        name = getattr(results[0], "image", None)
-        if not name or self.conversation_state.was_illustration_sent(user_id, name):
-            return None
-
-        path = faq_image_path(name)
-        if path is None:
-            return None
-
-        message_id = await self.sender.send_photo(chat_id, path)
-        if message_id is not None:
-            self.conversation_state.record_illustration_sent(user_id, name)
-        return message_id
 
     async def report_failure(
         self,

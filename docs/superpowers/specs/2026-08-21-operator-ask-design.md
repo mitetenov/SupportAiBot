@@ -61,11 +61,14 @@
   `UserMessagePipeline._send_illustration` в отдельный класс поверх `TelegramMessageSender` и
   `ConversationState`. Метод: `send_first(chat_id, user_id, faq_context) -> int | None` — возвращает
   id отправленного сообщения либо `None`. `UserMessagePipeline` делегирует ему.
-- **`app/bot/operator_ask.py`** — `OperatorAskCommand`. `parse(text) -> str | None` вычленяет запрос,
+- **`app/bot/operator_ask.py`** — `OperatorAskCommand`. `parse(text) -> str | None` — классметод:
+  вычленяет запрос, возвращает `""` для команды без аргумента и `None`, если это не команда.
   `handle(topic_id, user_id, query)` выполняет сценарий выше. Зависимости: `llm_client`, `sender`,
-  `illustrations`, `conversation_state`, `typing_indicator`, `support_group_chat_id`.
-- **`app/bot/router.py`** — в `handle_support_group_message` перед доставкой текста: если `parse`
-  вернул запрос, отдать его в `handle` и выйти.
+  `conversation_state`, `typing_indicator`, `support_group_chat_id`; `IllustrationSender` собирается
+  внутри из первых двух, как и в пайплайне, — состояние «картинка уже отправлена» живёт в
+  `ConversationState`, поэтому оба экземпляра видят одно и то же.
+- **`app/bot/router.py`** — в `handle_support_group_message` перед доставкой текста: разбор идёт через
+  классметод `OperatorAskCommand.parse`, и только при совпадении вызывается `operator_ask.handle`.
 - **`app/constants.py`** — ключи `support.ask.usage`, `support.ask.header`, `support.ask.error`.
 - **`app/main.py`** — сборка `IllustrationSender` и `OperatorAskCommand`, проброс в `setup_router`.
 

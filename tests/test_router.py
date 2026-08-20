@@ -121,6 +121,7 @@ async def test_router_handles_start_command(mock_db):
         message_buffer=MagicMock(),
         pipeline=MagicMock(),
         conversation_state=conv_state,
+        operator_ask=MagicMock(),
         support_group_chat_id=-100123,
     )
 
@@ -166,6 +167,7 @@ async def test_router_handles_operator_command(mock_db):
         message_buffer=MagicMock(),
         pipeline=MagicMock(),
         conversation_state=conv_state,
+        operator_ask=MagicMock(),
         support_group_chat_id=-100123,
     )
 
@@ -221,6 +223,7 @@ async def test_router_support_group_operator_reply(mock_db):
         message_buffer=MagicMock(),
         pipeline=MagicMock(),
         conversation_state=conv_state,
+        operator_ask=MagicMock(),
         support_group_chat_id=-100123,
     )
 
@@ -276,6 +279,7 @@ async def test_router_forwards_user_message_to_buffer(mock_db):
         message_buffer=buffer,
         pipeline=MagicMock(),
         conversation_state=ConversationState(),
+        operator_ask=MagicMock(),
         support_group_chat_id=-100123,
     )
 
@@ -313,6 +317,7 @@ async def test_router_unsupported_media_handling(mock_db):
         message_buffer=MagicMock(),
         pipeline=MagicMock(),
         conversation_state=ConversationState(),
+        operator_ask=MagicMock(),
         support_group_chat_id=-100123,
     )
 
@@ -351,6 +356,7 @@ async def test_router_photo_when_images_unsupported(mock_db):
         message_buffer=MagicMock(),
         pipeline=MagicMock(),
         conversation_state=ConversationState(),
+        operator_ask=MagicMock(),
         support_group_chat_id=-100123,
     )
 
@@ -396,6 +402,7 @@ async def test_router_reaction_sync_user_to_support(mock_db):
         message_buffer=MagicMock(),
         pipeline=MagicMock(),
         conversation_state=ConversationState(),
+        operator_ask=MagicMock(),
         support_group_chat_id=-100123,
     )
 
@@ -447,6 +454,7 @@ async def test_router_copies_operator_media_that_carries_a_caption(mock_db):
         message_buffer=MagicMock(),
         pipeline=MagicMock(),
         conversation_state=ConversationState(),
+        operator_ask=MagicMock(),
         support_group_chat_id=-100123,
     )
 
@@ -472,3 +480,69 @@ async def test_router_copies_operator_media_that_carries_a_caption(mock_db):
     # The only text sent is the in-topic delivery confirmation.
     texts = [c.kwargs["text"] for c in bot.send_message.await_args_list]
     assert texts == ["Отправлено пользователю."]
+
+
+def _ask_router(mock_db, operator_ask):
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    router = setup_router(
+        sender=TelegramMessageSender(bot),
+        llm_client=MagicMock(),
+        forwarder=MagicMock(),
+        db_manager=mock_db,
+        chat_history_service=ChatHistoryService(),
+        knowledge_gap_service=MagicMock(),
+        command_handler=MagicMock(),
+        photo_downloader=MagicMock(),
+        message_buffer=MagicMock(),
+        pipeline=MagicMock(),
+        conversation_state=ConversationState(),
+        operator_ask=operator_ask,
+        support_group_chat_id=-100123,
+    )
+    dp = Dispatcher()
+    dp.include_router(router)
+    return dp, bot
+
+
+def _operator_message(text: str) -> Update:
+    group_chat = Chat(id=-100123, type="supergroup")
+    msg = Message(
+        message_id=501,
+        date=123456,
+        chat=group_chat,
+        from_user=User(id=777, is_bot=False, first_name="Operator"),
+        message_thread_id=42,
+        text=text,
+    )
+    return Update(update_id=1, message=msg)
+
+
+@pytest.mark.asyncio
+async def test_router_hands_the_ask_command_to_the_ask_handler(mock_db):
+    mock_db.topic_mappings_by_topic[42] = TopicMapping(
+        user_id=100, topic_id=42, user_name="testuser"
+    )
+    operator_ask = MagicMock()
+    operator_ask.handle = AsyncMock()
+    dp, bot = _ask_router(mock_db, operator_ask)
+
+    await dp.feed_update(bot, _operator_message("/ask как оплатить"))
+
+    operator_ask.handle.assert_awaited_once_with(42, 100, "как оплатить")
+    bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_router_still_delivers_ordinary_operator_text(mock_db):
+    mock_db.topic_mappings_by_topic[42] = TopicMapping(
+        user_id=100, topic_id=42, user_name="testuser"
+    )
+    operator_ask = MagicMock()
+    operator_ask.handle = AsyncMock()
+    dp, bot = _ask_router(mock_db, operator_ask)
+
+    await dp.feed_update(bot, _operator_message("/asking цену у коллег, подождите"))
+
+    operator_ask.handle.assert_not_awaited()
+    assert bot.send_message.call_args_list[0][1]["chat_id"] == 100
