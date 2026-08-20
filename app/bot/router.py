@@ -12,6 +12,7 @@ from app.bot.buffer import BufferedMessage, UserMessageBuffer
 from app.bot.command_handler import SupportCommandHandler
 from app.bot.conversation_state import ConversationState
 from app.bot.forwarder import SupportGroupForwarder
+from app.bot.operator_ask import OperatorAskCommand
 from app.bot.photo_downloader import PhotoDownloader
 from app.bot.pipeline import UserMessagePipeline
 from app.bot.sender import TelegramMessageSender
@@ -58,6 +59,7 @@ def setup_router(
     message_buffer: UserMessageBuffer,
     pipeline: UserMessagePipeline,
     conversation_state: ConversationState,
+    operator_ask: OperatorAskCommand,
     support_group_chat_id: int,
 ) -> Router:
     """Build and configure the primary aiogram Router."""
@@ -121,6 +123,14 @@ def setup_router(
         # still media, and copying it delivers both halves. Reading the caption as
         # the operator's message would drop the image.
         text = (message.text or "").strip()
+
+        # /ask asks the model on the operator's behalf: the answer goes to the
+        # user from the bot, and the topic gets a copy, so neither the plain
+        # delivery below nor its confirmation applies here.
+        ask_query = OperatorAskCommand.parse(text)
+        if ask_query is not None:
+            await operator_ask.handle(topic_id, user_id, ask_query)
+            return
 
         if not text:
             copied = await sender.copy_message(
