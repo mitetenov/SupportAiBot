@@ -360,7 +360,7 @@ class GeminiClient(AbstractLlmClient):
         if not isinstance(usage, dict):
             return None
         return TokenUsage(
-            prompt_tokens=usage.get("promptTokenCount", 0),
-            completion_tokens=usage.get("candidatesTokenCount", 0),
-            total_tokens=usage.get("totalTokenCount", 0),
+            prompt_tokens=int(usage.get("promptTokenCount") or 0),
+            completion_tokens=int(usage.get("candidatesTokenCount") or 0),
+            total_tokens=int(usage.get("totalTokenCount") or 0),
         )

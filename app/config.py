@@ -111,13 +111,13 @@ class Settings(BaseSettings):
         if isinstance(v, set):
             return {int(x) for x in v if str(x).strip().lstrip("-+").isdigit()}
         if isinstance(v, (list, tuple)):
-            result: set[int] = set()
+            from_items: set[int] = set()
             for x in v:
                 try:
-                    result.add(int(x))
+                    from_items.add(int(x))
                 except ValueError, TypeError:
                     continue
-            return result
+            return from_items
         if isinstance(v, str):
             v_str = v.strip()
             if not v_str:

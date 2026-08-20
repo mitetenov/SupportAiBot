@@ -52,7 +52,12 @@ class McpTool:
 class AdminNotifier(Protocol):
     """The half of AdminNotifier this client uses."""
 
-    async def notify_error(self, context: str, error: Exception) -> None:
+    async def notify_error(
+        self,
+        context: str,
+        user_id: int | None = None,
+        error: Exception | None = None,
+    ) -> None:
         """Tell the support group that something failed."""
         ...
 

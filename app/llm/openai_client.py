@@ -265,10 +265,10 @@ class OpenAiClient(AbstractLlmClient):
         usage = payload.get("usage")
         if not isinstance(usage, dict):
             return None
-        prompt_tokens = usage.get("input_tokens", usage.get("prompt_tokens", 0))
-        completion_tokens = usage.get("output_tokens", usage.get("completion_tokens", 0))
+        prompt_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
         return TokenUsage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            total_tokens=usage.get("total_tokens", prompt_tokens + completion_tokens),
+            total_tokens=int(usage.get("total_tokens") or prompt_tokens + completion_tokens),
         )

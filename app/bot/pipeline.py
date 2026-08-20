@@ -47,14 +47,23 @@ class UserMessagePipeline:
 
     async def handle(self, batch: MessageBatch) -> None:
         """Process an incoming coalesced message batch, one turn per user."""
-        user_id = getattr(batch.user, "id", None) or getattr(batch.last_message.chat, "id", None)
-        async with self._turns.hold(user_id):
-            await self._handle_turn(batch)
+        chat_id = self._chat_id(batch)
+        user_id = getattr(batch.user, "id", None) or chat_id
+        if chat_id is None or user_id is None:
+            logger.warning("Dropping a batch with neither a chat nor a user id")
+            return
 
-    async def _handle_turn(self, batch: MessageBatch) -> None:
-        chat_id = getattr(batch.last_message.chat, "id", None)
+        async with self._turns.hold(user_id):
+            await self._handle_turn(batch, chat_id, int(user_id))
+
+    @staticmethod
+    def _chat_id(batch: MessageBatch) -> int | None:
+        """The chat this batch came from, or None when the message has no chat."""
+        chat_id = getattr(getattr(batch.last_message, "chat", None), "id", None)
+        return int(chat_id) if chat_id is not None else None
+
+    async def _handle_turn(self, batch: MessageBatch, chat_id: int, user_id: int) -> None:
         user = batch.user
-        user_id = getattr(user, "id", chat_id)
         text = batch.text
 
         if self.conversation_state.is_operator_recently_active(user_id):
@@ -81,7 +90,7 @@ class UserMessagePipeline:
         session = self.typing_indicator.start(chat_id)
 
         try:
-            if batch.has_image():
+            if batch.base64_image is not None:
                 reply = await self.llm_client.chat_with_image(
                     text,
                     user_id,
@@ -119,10 +128,10 @@ class UserMessagePipeline:
 
         except LlmProcessingException as e:
             logger.error("LLM error processing message from user %d: %s", user_id, e)
-            await self.report_failure(batch, user, e.user_friendly_message, e)
+            await self.report_failure(batch, user, e.user_friendly_message, e, chat_id)
         except Exception as e:
             logger.error("Error processing message from user %d: %s", user_id, e, exc_info=True)
-            await self.report_failure(batch, user, get_message("bot.llm.error"), e)
+            await self.report_failure(batch, user, get_message("bot.llm.error"), e, chat_id)
         finally:
             session.close()
 
@@ -132,9 +141,9 @@ class UserMessagePipeline:
         user: Any,
         user_visible_message: str,
         cause: Exception,
+        chat_id: int,
     ) -> None:
         """Inform user of failure and forward error details to support topic."""
-        chat_id = getattr(batch.last_message.chat, "id", None)
         await self.sender.send(chat_id, user_visible_message)
         await self.forwarder.forward_error_to_topic(
             user,

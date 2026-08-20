@@ -100,7 +100,7 @@ class KnowledgeGapService:
                 return
 
             query = self._truncate(user_query.strip(), MAX_QUERY_LENGTH)
-            response = self._truncate(raw_bot_response, MAX_RESPONSE_LENGTH)
+            response = self._truncate_optional(raw_bot_response, MAX_RESPONSE_LENGTH)
             context = faq_context if faq_context is not None else FaqContext.EMPTY
 
             trigger = self.determine_trigger(
@@ -309,8 +309,11 @@ class KnowledgeGapService:
             return []
 
     @staticmethod
-    def _truncate(s: str | None, max_length: int) -> str | None:
+    def _truncate(s: str, max_length: int) -> str:
         """Truncate string to maximum length."""
-        if s is None:
-            return None
         return s[:max_length] if len(s) > max_length else s
+
+    @classmethod
+    def _truncate_optional(cls, s: str | None, max_length: int) -> str | None:
+        """Truncate a string that may be absent."""
+        return None if s is None else cls._truncate(s, max_length)

@@ -136,8 +136,12 @@ class SupportGroupForwarder:
     ) -> None:
         """Report processing failure into the user forum topic with admin escalation tag."""
         user_id = getattr(user, "id", None)
+        if user_id is None:
+            logger.warning("Cannot forward error to support group: the message has no sender")
+            return
+
         user_name = self.resolve_user_name(user)
-        topic_id = await self.topic_manager.resolve_topic_id(user_id, user_name)
+        topic_id = await self.topic_manager.resolve_topic_id(int(user_id), user_name)
         if topic_id is None:
             logger.warning("Cannot forward error to support group: no topic for user %s", user_id)
             return

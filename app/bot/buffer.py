@@ -44,7 +44,8 @@ class MessageBatch:
 
         last = messages[-1]
         ids = [
-            getattr(m.message, "message_id", None) or getattr(m.message, "id", 0) for m in messages
+            int(getattr(m.message, "message_id", None) or getattr(m.message, "id", 0) or 0)
+            for m in messages
         ]
 
         text_parts = [m.text for m in messages if m.text and str(m.text).strip()]
