@@ -10,7 +10,7 @@ services:
       pgvector:
         condition: service_healthy
       mcp-remnawave:
-        condition: service_started
+        condition: service_healthy
     networks:
       - internal
     healthcheck:
@@ -22,14 +22,21 @@ services:
       start_period: 120s
 
   mcp-remnawave:
-    image: mitetenov/remnawave-mcp:${MCP_TAG:-latest}
+    # Pinned, not :latest — the MCP gates its tool surface on the panel version
+    # and on REMNAWAVE_IS_SUPPORT, so a silent image bump can silently take
+    # tools away from the bot. Requires panel Remnawave 3.3.x.
+    image: mitetenov/remnawave-mcp:${MCP_TAG:-v3.2.0}
     container_name: vpn-support-mcp
     restart: unless-stopped
     environment:
       REMNAWAVE_BASE_URL: ${REMNAWAVE_BASE_URL}
       REMNAWAVE_API_TOKEN: ${REMNAWAVE_API_TOKEN}
       REMNAWAVE_API_KEY: ${REMNAWAVE_API_KEY:-}
-      REMNAWAVE_READONLY: ${REMNAWAVE_READONLY:-false}
+      # Support mode: 16 user-facing tools, VPN credentials stripped from every
+      # response. Parsed fail-closed — only the exact string "false" unlocks the
+      # full 179-tool surface, which this bot does not need.
+      REMNAWAVE_IS_SUPPORT: ${REMNAWAVE_IS_SUPPORT:-true}
+      REMNAWAVE_TIMEOUT_MS: ${REMNAWAVE_TIMEOUT_MS:-30000}
     networks:
       - internal
     healthcheck:

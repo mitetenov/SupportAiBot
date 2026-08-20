@@ -61,7 +61,9 @@ remnawave:
     url: ${REMNAWAVE_MCP_URL:http://localhost:3100}
     base-url: ${REMNAWAVE_BASE_URL}
     api-token: ${REMNAWAVE_API_TOKEN}
-    readonly: ${REMNAWAVE_READONLY:false}
+    # The bot's own gate over the MCP tool list. Distinct from the MCP
+    # server's REMNAWAVE_IS_SUPPORT, which gates what the server offers at all.
+    readonly: ${REMNAWAVE_MCP_READONLY:false}
 
 management:
   endpoints:

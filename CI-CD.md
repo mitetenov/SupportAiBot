@@ -1,57 +1,76 @@
 # CI/CD Pipeline — SupportAiBot
 
-## Trigger chain
+Бот и MCP-сервер собираются и публикуются независимо, как два отдельных образа.
+Связи между их пайплайнами нет: `docker-compose.yml` сводит их вместе уже на
+сервере.
 
 ```
 push → SupportAiBot (master)
-  └─ Docker Multi-Arch Build & Push → mitetenov/supportbot:latest
+  └─ test (mvn test) → build → mitetenov/supportbot:latest + :{version} + :{sha}
+                                  └─ Deploy (вручную, workflow_dispatch) → SSH на сервер
 
 push → mcp-remnawave (main)
-  └─ CI builds + creates GitHub Release with mcp-release.zip
-       └─ repository_dispatch (event_type: mcp-release)
-            └─ SupportAiBot Docker Multi-Arch Build & Push
+  └─ build → GitHub Release (mcp-release.zip) + mitetenov/remnawave-mcp:latest + :v{version} + :{sha}
 ```
 
-### 1. Bot push (`push: [master]`)
-При пуше в `master` репозитория **mitetenov/SupportAiBot**:
-- Собирается multi-arch образ (linux/amd64 + linux/arm64)
-- Пушится в Docker Hub как `mitetenov/supportbot:latest` + `:sha`
+## SupportAiBot
 
-### 2. MCP release (`repository_dispatch`)
-При новом релизе **mitetenov/mcp-remnawave** CI посылает `repository_dispatch` с типом `mcp-release`:
-- Запускается тот же Docker build workflow
-- Dockerfile скачивает pre-built `mcp-release.zip` из свежего релиза MCP
+`.github/workflows/docker-multiarch.yml`, триггеры: push в `master`, pull request
+в `master`, `workflow_dispatch`.
 
-### 3. Ручной запуск (`workflow_dispatch`)
-Из интерфейса GitHub Actions можно запустить сборку вручную.
+| Job | Когда | Что делает |
+|-----|-------|------------|
+| `test` | всегда, включая PR | `mvn -B test -pl bot` на JDK 21. Это merge-gate: именно его стоит требовать в branch protection |
+| `build` | только не-PR (`master`, ручной запуск) | multi-arch образ (linux/amd64 + linux/arm64), пуш в Docker Hub |
 
-## Docker-образ
+Теги образа: `latest`, `:{version из pom.xml}`, `:{sha}`.
 
-| Параметр | Значение |
-|----------|----------|
-| Репозиторий | `mitetenov/supportbot` |
-| Теги | `latest`, `:{sha}` |
-| Платформы | `linux/amd64`, `linux/arm64` |
-| Кэш | GitHub Actions Cache (`type=gha, mode=max`) |
+`.github/workflows/deploy.yml` — отдельный ручной workflow (`workflow_dispatch`,
+на вход тег). Ходит по SSH на сервер, выставляет `BOT_TAG` и делает
+`docker compose pull && docker compose up -d`. Автоматически после сборки не
+запускается.
+
+## mcp-remnawave
+
+Живёт в [mitetenov/mcp-remnawave](https://github.com/mitetenov/mcp-remnawave),
+собирается своим CI на Node 22.
+
+| Workflow | Когда | Что делает |
+|----------|-------|------------|
+| `pr.yml` | pull request в `main` | `tsc --noEmit`, `npm test`, `npm run build` |
+| `ci.yml` | push в `main` | build → GitHub Release с `mcp-release.zip` → multi-arch образ в Docker Hub |
+
+Теги образа: `latest`, `:v{version из package.json}`, `:{sha}`. Тег релиза берётся
+оттуда же, поэтому версию в `package.json` нужно поднимать в том же PR, что и
+изменения — иначе релиз с этим тегом уже существует.
+
+Бот подключается к MCP по HTTP (`REMNAWAVE_MCP_URL`), образ в compose закреплён
+через `MCP_TAG` — намеренно не `latest`: набор инструментов MCP зависит от его
+версии и от `REMNAWAVE_IS_SUPPORT`, так что молчаливое обновление образа может
+незаметно забрать у бота инструменты.
+
+`mcp-release.zip` остаётся артефактом релиза, но в сборке бота не участвует:
+Dockerfile SupportAiBot его не скачивает, MCP запускается отдельным сервисом
+`mcp-remnawave` из compose.
+
+## Docker-образы
+
+| | Бот | MCP |
+|---|---|---|
+| Репозиторий | `mitetenov/supportbot` | `mitetenov/remnawave-mcp` |
+| Теги | `latest`, `:{version}`, `:{sha}` | `latest`, `:v{version}`, `:{sha}` |
+| Платформы | `linux/amd64`, `linux/arm64` | `linux/amd64` |
+| Кэш | GitHub Actions Cache (`type=gha, mode=max`) | нет |
+
+> MCP-образ собирается без `platforms:`, то есть только под архитектуру раннера —
+> `linux/amd64`. На arm64-хосте он пойдёт через эмуляцию (или не запустится
+> вовсе), в отличие от образа бота. Если сервер на arm — в `ci.yml`
+> mcp-remnawave нужно дописать `platforms: linux/amd64,linux/arm64`.
 
 ## Secrets
 
 | Secret | Где хранится | Назначение |
 |--------|-------------|------------|
-| `DOCKER_USERNAME` | SupportAiBot → Settings → Secrets | Логин Docker Hub |
-| `DOCKER_TOKEN` | SupportAiBot → Settings → Secrets | Токен Docker Hub |
-| `PAT_SUPPORTBOT_DISPATCH` | mcp-remnawave → Settings → Secrets | PAT для отправки `repository_dispatch` в SupportAiBot |
-
-## MCP сборка
-
-MCP сервер (`mcp-remnawave`) собирается отдельно в своём CI и публикуется как release asset (`mcp-release.zip`):
-- Репозиторий: [mitetenov/mcp-remnawave](https://github.com/mitenetov/mcp-remnawave)
-- CI workflow: `.github/workflows/ci.yml`
-- Артефакт: `mcp-release.zip` (tsup-bundled single-file dist)
-
-Dockerfile SupportAiBot скачивает этот zip через `curl` + `unzip` — без Node.js/npm в сборочной стадии.
-
-## Требования
-
-- PAT в `PAT_SUPPORTBOT_DISPATCH` должен иметь `repo` доступ к **mitetenov/SupportAiBot**
-- MCP CI workflow должен быть настроен на отправку `repository_dispatch` после создания релиза
+| `DOCKER_USERNAME` | SupportAiBot + mcp-remnawave | Логин Docker Hub |
+| `DOCKER_TOKEN` | SupportAiBot + mcp-remnawave | Токен Docker Hub |
+| `SERVER_HOST` / `SERVER_USER` / `SERVER_SSH_KEY` / `SERVER_PORT` | SupportAiBot | Доступ для ручного деплоя по SSH |
