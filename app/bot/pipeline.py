@@ -119,12 +119,17 @@ class UserMessagePipeline:
                 response,
                 escalate,
             )
-            await self.knowledge_gap_service.evaluate(
-                text,
-                user_id,
-                reply.text,
-                reply.faq_context,
-            )
+            # batch.user_text, not text: a captionless screenshot carries a prompt
+            # we wrote, and reporting it back as the user's question fills /gaps
+            # with a phrase nobody asked and no FAQ can ever match. With nothing
+            # the user wrote there is no question to record at all.
+            if batch.user_text.strip():
+                await self.knowledge_gap_service.evaluate(
+                    batch.user_text,
+                    user_id,
+                    reply.text,
+                    reply.faq_context,
+                )
 
         except LlmProcessingException as e:
             logger.error("LLM error processing message from user %d: %s", user_id, e)

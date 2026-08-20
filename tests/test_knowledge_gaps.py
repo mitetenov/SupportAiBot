@@ -256,3 +256,85 @@ class TestKnowledgeGapServiceEvaluation:
         assert gaps[0].user_query == "Вопрос 1"
         assert gaps[0].gap_count == 10
         assert gaps[0].trigger_reason == "NO_MATCH"
+
+
+class TestDeduplicationWithoutEmbedding:
+    """A gap whose embedding could not be produced still has to deduplicate.
+
+    Cosine dedup skips rows where ``embedding IS NULL``, so without a fallback
+    every such gap is inserted again on every repeat and ``/gaps`` reports the
+    same question as several rows of one instead of one row of many.
+    """
+
+    @staticmethod
+    def _service(session: MagicMock) -> KnowledgeGapService:
+        mock_db = MagicMock()
+        mock_db.session.return_value.__aenter__.return_value = session
+        mock_faq = MagicMock()
+        mock_faq.embed_query_as_vector = AsyncMock(return_value=None)
+        return KnowledgeGapService(
+            db_manager=mock_db, faq_service=mock_faq, embedding_provider=MagicMock()
+        )
+
+    @pytest.mark.asyncio
+    async def test_increments_existing_row_with_identical_query(self) -> None:
+        session = MagicMock()
+        row = MagicMock()
+        row.id = 7
+        result = MagicMock()
+        result.fetchone.return_value = row
+        session.execute = AsyncMock(return_value=result)
+
+        service = self._service(session)
+
+        await service.evaluate(
+            user_query="где кнопка обновить?",
+            telegram_user_id=12345,
+            raw_bot_response="Ответ",
+            faq_context=FaqContext.EMPTY,
+        )
+
+        last_call = session.execute.await_args_list[-1]
+        assert "UPDATE knowledge_gaps" in str(last_call.args[0])
+        assert last_call.args[1]["id"] == 7
+
+    @pytest.mark.asyncio
+    async def test_inserts_when_the_query_has_not_been_seen(self) -> None:
+        session = MagicMock()
+        result = MagicMock()
+        result.fetchone.return_value = None
+        session.execute = AsyncMock(return_value=result)
+
+        service = self._service(session)
+
+        await service.evaluate(
+            user_query="совершенно новый вопрос",
+            telegram_user_id=12345,
+            raw_bot_response="Ответ",
+            faq_context=FaqContext.EMPTY,
+        )
+
+        last_call = session.execute.await_args_list[-1]
+        assert "INSERT INTO knowledge_gaps" in str(last_call.args[0])
+        assert last_call.args[1]["vector_str"] is None
+
+    @pytest.mark.asyncio
+    async def test_lookup_matches_on_the_truncated_query_actually_stored(self) -> None:
+        session = MagicMock()
+        result = MagicMock()
+        result.fetchone.return_value = None
+        session.execute = AsyncMock(return_value=result)
+
+        service = self._service(session)
+
+        await service.evaluate(
+            user_query="  где кнопка обновить?  ",
+            telegram_user_id=12345,
+            raw_bot_response="Ответ",
+            faq_context=FaqContext.EMPTY,
+        )
+
+        lookup_call = session.execute.await_args_list[0]
+        assert "FROM knowledge_gaps" in str(lookup_call.args[0])
+        assert "user_query = :user_query" in str(lookup_call.args[0])
+        assert lookup_call.args[1]["user_query"] == "где кнопка обновить?"
