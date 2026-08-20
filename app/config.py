@@ -4,7 +4,7 @@ import logging
 from functools import lru_cache
 from typing import Any
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -13,9 +13,22 @@ VALID_LLM_PROVIDERS: list[str] = ["deepseek", "gemini", "openai"]
 VALID_EMBEDDING_PROVIDERS: list[str] = ["gemini", "openai"]
 
 
-def _require_text(value: str | None, message: str) -> None:
+def reveal(value: SecretStr | str | None) -> str:
+    """Return the plain text behind a secret, or "" when it is unset.
+
+    Every read of a credential goes through here, so grepping for the name finds
+    every place a secret leaves the settings object.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, SecretStr):
+        return value.get_secret_value()
+    return value
+
+
+def _require_text(value: SecretStr | str | None, message: str) -> None:
     """Ensure the given value contains non-whitespace text, otherwise raise ValueError."""
-    if value is None or not str(value).strip():
+    if not reveal(value).strip():
         raise ValueError(message)
 
 
@@ -35,7 +48,7 @@ class Settings(BaseSettings):
     pgvector_port: int = 5432
     pgvector_db: str = "vpnsupport"
     pgvector_user: str = "bot"
-    pgvector_password: str = ""
+    pgvector_password: SecretStr = SecretStr("")
 
     # Chat history & conversation
     chat_history_max_messages: int = 20
@@ -48,7 +61,7 @@ class Settings(BaseSettings):
     embedding_provider: str = "gemini"
 
     # Telegram
-    telegram_bot_token: str = ""
+    telegram_bot_token: SecretStr = SecretStr("")
     telegram_support_group_chat_id: int = 0
     telegram_support_admin_username: str = ""
     telegram_support_admin_telegram_ids: set[int] = Field(default_factory=set)
@@ -56,17 +69,17 @@ class Settings(BaseSettings):
     telegram_buffer_max_messages: int = 5
 
     # DeepSeek
-    deepseek_api_key: str | None = None
+    deepseek_api_key: SecretStr | None = None
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_model: str | None = None
 
     # Gemini
-    gemini_api_key: str | None = None
+    gemini_api_key: SecretStr | None = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     gemini_model: str | None = None
 
     # OpenAI
-    openai_api_key: str | None = None
+    openai_api_key: SecretStr | None = None
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str | None = "gpt-5.6-luna"
     openai_embedding_model: str = "text-embedding-3-small"
@@ -75,7 +88,7 @@ class Settings(BaseSettings):
     # Remnawave MCP
     remnawave_mcp_url: str = "http://localhost:3100"
     remnawave_base_url: str = ""
-    remnawave_api_token: str = ""
+    remnawave_api_token: SecretStr = SecretStr("")
     remnawave_mcp_readonly: bool = False
 
     # Server / Healthcheck
@@ -85,7 +98,7 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         """Construct the asyncpg connection string."""
         return (
-            f"postgresql+asyncpg://{self.pgvector_user}:{self.pgvector_password}"
+            f"postgresql+asyncpg://{self.pgvector_user}:{reveal(self.pgvector_password)}"
             f"@{self.pgvector_host}:{self.pgvector_port}/{self.pgvector_db}"
         )
 
@@ -98,13 +111,13 @@ class Settings(BaseSettings):
         if isinstance(v, set):
             return {int(x) for x in v if str(x).strip().lstrip("-+").isdigit()}
         if isinstance(v, (list, tuple)):
-            result: set[int] = set()
+            from_items: set[int] = set()
             for x in v:
                 try:
-                    result.add(int(x))
-                except (ValueError, TypeError):
+                    from_items.add(int(x))
+                except ValueError, TypeError:
                     continue
-            return result
+            return from_items
         if isinstance(v, str):
             v_str = v.strip()
             if not v_str:
@@ -123,7 +136,7 @@ class Settings(BaseSettings):
         return set()
 
     @model_validator(mode="after")
-    def validate_startup(self) -> "Settings":
+    def validate_startup(self) -> Settings:
         """Replicate the validation rules from StartupValidator.java."""
         # 1. Validate Telegram
         _require_text(
@@ -195,8 +208,7 @@ class Settings(BaseSettings):
                 "OPENAI_API_KEY не задан. Получите ключ на https://platform.openai.com/api-keys "
                 "и добавьте в .env: OPENAI_API_KEY=sk-...",
             )
-            assert self.openai_api_key is not None  # for type checker
-            key = self.openai_api_key.strip()
+            key = reveal(self.openai_api_key).strip()
             if not key.startswith("sk-"):
                 prefix = key[:5]
                 raise ValueError(
@@ -227,19 +239,19 @@ class Settings(BaseSettings):
         self.embedding_provider = normalized_emb
 
         if normalized_emb == "openai":
-            if not self.openai_api_key or not self.openai_api_key.strip():
+            if not reveal(self.openai_api_key).strip():
                 raise ValueError(
                     "EMBEDDING_PROVIDER=openai, но OPENAI_API_KEY не задан. "
                     "Добавьте в .env: OPENAI_API_KEY=sk-... "
                     "или смените провайдера: EMBEDDING_PROVIDER=gemini"
                 )
-            if not self.openai_api_key.strip().startswith("sk-"):
+            if not reveal(self.openai_api_key).strip().startswith("sk-"):
                 raise ValueError(
                     "EMBEDDING_PROVIDER=openai, но OPENAI_API_KEY имеет неверный формат "
                     "(должен начинаться с 'sk-'). Проверьте .env: OPENAI_API_KEY"
                 )
         elif normalized_emb == "gemini":
-            if not self.gemini_api_key or not self.gemini_api_key.strip():
+            if not reveal(self.gemini_api_key).strip():
                 raise ValueError(
                     "EMBEDDING_PROVIDER=gemini, но GEMINI_API_KEY не задан. "
                     "Добавьте в .env: GEMINI_API_KEY=... "

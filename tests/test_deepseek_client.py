@@ -93,7 +93,7 @@ class TestDeepSeekClient:
             }
         }
         """
-        response = deepseek_client.parse_response(raw)
+        response = deepseek_client.parse_response(json.loads(raw))
         assert response.text == "Hello, how can I help?"
         assert not response.has_tool_calls()
 
@@ -121,7 +121,7 @@ class TestDeepSeekClient:
             }
         }
         """
-        response = deepseek_client.parse_response(raw)
+        response = deepseek_client.parse_response(json.loads(raw))
         assert response.text == ""
         assert response.has_tool_calls()
         assert len(response.tool_calls) == 1
@@ -145,7 +145,7 @@ class TestDeepSeekClient:
             }]
         }
         """
-        response = deepseek_client.parse_response(raw)
+        response = deepseek_client.parse_response(json.loads(raw))
         assert response.text == "Let me check that for you."
         assert len(response.tool_calls) == 1
         assert response.tool_calls[0].name == "nodes_list"
@@ -155,7 +155,8 @@ class TestDeepSeekClient:
         self, deepseek_client: DeepSeekClient
     ):
         conv = []
-        response = deepseek_client.parse_response("""
+        response = deepseek_client.parse_response(
+            json.loads("""
         {
             "choices": [{
                 "message": {
@@ -169,6 +170,7 @@ class TestDeepSeekClient:
             }]
         }
         """)
+        )
         deepseek_client.add_tool_calls_to_conversation(conv, response)
 
         assert len(conv) == 1
@@ -206,7 +208,7 @@ class TestDeepSeekClient:
         mock_ctx.__aenter__.return_value = mock_session
         deepseek_client.db_manager.session.return_value = mock_ctx
 
-        await deepseek_client.save_usage(raw, 123)
+        await deepseek_client.save_usage(json.loads(raw), 123)
 
         assert mock_session.add.called
         usage = mock_session.add.call_args[0][0]

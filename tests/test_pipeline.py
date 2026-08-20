@@ -1,5 +1,6 @@
 """Unit tests for UserMessagePipeline."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -212,3 +213,91 @@ async def test_pipeline_handles_llm_processing_exception():
 
     bot.send_message.assert_called_once_with(chat_id=100, text="Сервис временно недоступен")
     forwarder.forward_error_to_topic.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_one_turn_per_user_at_a_time():
+    """Two batches for the same user must not be answered concurrently.
+
+    Both turns read the chat history, call the model and append to it. Run at
+    the same time they interleave those writes, and the next turn is built from
+    a conversation that never happened.
+    """
+    in_flight = 0
+    peak = 0
+
+    async def chat(_text, _user_id):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0)
+        in_flight -= 1
+        return LlmReply(text="ответ")
+
+    llm_client = MagicMock()
+    llm_client.chat = chat
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    forwarder = MagicMock()
+    forwarder.forward_to_support = AsyncMock()
+    gap_service = MagicMock()
+    gap_service.evaluate = AsyncMock()
+
+    pipeline = UserMessagePipeline(
+        llm_client=llm_client,
+        sender=TelegramMessageSender(bot),
+        forwarder=forwarder,
+        rate_limiter=UserRateLimiter(min_interval=0.0),
+        knowledge_gap_service=gap_service,
+        conversation_state=ConversationState(),
+        typing_indicator=MagicMock(),
+    )
+
+    await asyncio.gather(
+        pipeline.handle(make_batch("первый вопрос", user_id=100)),
+        pipeline.handle(make_batch("второй вопрос", user_id=100)),
+    )
+
+    assert peak == 1, "two turns for one user overlapped"
+
+
+@pytest.mark.asyncio
+async def test_turns_for_different_users_still_run_together():
+    in_flight = 0
+    peak = 0
+
+    async def chat(_text, _user_id):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0)
+        in_flight -= 1
+        return LlmReply(text="ответ")
+
+    llm_client = MagicMock()
+    llm_client.chat = chat
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    forwarder = MagicMock()
+    forwarder.forward_to_support = AsyncMock()
+    gap_service = MagicMock()
+    gap_service.evaluate = AsyncMock()
+
+    pipeline = UserMessagePipeline(
+        llm_client=llm_client,
+        sender=TelegramMessageSender(bot),
+        forwarder=forwarder,
+        rate_limiter=UserRateLimiter(min_interval=0.0),
+        knowledge_gap_service=gap_service,
+        conversation_state=ConversationState(),
+        typing_indicator=MagicMock(),
+    )
+
+    await asyncio.gather(
+        pipeline.handle(make_batch("вопрос", user_id=100)),
+        pipeline.handle(make_batch("вопрос", user_id=200)),
+    )
+
+    assert peak == 2, "one user's turn blocked another user's"

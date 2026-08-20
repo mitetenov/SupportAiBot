@@ -1,13 +1,11 @@
 """Thread-safe forum topic resolution & creation per user in the support supergroup."""
 
-import asyncio
 import logging
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 
 from aiogram import Bot
 from sqlalchemy import delete, select
 
+from app.bot.keyed_lock import KeyedLock
 from app.storage.database import DatabaseSessionManager
 from app.storage.models import TopicMapping
 
@@ -26,35 +24,11 @@ class TopicManager:
         self.db_manager = db_manager
         self.bot = bot
         self.support_group_chat_id = support_group_chat_id
-        self._user_locks: dict[int, asyncio.Lock] = {}
-        self._lock_users: dict[int, int] = {}
-        self._global_lock = asyncio.Lock()
-
-    @asynccontextmanager
-    async def _user_lock(self, user_id: int) -> AsyncIterator[None]:
-        """Serialise topic resolution per user without retaining a lock forever."""
-        async with self._global_lock:
-            lock = self._user_locks.get(user_id)
-            if lock is None:
-                lock = asyncio.Lock()
-                self._user_locks[user_id] = lock
-            self._lock_users[user_id] = self._lock_users.get(user_id, 0) + 1
-
-        try:
-            async with lock:
-                yield
-        finally:
-            async with self._global_lock:
-                remaining = self._lock_users.get(user_id, 1) - 1
-                if remaining <= 0:
-                    self._lock_users.pop(user_id, None)
-                    self._user_locks.pop(user_id, None)
-                else:
-                    self._lock_users[user_id] = remaining
+        self._user_locks = KeyedLock()
 
     async def resolve_topic_id(self, user_id: int, user_name: str | None) -> int | None:
         """Find existing forum topic ID for user or create a new one."""
-        async with self._user_lock(user_id):
+        async with self._user_locks.hold(user_id):
             async with self.db_manager.session() as session:
                 result = await session.execute(
                     select(TopicMapping).where(TopicMapping.user_id == user_id)
@@ -72,7 +46,7 @@ class TopicManager:
         stale_topic_id: int | None,
     ) -> int | None:
         """Delete stale topic mapping if it matches stale_topic_id and create a new topic."""
-        async with self._user_lock(user_id):
+        async with self._user_locks.hold(user_id):
             async with self.db_manager.session() as session:
                 result = await session.execute(
                     select(TopicMapping).where(TopicMapping.user_id == user_id)

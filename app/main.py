@@ -22,7 +22,7 @@ from app.bot.router import setup_router
 from app.bot.sender import TelegramMessageSender
 from app.bot.topic_manager import TopicManager
 from app.bot.typing import TypingIndicator
-from app.config import get_settings
+from app.config import get_settings, reveal
 from app.llm import create_llm_client
 from app.llm.mcp_client import HttpMcpClient
 from app.llm.mcp_router import McpRouter
@@ -32,7 +32,7 @@ from app.rag.knowledge_gaps import KnowledgeGapService
 from app.rag.service import FaqEmbeddingService
 from app.storage.chat_history import ChatHistoryService
 from app.storage.database import get_db_manager
-from app.storage.schema_sync import sync_legacy_schema
+from app.storage.schema import sync_legacy_schema
 
 logger = logging.getLogger(__name__)
 
@@ -108,13 +108,14 @@ async def main() -> None:
     )
 
     http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
-    bot = Bot(token=settings.telegram_bot_token)
+    bot = Bot(token=reveal(settings.telegram_bot_token))
     sender = TelegramMessageSender(bot)
     db_manager = get_db_manager(settings.database_url)
 
     health_runner: web.AppRunner | None = None
     mcp_client: HttpMcpClient | None = None
     message_buffer: UserMessageBuffer | None = None
+    pipeline: UserMessagePipeline | None = None
     typing_indicator: TypingIndicator | None = None
     maintenance: MaintenanceScheduler | None = None
 
@@ -271,10 +272,16 @@ async def main() -> None:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
     finally:
+        # aiogram installs its own SIGINT/SIGTERM handlers in start_polling, so
+        # `docker stop` unwinds through here rather than killing the process.
         logger.info("Shutting down VPN Support Bot...")
         if maintenance is not None:
             await maintenance.stop()
         if message_buffer is not None:
+            # Anything still buffered or being answered gets its turn first;
+            # only then do the clients it needs get closed underneath it.
+            if pipeline is not None:
+                await message_buffer.drain(pipeline.handle)
             message_buffer.shutdown()
         if typing_indicator is not None:
             typing_indicator.shutdown()

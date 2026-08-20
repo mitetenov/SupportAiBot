@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.rag.service import FaqEmbeddingService
+from app.rag.types import FaqEntry
 
 logger = logging.getLogger(__name__)
 
@@ -72,19 +73,33 @@ class FaqInitializer:
                 current_hash,
             )
 
+            usable = [
+                FaqEntry(
+                    question=entry["question"],
+                    answer=entry["answer"],
+                    keywords=self.extract_keywords(entry.get("keywords")),
+                )
+                for entry in entries
+                if entry.get("question") and entry.get("answer")
+            ]
+
             await self.service.clear_faq()
+            indexed = await self.service.index_faq_batch(usable)
 
-            for entry in entries:
-                question = entry.get("question")
-                answer = entry.get("answer")
-                keywords = self.extract_keywords(entry.get("keywords"))
-                if question and answer:
-                    await self.service.index_faq(question, answer, keywords)
-
-            if current_hash is not None:
+            # The hash is the promise that what is in the table matches the file.
+            # Storing it after a partial run would keep the next start from
+            # noticing the entries that never got embedded.
+            if current_hash is not None and indexed == len(usable):
                 await self.service.update_faq_hash(current_hash)
+            elif indexed != len(usable):
+                logger.warning(
+                    "Only %d of %d FAQ entries were indexed — leaving the stored hash alone "
+                    "so the next start retries",
+                    indexed,
+                    len(usable),
+                )
 
-            logger.info("FAQ indexing complete: %d entries indexed", len(entries))
+            logger.info("FAQ indexing complete: %d entries indexed", indexed)
             self.service.mark_ready()
 
         except Exception as e:

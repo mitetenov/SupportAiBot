@@ -5,9 +5,26 @@ import inspect
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
+
+
+class Evictable(Protocol):
+    """Anything holding per-user state that has to be pruned on a schedule."""
+
+    def evict_stale_entries(self) -> Any:
+        """Drop whatever has outlived its retention window."""
+        ...
+
+
+class ExpiringState(Protocol):
+    """Per-user state that prunes itself by TTL."""
+
+    def evict_expired(self) -> Any:
+        """Drop every entry past its TTL."""
+        ...
+
 
 CHAT_HISTORY_INTERVAL_SECONDS = 60 * 60
 RATE_LIMITER_INTERVAL_SECONDS = 10 * 60
@@ -67,9 +84,9 @@ class MaintenanceScheduler:
 
 
 def build_default_jobs(
-    chat_history_service: Any,
-    rate_limiter: Any,
-    conversation_state: Any,
+    chat_history_service: Evictable,
+    rate_limiter: Evictable,
+    conversation_state: ExpiringState,
 ) -> list[MaintenanceJob]:
     """Assemble the three jobs the Java service ran on a Spring schedule."""
     return [

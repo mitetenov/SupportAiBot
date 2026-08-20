@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.config import Settings, get_settings
+from app.config import Settings, get_settings, reveal
 
 
 class TestStartupValidator:
@@ -15,7 +15,7 @@ class TestStartupValidator:
         """Verify valid DeepSeek settings pass validation."""
         settings = Settings(**valid_settings_dict)
         assert settings.llm_provider == "deepseek"
-        assert settings.deepseek_api_key == "sk-deepseek-test-key"
+        assert reveal(settings.deepseek_api_key) == "sk-deepseek-test-key"
 
     def test_should_validate_gemini_provider(self, valid_settings_dict: dict[str, object]) -> None:
         """Verify valid Gemini settings pass validation."""
@@ -26,7 +26,7 @@ class TestStartupValidator:
 
         settings = Settings(**valid_settings_dict)
         assert settings.llm_provider == "gemini"
-        assert settings.gemini_api_key == "gemini-test-key"
+        assert reveal(settings.gemini_api_key) == "gemini-test-key"
 
     def test_should_validate_openai_provider(self, valid_settings_dict: dict[str, object]) -> None:
         """Verify valid OpenAI settings pass validation."""
@@ -37,7 +37,7 @@ class TestStartupValidator:
 
         settings = Settings(**valid_settings_dict)
         assert settings.llm_provider == "openai"
-        assert settings.openai_api_key == "sk-proj-test123456"
+        assert reveal(settings.openai_api_key) == "sk-proj-test123456"
 
     def test_should_throw_when_bot_token_missing(
         self, valid_settings_dict: dict[str, object]
@@ -301,3 +301,38 @@ class TestSettingsHelperProperties:
         s2 = get_settings()
         assert s1 is s2
         get_settings.cache_clear()
+
+
+class TestSecretsAreNotPrintable:
+    """A stray log of the settings object must not print credentials."""
+
+    def test_repr_hides_every_secret(self, valid_settings_dict: dict[str, object]) -> None:
+        valid_settings_dict["openai_api_key"] = "sk-proj-test123456"
+        settings = Settings(**valid_settings_dict)
+
+        printed = repr(settings) + str(settings) + str(settings.model_dump())
+
+        for secret in (
+            "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
+            "sk-deepseek-test-key",
+            "gemini-test-key",
+            "sk-proj-test123456",
+            "secret_password",
+        ):
+            assert secret not in printed
+
+    def test_reveal_returns_the_plain_value(self, valid_settings_dict: dict[str, object]) -> None:
+        settings = Settings(**valid_settings_dict)
+
+        assert reveal(settings.telegram_bot_token) == "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+        assert reveal(settings.deepseek_api_key) == "sk-deepseek-test-key"
+
+    def test_reveal_tolerates_unset_and_plain_values(self) -> None:
+        assert reveal(None) == ""
+        assert reveal("plain") == "plain"
+
+    def test_database_url_still_carries_the_password(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        settings = Settings(**valid_settings_dict)
+        assert "secret_password" in settings.database_url

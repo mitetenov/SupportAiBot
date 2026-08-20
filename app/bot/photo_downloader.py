@@ -23,12 +23,12 @@ class PhotoDownloadResult:
     error_message_key: str | None = None
 
     @classmethod
-    def ok(cls, base64_image: str, mime_type: str) -> "PhotoDownloadResult":
+    def ok(cls, base64_image: str, mime_type: str) -> PhotoDownloadResult:
         """Factory for successful download."""
         return cls(base64_image=base64_image, mime_type=mime_type, error_message_key=None)
 
     @classmethod
-    def failed(cls, error_message_key: str) -> "PhotoDownloadResult":
+    def failed(cls, error_message_key: str) -> PhotoDownloadResult:
         """Factory for failed download carrying user-facing error key."""
         return cls(base64_image=None, mime_type=None, error_message_key=error_message_key)
 
@@ -72,11 +72,11 @@ class PhotoDownloader:
                 return PhotoDownloadResult.failed("bot.photo.upload.error")
 
             file_info = await self.bot.get_file(file_id)
-            if file_info is None or not getattr(file_info, "file_path", None):
+            file_path = getattr(file_info, "file_path", None) if file_info else None
+            if not file_path:
                 logger.warning("Telegram get_file returned no file path for %s", file_id)
                 return PhotoDownloadResult.failed("bot.photo.upload.error")
 
-            file_path = file_info.file_path
             buffer = io.BytesIO()
 
             if hasattr(self.bot, "download_file"):

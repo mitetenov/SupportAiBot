@@ -6,16 +6,17 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from app.config import Settings
+from app.config import Settings, reveal
 from app.constants import SupportPrompt
 from app.llm.base import (
     AbstractLlmClient,
     LlmProcessingException,
     LlmReply,
     LlmResponse,
+    TokenUsage,
     ToolCall,
 )
-from app.storage.models import LlmTokenUsage
+from app.retry import post_with_retry
 
 if TYPE_CHECKING:
     from app.llm.mcp_router import McpRouter
@@ -49,7 +50,7 @@ class DeepSeekClient(AbstractLlmClient):
         self.settings = settings
         self.model = settings.deepseek_model or "deepseek-chat"
         self.base_url = (settings.deepseek_base_url or "https://api.deepseek.com/v1").rstrip("/")
-        self.api_key = settings.deepseek_api_key or ""
+        self.api_key = reveal(settings.deepseek_api_key)
         self._http_client = http_client
         self._own_client = False
         self.tool_definitions = self._build_tool_definitions()
@@ -138,7 +139,7 @@ class DeepSeekClient(AbstractLlmClient):
         conversation: list[dict[str, Any]],
         faq_context: str,
         telegram_user_id: int,
-    ) -> str:
+    ) -> dict[str, Any]:
         url = f"{self.base_url}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -147,21 +148,26 @@ class DeepSeekClient(AbstractLlmClient):
         body = self.build_request_body(conversation)
         logger.debug("DeepSeek request (%d tools available)", len(self.tool_definitions))
 
-        response = await self.http_client.post(url, json=body, headers=headers)
+        response = await post_with_retry(
+            self.http_client,
+            url,
+            headers=headers,
+            json=body,
+            description="DeepSeek API",
+        )
         if response.status_code >= 400:
             logger.error("DeepSeek API error (%d): %s", response.status_code, response.text)
             raise LlmProcessingException(
                 f"DeepSeek API error: {response.status_code} - {response.text}",
                 "Произошла ошибка при обработке запроса. Попробуйте позже.",
             )
-        return response.text
+        return self.decode_json(response)
 
-    def parse_response(self, raw_response: str) -> LlmResponse:
+    def parse_response(self, payload: dict[str, Any]) -> LlmResponse:
         try:
-            json_response = json.loads(raw_response)
-            choices = json_response.get("choices")
+            choices = payload.get("choices")
             if not choices or not isinstance(choices, list) or len(choices) == 0:
-                logger.error("Empty choices in DeepSeek response: %s", raw_response)
+                logger.error("Empty choices in DeepSeek response: %s", payload)
                 raise LlmProcessingException(
                     "Empty choices",
                     "Не удалось получить ответ от модели. Попробуйте позже.",
@@ -232,23 +238,12 @@ class DeepSeekClient(AbstractLlmClient):
             }
         )
 
-    async def save_usage(self, raw_response: str, telegram_user_id: int) -> None:
-        if self.db_manager is None:
-            return
-        try:
-            json_response = json.loads(raw_response)
-            usage = json_response.get("usage")
-            if usage:
-                prompt_tokens = usage.get("prompt_tokens", 0)
-                completion_tokens = usage.get("completion_tokens", 0)
-                total_tokens = usage.get("total_tokens", 0)
-                async with self.db_manager.session() as session:
-                    record = LlmTokenUsage(
-                        telegram_id=telegram_user_id,
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        total_tokens=total_tokens,
-                    )
-                    session.add(record)
-        except Exception as e:
-            logger.warning("Failed to save token usage: %s", e)
+    def extract_usage(self, payload: dict[str, Any]) -> TokenUsage | None:
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return None
+        return TokenUsage(
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
+            total_tokens=int(usage.get("total_tokens") or 0),
+        )

@@ -1,6 +1,6 @@
 # VPN Support Bot
 
-Telegram-бот техподдержки VPN-сервиса на Python 3.12+. Принимает текстовые вопросы и скриншоты, ищет ответы в базе знаний (гибридный RAG через PGVector + Full-Text Search), получает данные пользователя через Remnawave (MCP-инструменты) и отвечает через LLM (DeepSeek, Gemini или OpenAI). Форвардит диалоги в форум-группу поддержки с автоэскалацией.
+Telegram-бот техподдержки VPN-сервиса на Python 3.14+. Принимает текстовые вопросы и скриншоты, ищет ответы в базе знаний (гибридный RAG через PGVector + Full-Text Search), получает данные пользователя через Remnawave (MCP-инструменты) и отвечает через LLM (DeepSeek, Gemini или OpenAI). Форвардит диалоги в форум-группу поддержки с автоэскалацией.
 
 ## Архитектура
 
@@ -12,7 +12,7 @@ Telegram-бот техподдержки VPN-сервиса на Python 3.12+. �
                         Форум-группа поддержки
 ```
 
-- **Стек**: Python 3.12+, aiogram 3.30+, SQLAlchemy 2.0 (asyncpg), pgvector-python, httpx, aiohttp, uv.
+- **Стек**: Python 3.14+, aiogram 3.30+, SQLAlchemy 2.0 (asyncpg), pgvector-python, httpx, aiohttp, uv.
 - **LLM**: DeepSeek, Gemini или OpenAI (переключается через `LLM_PROVIDER`, список моделей — ниже)
 - **MCP**: [mcp-remnawave](https://github.com/mitetenov/mcp-remnawave) 3.2.x по HTTP-транспорту, панель Remnawave 3.3.x. Сервер поднят в режиме support (`REMNAWAVE_IS_SUPPORT=true`): он отдаёт 16 пользовательских инструментов и вырезает VPN-креды из каждого ответа панели. Поверх этого бот сужает список до 5 allow-list инструментов: `users_get_by_telegram_id`, `nodes_list`, `nodes_get`, `hwid_devices_list` и — при `REMNAWAVE_MCP_READONLY=false` — `hwid_device_delete`. Остальные инструменты сервера боту не видны и не вызываемы.
 - **RAG**: гибридный поиск по FAQ-базе — векторные эмбеддинги (Gemini/OpenAI) и полнотекстовый поиск PostgreSQL `tsvector` по русскому словарю объединяются через Reciprocal Rank Fusion ($k=60$).
@@ -33,7 +33,7 @@ docker compose up -d
 docker compose exec support-bot python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
 ```
 
-Образ: [`mitetenov/supportbot`](https://hub.docker.com/r/mitetenov/supportbot) — ~75 МБ на базе `python:3.12-slim` с установкой зависимостей через `uv`. MCP-сервер — отдельный сервис `mcp-remnawave` в compose.
+Образ: [`mitetenov/supportbot`](https://hub.docker.com/r/mitetenov/supportbot) — ~75 МБ на базе `python:3.14-slim` с установкой зависимостей через `uv`. MCP-сервер — отдельный сервис `mcp-remnawave` в compose.
 
 **Важно**: перед запуском отключите privacy mode бота в BotFather (`/setprivacy` → Disable), иначе бот не будет видеть сообщения в группе.
 
@@ -117,7 +117,7 @@ docker compose up -d --force-recreate support-bot
 
 ## Локальная разработка
 
-Требуется **Python 3.12+**.
+Требуется **Python 3.14+**.
 
 Установка зависимостей из lock-файла (те же версии, что и в образе):
 ```bash
@@ -137,12 +137,15 @@ export $(grep -v '^#' .env | xargs)
 python3 -m app.main
 ```
 
-Запуск тестов и линтера:
+Запуск тестов, линтера и проверки типов — те же команды, что и в merge-gate CI:
 ```bash
 uv run pytest -v
 uv run ruff check .
 uv run ruff format --check .
+uv run mypy
 ```
+
+`pytest` считает покрытие и падает ниже 85% (порог в `pyproject.toml`, тот же локально и в CI).
 
 Зависимости закреплены в `uv.lock`. После правки `pyproject.toml` обновите его командой `uv lock` — CI падает, если файлы разошлись.
 

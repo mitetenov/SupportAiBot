@@ -3,10 +3,11 @@
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from app.config import Settings
-from app.llm.base import ToolCall
+from app.llm.base import LlmProcessingException, ToolCall
 from app.llm.mcp_client import McpTool
 from app.llm.mcp_router import McpRouter
 from app.llm.openai_client import OpenAiClient
@@ -136,7 +137,7 @@ class TestOpenAiClient:
             }
         }
         """
-        response = openai_client.parse_response(raw)
+        response = openai_client.parse_response(json.loads(raw))
         assert response.text == "Hello, how can I help?"
         assert not response.has_tool_calls()
 
@@ -156,7 +157,7 @@ class TestOpenAiClient:
             }
         }
         """
-        response = openai_client.parse_response(raw)
+        response = openai_client.parse_response(json.loads(raw))
         assert response.text == ""
         assert response.has_tool_calls()
         assert len(response.tool_calls) == 1
@@ -168,7 +169,8 @@ class TestOpenAiClient:
         conv = []
         openai_client.add_tool_calls_to_conversation(
             conv,
-            openai_client.parse_response("""
+            openai_client.parse_response(
+                json.loads("""
         {
             "output": [{
                 "type": "function_call",
@@ -177,7 +179,8 @@ class TestOpenAiClient:
                 "arguments": "{\\"uuid\\": \\"abc-123\\"}"
             }]
         }
-        """),
+        """)
+            ),
         )
 
         assert len(conv) == 1
@@ -213,7 +216,7 @@ class TestOpenAiClient:
         mock_ctx.__aenter__.return_value = mock_session
         openai_client.db_manager.session.return_value = mock_ctx
 
-        await openai_client.save_usage(raw, 123)
+        await openai_client.save_usage(json.loads(raw), 123)
 
         assert mock_session.add.called
         usage = mock_session.add.call_args[0][0]
@@ -225,3 +228,73 @@ class TestOpenAiClient:
 
     def test_get_provider_name(self, openai_client: OpenAiClient):
         assert openai_client.get_provider_name() == "OpenAI"
+
+
+class TestCallApiReturnsADecodedBody:
+    """The response body is parsed once, at the edge, and travels as a dict."""
+
+    @staticmethod
+    def _client(settings: Settings, transport: httpx.MockTransport) -> OpenAiClient:
+        mcp_router = MagicMock(spec=McpRouter)
+        mcp_router.list_tools.return_value = []
+        chat_history_service = MagicMock(spec=ChatHistoryService)
+        chat_history_service.get_history = AsyncMock(return_value=[])
+        return OpenAiClient(
+            settings=settings,
+            mcp_router=mcp_router,
+            chat_history_service=chat_history_service,
+            faq_embedding_service=MagicMock(spec=FaqEmbeddingService),
+            db_manager=None,
+            http_client=httpx.AsyncClient(transport=transport),
+        )
+
+    @pytest.mark.asyncio
+    async def test_call_api_hands_back_a_dict(self, settings: Settings) -> None:
+        body = {"output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}]}
+        transport = httpx.MockTransport(lambda _r: httpx.Response(200, json=body))
+
+        payload = await self._client(settings, transport).call_api([], "", 1)
+
+        assert payload == body
+        assert isinstance(payload, dict)
+
+    @pytest.mark.asyncio
+    async def test_a_rate_limited_call_is_retried(self, settings: Settings) -> None:
+        attempts = 0
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return httpx.Response(429, json={"error": "slow down"})
+            return httpx.Response(200, json={"output": []})
+
+        payload = await self._client(settings, httpx.MockTransport(handler)).call_api([], "", 1)
+
+        assert attempts == 2
+        assert payload == {"output": []}
+
+    @pytest.mark.asyncio
+    async def test_a_body_that_is_not_json_becomes_a_processing_error(
+        self, settings: Settings
+    ) -> None:
+        transport = httpx.MockTransport(lambda _r: httpx.Response(200, text="<html>oops</html>"))
+
+        with pytest.raises(LlmProcessingException) as exc_info:
+            await self._client(settings, transport).call_api([], "", 1)
+
+        assert "Ошибка обработки ответа модели." == exc_info.value.user_friendly_message
+
+    @pytest.mark.asyncio
+    async def test_an_unauthorised_call_is_not_retried(self, settings: Settings) -> None:
+        attempts = 0
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            nonlocal attempts
+            attempts += 1
+            return httpx.Response(401, json={"error": "bad key"})
+
+        with pytest.raises(LlmProcessingException):
+            await self._client(settings, httpx.MockTransport(handler)).call_api([], "", 1)
+
+        assert attempts == 1

@@ -6,15 +6,16 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from app.config import Settings
+from app.config import Settings, reveal
 from app.constants import SupportPrompt
 from app.llm.base import (
     AbstractLlmClient,
     LlmProcessingException,
     LlmResponse,
+    TokenUsage,
     ToolCall,
 )
-from app.storage.models import LlmTokenUsage
+from app.retry import post_with_retry
 
 if TYPE_CHECKING:
     from app.llm.mcp_router import McpRouter
@@ -104,7 +105,7 @@ class GeminiClient(AbstractLlmClient):
         self.base_url = (
             settings.gemini_base_url or "https://generativelanguage.googleapis.com/v1beta"
         ).rstrip("/")
-        self.api_key = settings.gemini_api_key or ""
+        self.api_key = reveal(settings.gemini_api_key)
         self._http_client = http_client
         self._own_client = False
         self.sanitized_tools = self._build_sanitized_tools()
@@ -213,7 +214,7 @@ class GeminiClient(AbstractLlmClient):
         conversation: list[dict[str, Any]],
         faq_context: str,
         telegram_user_id: int,
-    ) -> str:
+    ) -> dict[str, Any]:
         url = f"{self.base_url}/models/{self.model}:generateContent"
         headers = {
             "Content-Type": "application/json",
@@ -222,18 +223,24 @@ class GeminiClient(AbstractLlmClient):
         body = self.build_request_body(conversation)
         logger.debug("Gemini request (%d tools available)", len(self.sanitized_tools))
 
-        response = await self.http_client.post(url, json=body, headers=headers)
+        response = await post_with_retry(
+            self.http_client,
+            url,
+            headers=headers,
+            json=body,
+            description="Gemini API",
+        )
         if response.status_code >= 400:
             logger.error("Gemini API error (%d): %s", response.status_code, response.text)
             raise LlmProcessingException(
                 f"Gemini API error: {response.status_code} - {response.text}",
                 "Произошла ошибка при обработке запроса. Попробуйте позже.",
             )
-        return response.text
+        return self.decode_json(response)
 
-    def parse_response(self, raw_response: str) -> LlmResponse:
+    def parse_response(self, payload: dict[str, Any]) -> LlmResponse:
         try:
-            json_response = json.loads(raw_response)
+            json_response = payload
             candidates = json_response.get("candidates")
             if not candidates or not isinstance(candidates, list) or len(candidates) == 0:
                 block_reason = (
@@ -348,23 +355,12 @@ class GeminiClient(AbstractLlmClient):
             conversation.append({"role": "model", "parts": [{"text": assistant_text}]})
         conversation.append({"role": "user", "parts": [{"text": instruction}]})
 
-    async def save_usage(self, raw_response: str, telegram_user_id: int) -> None:
-        if self.db_manager is None:
-            return
-        try:
-            json_response = json.loads(raw_response)
-            usage = json_response.get("usageMetadata")
-            if usage:
-                prompt_tokens = usage.get("promptTokenCount", 0)
-                completion_tokens = usage.get("candidatesTokenCount", 0)
-                total_tokens = usage.get("totalTokenCount", 0)
-                async with self.db_manager.session() as session:
-                    record = LlmTokenUsage(
-                        telegram_id=telegram_user_id,
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        total_tokens=total_tokens,
-                    )
-                    session.add(record)
-        except Exception as e:
-            logger.warning("Failed to save token usage: %s", e)
+    def extract_usage(self, payload: dict[str, Any]) -> TokenUsage | None:
+        usage = payload.get("usageMetadata")
+        if not isinstance(usage, dict):
+            return None
+        return TokenUsage(
+            prompt_tokens=int(usage.get("promptTokenCount") or 0),
+            completion_tokens=int(usage.get("candidatesTokenCount") or 0),
+            total_tokens=int(usage.get("totalTokenCount") or 0),
+        )

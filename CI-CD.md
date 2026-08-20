@@ -20,10 +20,15 @@ push → mcp-remnawave (main)
 
 | Job | Когда | Что делает |
 |-----|-------|------------|
-| `test` | всегда, включая PR | `ruff check .` и `pytest -v` на Python 3.12 (`uv`). Это merge-gate: именно его стоит требовать в branch protection |
+| `test` | всегда, включая PR | `ruff check .`, `ruff format --check .`, `mypy` и `pytest -v` (с порогом покрытия 85%) на Python 3.14 (`uv`). Это merge-gate: именно его стоит требовать в branch protection |
 | `build` | только не-PR (`master`, ручной запуск) | multi-arch образ (linux/amd64 + linux/arm64), пуш в Docker Hub |
 
 Теги образа: `latest`, `:{version из pyproject.toml}`, `:{sha}`.
+
+`latest` и `:{sha}` перезаписываются свободно, а версия — нет: перед пушем job
+проверяет, что тег `:{version}` ещё не опубликован, и падает с просьбой поднять
+версию в `pyproject.toml`. Иначе тег указывал бы на «последнюю сборку», и
+откатываться было бы не на что.
 
 `.github/workflows/deploy.yml` — отдельный ручной workflow (`workflow_dispatch`,
 на вход тег). Ходит по SSH на сервер, выставляет `BOT_TAG` и делает

@@ -20,7 +20,7 @@ class BufferedMessage:
     mime_type: str | None = None
 
     @classmethod
-    def from_text(cls, message: Any, text: str) -> "BufferedMessage":
+    def from_text(cls, message: Any, text: str) -> BufferedMessage:
         """Factory method for creating a text-only buffered message."""
         return cls(message=message, text=text, base64_image=None, mime_type=None)
 
@@ -37,14 +37,15 @@ class MessageBatch:
     mime_type: str | None = None
 
     @classmethod
-    def of(cls, messages: list[BufferedMessage]) -> "MessageBatch":
+    def of(cls, messages: list[BufferedMessage]) -> MessageBatch:
         """Create a merged batch from a list of buffered messages."""
         if not messages:
             raise ValueError("Cannot create MessageBatch from empty message list")
 
         last = messages[-1]
         ids = [
-            getattr(m.message, "message_id", None) or getattr(m.message, "id", 0) for m in messages
+            int(getattr(m.message, "message_id", None) or getattr(m.message, "id", 0) or 0)
+            for m in messages
         ]
 
         text_parts = [m.text for m in messages if m.text and str(m.text).strip()]
@@ -189,6 +190,31 @@ class UserMessageBuffer:
                 )
 
         task.add_done_callback(_done)
+
+    def pending_users(self) -> int:
+        """How many users have messages waiting for their window to close."""
+        return len(self._pending)
+
+    async def drain(self, sink: Callable[[MessageBatch], Any], timeout: float = 20.0) -> None:
+        """Answer what is already in hand, then wait for the answers to be sent.
+
+        On shutdown the alternative is silence: a message caught inside the
+        coalescing window, or an answer still being written, is simply dropped
+        and the user never learns the bot went away mid-question.
+        """
+        for user_id in list(self._pending):
+            self._flush(user_id, -1, sink)
+
+        if not self._inflight:
+            return
+
+        logger.info("Waiting for %d in-flight answer(s) before shutdown", len(self._inflight))
+        done, pending = await asyncio.wait(set(self._inflight), timeout=timeout)
+        if pending:
+            logger.warning("%d answer(s) did not finish in time — cancelling", len(pending))
+            for task in pending:
+                task.cancel()
+        self._inflight.clear()
 
     def shutdown(self) -> None:
         """Cancel all pending flush timers and any dispatch still in flight."""

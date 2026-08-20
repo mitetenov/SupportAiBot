@@ -12,7 +12,7 @@ from app.storage.models import (
     TopicMapping,
     User,
 )
-from app.storage.schema_sync import sync_legacy_schema
+from app.storage.schema import sync_legacy_schema
 
 __all__ = [
     "Base",

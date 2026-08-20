@@ -189,3 +189,65 @@ async def test_async_sink_task_returning_callback_execution():
 
     assert len(task_delivered) == 1
     assert task_delivered[0].text == "task 1\ntask 2"
+
+
+@pytest.mark.asyncio
+async def test_drain_answers_what_is_still_buffered():
+    """A message caught inside the coalescing window must not vanish on shutdown."""
+    buffer = UserMessageBuffer(window_ms=60_000, max_messages=10)
+    delivered: list[MessageBatch] = []
+
+    async def sink(batch: MessageBatch) -> None:
+        delivered.append(batch)
+
+    buffer.submit(1, BufferedMessage.from_text(make_msg(1), "не работает"), sink)
+    assert buffer.pending_users() == 1
+
+    await buffer.drain(sink)
+
+    assert [b.text for b in delivered] == ["не работает"]
+    assert buffer.pending_users() == 0
+
+
+@pytest.mark.asyncio
+async def test_drain_waits_for_an_answer_already_in_flight():
+    buffer = UserMessageBuffer(window_ms=0, max_messages=1)
+    finished = False
+
+    async def slow_sink(_batch: MessageBatch) -> None:
+        nonlocal finished
+        await asyncio.sleep(0.01)
+        finished = True
+
+    buffer.submit(1, BufferedMessage.from_text(make_msg(1), "вопрос"), slow_sink)
+
+    await buffer.drain(slow_sink)
+
+    assert finished is True, "shutdown cut off an answer that was being written"
+
+
+@pytest.mark.asyncio
+async def test_drain_gives_up_on_an_answer_that_never_finishes():
+    buffer = UserMessageBuffer(window_ms=0, max_messages=1)
+
+    async def hanging_sink(_batch: MessageBatch) -> None:
+        await asyncio.sleep(3600)
+
+    buffer.submit(1, BufferedMessage.from_text(make_msg(1), "вопрос"), hanging_sink)
+
+    await buffer.drain(hanging_sink, timeout=0.01)
+
+    assert buffer._inflight == set()
+
+
+@pytest.mark.asyncio
+async def test_drain_on_an_idle_buffer_does_nothing():
+    buffer = UserMessageBuffer(window_ms=1000, max_messages=5)
+    calls: list[MessageBatch] = []
+
+    async def sink(batch: MessageBatch) -> None:
+        calls.append(batch)
+
+    await buffer.drain(sink)
+
+    assert calls == []

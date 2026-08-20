@@ -50,7 +50,7 @@ class TestFaqInitializer:
         mock_service.get_faq_count = AsyncMock(return_value=1)
         mock_service.get_indexed_faq_count = AsyncMock(return_value=1)
         mock_service.clear_faq = AsyncMock()
-        mock_service.index_faq = AsyncMock()
+        mock_service.index_faq_batch = AsyncMock(return_value=0)
         mock_service.update_faq_hash = AsyncMock()
         mock_service.mark_ready = MagicMock()
 
@@ -62,7 +62,7 @@ class TestFaqInitializer:
 
         mock_service.init_schema.assert_awaited_once()
         mock_service.clear_faq.assert_not_called()
-        mock_service.index_faq.assert_not_called()
+        mock_service.index_faq_batch.assert_not_called()
         mock_service.update_faq_hash.assert_not_called()
         mock_service.mark_ready.assert_called_once()
 
@@ -81,7 +81,7 @@ class TestFaqInitializer:
         mock_service.get_faq_count = AsyncMock(return_value=0)
         mock_service.get_indexed_faq_count = AsyncMock(return_value=0)
         mock_service.clear_faq = AsyncMock()
-        mock_service.index_faq = AsyncMock()
+        mock_service.index_faq_batch = AsyncMock(return_value=2)
         mock_service.update_faq_hash = AsyncMock()
         mock_service.mark_ready = MagicMock()
 
@@ -90,9 +90,12 @@ class TestFaqInitializer:
 
         mock_service.init_schema.assert_awaited_once()
         mock_service.clear_faq.assert_awaited_once()
-        assert mock_service.index_faq.await_count == 2
-        mock_service.index_faq.assert_any_await("Q1", "A1", "k1, k2")
-        mock_service.index_faq.assert_any_await("Q2", "A2", "single_keyword")
+        mock_service.index_faq_batch.assert_awaited_once()
+        indexed = mock_service.index_faq_batch.await_args.args[0]
+        assert [(e.question, e.answer, e.keywords) for e in indexed] == [
+            ("Q1", "A1", "k1, k2"),
+            ("Q2", "A2", "single_keyword"),
+        ]
         mock_service.update_faq_hash.assert_awaited_once()
         mock_service.mark_ready.assert_called_once()
 
@@ -129,7 +132,7 @@ class TestFaqInitializer:
         mock_service.get_faq_count = AsyncMock(return_value=2)
         mock_service.get_indexed_faq_count = AsyncMock(return_value=0)
         mock_service.clear_faq = AsyncMock()
-        mock_service.index_faq = AsyncMock()
+        mock_service.index_faq_batch = AsyncMock(return_value=0)
         mock_service.update_faq_hash = AsyncMock()
         mock_service.mark_ready = MagicMock()
 
@@ -139,7 +142,8 @@ class TestFaqInitializer:
         await initializer.run()
 
         mock_service.clear_faq.assert_awaited_once()
-        assert mock_service.index_faq.await_count == 2
+        indexed = mock_service.index_faq_batch.await_args.args[0]
+        assert [e.question for e in indexed] == ["Q1", "Q2"]
         mock_service.mark_ready.assert_called_once()
 
     @pytest.mark.asyncio
@@ -152,7 +156,7 @@ class TestFaqInitializer:
         mock_service.get_faq_count = AsyncMock(return_value=10)
         mock_service.get_indexed_faq_count = AsyncMock(return_value=9)
         mock_service.clear_faq = AsyncMock()
-        mock_service.index_faq = AsyncMock()
+        mock_service.index_faq_batch = AsyncMock(return_value=0)
         mock_service.update_faq_hash = AsyncMock()
         mock_service.mark_ready = MagicMock()
 
@@ -162,3 +166,48 @@ class TestFaqInitializer:
         await initializer.run()
 
         mock_service.clear_faq.assert_awaited_once()
+
+
+class TestPartialIndexingKeepsTheHashStale:
+    """A run that could not embed everything must not claim the file is indexed."""
+
+    @pytest.mark.asyncio
+    async def test_hash_is_not_stored_when_some_entries_failed(self, tmp_path: Path) -> None:
+        faq_file = tmp_path / "faq.json"
+        faq_file.write_text(
+            json.dumps([{"question": "Q1", "answer": "A1"}, {"question": "Q2", "answer": "A2"}]),
+            encoding="utf-8",
+        )
+
+        mock_service = MagicMock()
+        mock_service.init_schema = AsyncMock()
+        mock_service.get_faq_hash = AsyncMock(return_value="stale")
+        mock_service.get_faq_count = AsyncMock(return_value=0)
+        mock_service.get_indexed_faq_count = AsyncMock(return_value=0)
+        mock_service.clear_faq = AsyncMock()
+        mock_service.index_faq_batch = AsyncMock(return_value=1)
+        mock_service.update_faq_hash = AsyncMock()
+        mock_service.mark_ready = MagicMock()
+
+        await FaqInitializer(service=mock_service, faq_path=faq_file).run()
+
+        mock_service.update_faq_hash.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_hash_is_stored_when_every_entry_landed(self, tmp_path: Path) -> None:
+        faq_file = tmp_path / "faq.json"
+        faq_file.write_text(json.dumps([{"question": "Q1", "answer": "A1"}]), encoding="utf-8")
+
+        mock_service = MagicMock()
+        mock_service.init_schema = AsyncMock()
+        mock_service.get_faq_hash = AsyncMock(return_value="stale")
+        mock_service.get_faq_count = AsyncMock(return_value=0)
+        mock_service.get_indexed_faq_count = AsyncMock(return_value=0)
+        mock_service.clear_faq = AsyncMock()
+        mock_service.index_faq_batch = AsyncMock(return_value=1)
+        mock_service.update_faq_hash = AsyncMock()
+        mock_service.mark_ready = MagicMock()
+
+        await FaqInitializer(service=mock_service, faq_path=faq_file).run()
+
+        mock_service.update_faq_hash.assert_awaited_once()
