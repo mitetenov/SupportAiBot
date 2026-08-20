@@ -46,6 +46,10 @@ class Case:
     query: str
     source: str
     expected: list[str]
+    #: True when this query's exact wording was added to an FAQ entry's keywords.
+    #: Such a case scores that edit, not the retrieval settings, so it is kept
+    #: out of the headline number.
+    tuned_for: bool = False
 
     @property
     def is_control(self) -> bool:
@@ -60,16 +64,21 @@ class Score:
     control_false_matches: int = 0
     positives: int = 0
     controls: int = 0
+    #: Same counters over the cases whose wording was not used for keyword edits.
+    held_hit_at_1: int = 0
+    held_hit_at_k: int = 0
+    held_positives: int = 0
 
     def line(self, min_sim: float, limit: int) -> str:
-        recall1 = self.hit_at_1 / self.positives if self.positives else 0.0
-        recallk = self.hit_at_k / self.positives if self.positives else 0.0
-        noise = self.control_false_matches / self.controls if self.controls else 0.0
+        def pct(n: int, d: int) -> str:
+            return f"{n / d:>6.0%}" if d else "     -"
+
         return (
             f"{min_sim:>5.2f} {limit:>5}  "
-            f"{self.hit_at_1:>3}/{self.positives:<3} {recall1:>6.0%}  "
-            f"{self.hit_at_k:>3}/{self.positives:<3} {recallk:>6.0%}  "
-            f"{self.control_false_matches:>3}/{self.controls:<3} {noise:>6.0%}"
+            f"{self.held_hit_at_1:>2}/{self.held_positives:<2} {pct(self.held_hit_at_1, self.held_positives)}  "
+            f"{self.held_hit_at_k:>2}/{self.held_positives:<2} {pct(self.held_hit_at_k, self.held_positives)}  "
+            f"{pct(self.hit_at_1, self.positives)}  {pct(self.hit_at_k, self.positives)}  "
+            f"{self.control_false_matches:>2}/{self.controls:<2} {pct(self.control_false_matches, self.controls)}"
         )
 
 
@@ -78,33 +87,58 @@ def load_cases() -> list[Case]:
     return [Case(**c) for c in payload["cases"]]
 
 
-def set_fallbacks(enabled: bool) -> None:
-    """Turn the connection/referral topic fallbacks on or off.
-
-    search_with_fallback runs an extra canned search whenever the query trips a
-    keyword list, then re-sorts everything by RRF score. The canned query is a
-    near-exact match for its own FAQ entry, so it scores higher than whatever
-    the user actually asked about — the ablation measures how much rank 1 that
-    costs.
-    """
-    if enabled:
-        FaqEmbeddingService._looks_like_connection_issue = staticmethod(  # type: ignore[method-assign]
-            _real_connection
-        )
-        FaqEmbeddingService._looks_like_referral_query = staticmethod(  # type: ignore[method-assign]
-            _real_referral
-        )
-    else:
-        FaqEmbeddingService._looks_like_connection_issue = staticmethod(  # type: ignore[method-assign]
-            lambda query: False
-        )
-        FaqEmbeddingService._looks_like_referral_query = staticmethod(  # type: ignore[method-assign]
-            lambda query: False
-        )
-
-
 _real_connection = FaqEmbeddingService._looks_like_connection_issue
 _real_referral = FaqEmbeddingService._looks_like_referral_query
+_real_search_with_fallback = FaqEmbeddingService.search_with_fallback
+
+#: How the topic fallbacks behave in a given run.
+#:  "compete" — what ships: fallback hits are merged in and everything is
+#:              re-sorted by RRF score, so a canned query that matches its own
+#:              FAQ entry almost exactly can take rank 1 from the user's actual
+#:              question.
+#:  "append"  — fallback hits keep the primary ranking above them: they can only
+#:              fill positions the primary search left empty.
+#:  "off"     — no fallback search at all.
+FallbackMode = str
+FALLBACK_MODES: tuple[FallbackMode, ...] = ("compete", "append", "off")
+
+
+async def _search_appending(
+    self: FaqEmbeddingService,
+    query: str,
+    exclude: set[str] | None = None,
+) -> list[rag.FaqResult]:
+    """search_with_fallback, but fallback hits never outrank the primary ones."""
+    searches = [self.search(query, exclude)]
+    if _real_connection(query):
+        searches.append(self.search(rag.CONNECTION_FAQ_QUERY, exclude))
+    if _real_referral(query):
+        searches.append(self.search(rag.REFERRAL_FAQ_QUERY, exclude))
+
+    primary, *fallbacks = await asyncio.gather(*searches)
+
+    results = sorted(primary, key=lambda r: r.rrf_score, reverse=True)
+    for fallback in fallbacks:
+        self._merge_deduped(results, sorted(fallback, key=lambda r: r.rrf_score, reverse=True))
+    return results[: rag.MAX_RESULTS]
+
+
+def set_fallback_mode(mode: FallbackMode) -> None:
+    """Install one of the three fallback behaviours for the next run."""
+    predicate_on = mode != "off"
+    FaqEmbeddingService._looks_like_connection_issue = staticmethod(  # type: ignore[method-assign]
+        _real_connection if predicate_on else lambda query: False
+    )
+    FaqEmbeddingService._looks_like_referral_query = staticmethod(  # type: ignore[method-assign]
+        _real_referral if predicate_on else lambda query: False
+    )
+    FaqEmbeddingService.search_with_fallback = (  # type: ignore[method-assign]
+        _searching_appending_or_real(mode)
+    )
+
+
+def _searching_appending_or_real(mode: FallbackMode):  # type: ignore[no-untyped-def]
+    return _search_appending if mode == "append" else _real_search_with_fallback
 
 
 async def score_grid_point(
@@ -133,12 +167,19 @@ async def score_grid_point(
             continue
 
         score.positives += 1
-        if top in case.expected:
+        first = top in case.expected
+        within = any(q in case.expected for q in found)
+        if first:
             score.hit_at_1 += 1
-        if any(q in case.expected for q in found):
+        if within:
             score.hit_at_k += 1
         else:
             score.missed += 1
+
+        if not case.tuned_for:
+            score.held_positives += 1
+            score.held_hit_at_1 += int(first)
+            score.held_hit_at_k += int(within)
 
     return score, detail
 
@@ -157,9 +198,10 @@ async def main() -> None:
         help="print per-query results for this MIN_VECTOR_SIMILARITY",
     )
     parser.add_argument(
-        "--detail-fallbacks",
-        action="store_true",
-        help="take the per-query detail from the run with topic fallbacks on",
+        "--detail-mode",
+        choices=FALLBACK_MODES,
+        default="append",
+        help="which fallback mode the per-query detail comes from",
     )
     args = parser.parse_args()
 
@@ -186,30 +228,40 @@ async def main() -> None:
         f"\n{len(cases)} queries — {sum(1 for c in cases if not c.is_control)} labelled, "
         f"{sum(1 for c in cases if c.is_control)} off-topic controls\n"
     )
-    print("  sim limit      hit@1           hit@k          off-topic noise")
-    print("  " + "-" * 62)
+    held = sum(1 for c in cases if c.expected and not c.tuned_for)
+    tuned = sum(1 for c in cases if c.tuned_for)
+    print(
+        f"  {held} of the labelled queries are held out of keyword tuning; "
+        f"{tuned} had their wording used and are shown only in the 'all' columns.\n"
+    )
+    print("  sim limit   held-out hit@1  held-out hit@k    all@1   all@k   off-topic")
+    print("  " + "-" * 74)
 
+    labels = {
+        "compete": "fallbacks compete for rank 1 (ships today)",
+        "append": "fallbacks append below the primary ranking",
+        "off": "no fallbacks",
+    }
     details: dict[float, list[tuple[Case, str | None]]] = {}
-    for fallbacks in (True, False):
-        set_fallbacks(fallbacks)
-        print(f"\n  topic fallbacks: {'on (ships today)' if fallbacks else 'off'}")
+    for mode in FALLBACK_MODES:
+        set_fallback_mode(mode)
+        print(f"\n  {labels[mode]}")
         for min_sim, limit in GRID:
             score, detail = await score_grid_point(faq_service, cases, min_sim, limit)
             marker = (
                 "  <- ships today"
-                if fallbacks and (min_sim, limit) == (baseline_sim, baseline_limit)
+                if mode == "compete" and (min_sim, limit) == (baseline_sim, baseline_limit)
                 else ""
             )
             print("  " + score.line(min_sim, limit) + marker)
-            if limit == 5 and fallbacks == args.detail_fallbacks:
+            if limit == 5 and mode == args.detail_mode:
                 details[min_sim] = detail
-    set_fallbacks(True)
+    set_fallback_mode("compete")
 
     if args.detail_at is not None and args.detail_at in details:
-        state = "on" if args.detail_fallbacks else "off"
         print(
             f"\nPer-query at MIN_VECTOR_SIMILARITY={args.detail_at}, SEARCH_LIMIT=5, "
-            f"fallbacks {state}:\n"
+            f"fallbacks {args.detail_mode}:\n"
         )
         for case, top in details[args.detail_at]:
             if case.is_control:

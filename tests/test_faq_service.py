@@ -237,9 +237,35 @@ class TestFaqSearchLogic:
 
         results = await service.search_with_fallback("У меня не работает впн")
         assert len(results) == 2
-        # Deduplicated and sorted by rrf_score desc
-        assert results[0].question == "Не могу подключиться к VPN"
-        assert results[1].question == "Не работает VPN"
+        # The fallback widens the context without displacing the primary hit.
+        assert results[0].question == "Не работает VPN"
+        assert results[1].question == "Не могу подключиться к VPN"
+
+    @pytest.mark.asyncio
+    async def test_a_fallback_hit_never_outranks_what_the_user_asked_about(self) -> None:
+        """The canned topic query matches its own FAQ entry almost exactly.
+
+        Scored against the user's real question it wins on RRF nearly every
+        time, and the keyword list that triggers it contains "подписк" — so a
+        billing question was answered with connection troubleshooting at rank 1.
+        """
+        provider = DummyEmbeddingProvider(dimension=4)
+        service = FaqEmbeddingService(db_manager=MagicMock(), embedding_provider=provider)
+        service.mark_ready()
+
+        async def mock_search_fn(q: str, exclude: set[str] | None = None) -> list[FaqResult]:
+            if q == CONNECTION_FAQ_QUERY:
+                return [FaqResult("Не могу подключиться к VPN", "Инструкция", 0.88, 0.03)]
+            return [FaqResult("Как отменить подписку", "Управление подпиской", 0.61, 0.02)]
+
+        service.search = AsyncMock(side_effect=mock_search_fn)  # type: ignore[method-assign]
+
+        results = await service.search_with_fallback("хочу отменить подписку")
+
+        assert [r.question for r in results] == [
+            "Как отменить подписку",
+            "Не могу подключиться к VPN",
+        ]
 
     @pytest.mark.asyncio
     async def test_search_with_fallback_referral_query(self) -> None:
@@ -262,8 +288,8 @@ class TestFaqSearchLogic:
 
         results = await service.search_with_fallback("Где моя партнерская ссылка?")
         assert len(results) == 2
-        assert results[0].question == "Реферальная программа"
-        assert results[1].question == "Партнерка"
+        assert results[0].question == "Партнерка"
+        assert results[1].question == "Реферальная программа"
 
     @pytest.mark.asyncio
     async def test_build_faq_context_formats_and_filters_excluded(self) -> None:
