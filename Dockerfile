@@ -14,11 +14,13 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 COPY --from=uv-bin /uv /uvx /bin/
 
-# Install dependencies in an isolated virtual environment
-COPY pyproject.toml ./
+# Install dependencies from the lock file, so an image built today and one built
+# in six months contain the same versions. --no-install-project keeps this layer
+# dependent on pyproject.toml/uv.lock alone: application code is copied later and
+# runs from the working directory, so editing it does not re-resolve anything.
+COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv venv /app/.venv && \
-    uv pip install --no-cache -r pyproject.toml
+    uv sync --frozen --no-dev --no-install-project
 
 # =============================================================================
 # Stage 2: Runtime
