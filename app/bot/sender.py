@@ -2,9 +2,11 @@
 
 import logging
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from aiogram import Bot
+from aiogram.types import FSInputFile
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,10 @@ class TelegramMessageSender:
 
     def __init__(self, bot: Bot) -> None:
         self.bot = bot
+        # Telegram hands back a file_id for anything it has stored. Sending that
+        # instead of the bytes turns every repeat of the same illustration into
+        # one ordinary API call, so a picture is uploaded once per process.
+        self._file_ids: dict[str, str] = {}
 
     async def send(
         self,
@@ -88,6 +94,51 @@ class TelegramMessageSender:
                 await self.bot.send_message(**kwargs)
             except Exception as e:
                 logger.error("Failed to send message to %s: %s", chat_id, e)
+
+    async def send_photo(
+        self,
+        chat_id: int,
+        path: Path,
+        message_thread_id: int | None = None,
+    ) -> int | None:
+        """Send a picture from disk, returning the new message ID or None.
+
+        An illustration is an extra on top of an answer that has already been
+        delivered, so every way this can fail — the file missing from the image,
+        a flood wait, the user having blocked the bot — is logged and swallowed.
+        """
+        key = str(path)
+        photo: str | FSInputFile
+        cached = self._file_ids.get(key)
+
+        if cached is not None:
+            photo = cached
+        else:
+            if not path.is_file():
+                logger.warning("Illustration %s is not in the image — skipping it", path)
+                return None
+            photo = FSInputFile(path)
+
+        kwargs: dict[str, Any] = {"chat_id": chat_id, "photo": photo}
+        if message_thread_id is not None:
+            kwargs["message_thread_id"] = message_thread_id
+
+        try:
+            result = await self.bot.send_photo(**kwargs)
+        except Exception as e:
+            logger.error("Failed to send photo %s to %s: %s", path, chat_id, e)
+            return None
+
+        if cached is None:
+            self._remember_file_id(key, result)
+        return getattr(result, "message_id", None)
+
+    def _remember_file_id(self, key: str, result: Any) -> None:
+        """Keep the file_id Telegram assigned to a freshly uploaded picture."""
+        sizes = getattr(result, "photo", None) or []
+        file_id = getattr(sizes[-1], "file_id", None) if sizes else None
+        if file_id:
+            self._file_ids[key] = str(file_id)
 
     async def copy_message(
         self,

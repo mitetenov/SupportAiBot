@@ -541,3 +541,48 @@ class TestFallbacksRunConcurrently:
         await service.search_with_fallback("впн не работает, где реферальная ссылка")
 
         assert peak == 3, f"searches ran with only {peak} in flight at once"
+
+
+class TestIllustratedEntries:
+    """A screenshot named by an entry has to reach the code that sends it."""
+
+    @pytest.mark.asyncio
+    async def test_index_faq_stores_the_image_name(self) -> None:
+        session = MagicMock()
+        session.execute = AsyncMock()
+        db_manager = MagicMock()
+        db_manager.session.return_value.__aenter__.return_value = session
+
+        service = FaqEmbeddingService(
+            db_manager=db_manager, embedding_provider=DummyEmbeddingProvider(dimension=4)
+        )
+        await service.index_faq("Где кнопка?", "Слева", "кнопка", image="happ-buttons.png")
+
+        params = session.execute.await_args.args[1]
+        assert params["image"] == "happ-buttons.png"
+
+    @pytest.mark.asyncio
+    async def test_search_returns_the_image_name_with_the_hit(self) -> None:
+        row = MagicMock()
+        row.question = "Где кнопка?"
+        row.answer = "Слева"
+        row.vector_sim = 0.8
+        row.fts_rank = 0.1
+        row.rrf_score = 0.03
+        row.image = "happ-buttons.png"
+
+        result = MagicMock()
+        result.fetchall.return_value = [row]
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=result)
+        db_manager = MagicMock()
+        db_manager.session.return_value.__aenter__.return_value = session
+
+        service = FaqEmbeddingService(
+            db_manager=db_manager, embedding_provider=DummyEmbeddingProvider(dimension=4)
+        )
+        service.mark_ready()
+
+        hits = await service.search("где кнопка обновить")
+
+        assert hits[0].image == "happ-buttons.png"

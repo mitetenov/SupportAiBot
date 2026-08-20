@@ -154,11 +154,13 @@ async def ensure_faq_search_schema(session: AsyncSession, dimension: int) -> boo
     rebuilt = await ensure_vector_column(session, "faq", "embedding", dimension)
 
     try:
-        # Columns the Java service carried that nothing reads any more.
-        await session.execute(text("ALTER TABLE faq DROP COLUMN IF EXISTS image"))
+        # "images" is a column the Java service carried that nothing reads any
+        # more. "image" is read again — an entry names a screenshot to send with
+        # its answer — so it is added here for databases created before that.
         await session.execute(text("ALTER TABLE faq DROP COLUMN IF EXISTS images"))
+        await session.execute(text("ALTER TABLE faq ADD COLUMN IF NOT EXISTS image VARCHAR(255)"))
     except Exception as e:
-        logger.warning("Could not drop legacy FAQ columns: %s", e)
+        logger.warning("Could not reconcile FAQ columns: %s", e)
 
     await ensure_hnsw_index(session, "faq", "embedding")
     try:

@@ -78,6 +78,7 @@ class FaqInitializer:
                     question=entry["question"],
                     answer=entry["answer"],
                     keywords=self.extract_keywords(entry.get("keywords")),
+                    image=self.extract_image(entry.get("image")),
                 )
                 for entry in entries
                 if entry.get("question") and entry.get("answer")
@@ -117,6 +118,13 @@ class FaqInitializer:
         except Exception as e:
             logger.error("Failed to compute FAQ file hash for %s: %s", file_path, e)
             return None
+
+    @staticmethod
+    def extract_image(image_value: Any) -> str | None:
+        """Normalise the optional image file name on an entry."""
+        if isinstance(image_value, str) and image_value.strip():
+            return image_value.strip()
+        return None
 
     @staticmethod
     def extract_keywords(keywords_value: Any) -> str | None:

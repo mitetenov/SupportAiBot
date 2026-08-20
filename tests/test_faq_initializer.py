@@ -211,3 +211,36 @@ class TestPartialIndexingKeepsTheHashStale:
         await FaqInitializer(service=mock_service, faq_path=faq_file).run()
 
         mock_service.update_faq_hash.assert_awaited_once()
+
+
+class TestIllustrations:
+    """An entry may name a screenshot to send alongside the answer."""
+
+    @pytest.mark.asyncio
+    async def test_carries_the_image_name_into_the_indexed_entry(self, tmp_path: Path) -> None:
+        faq_file = tmp_path / "faq.json"
+        faq_file.write_text(
+            json.dumps(
+                [
+                    {"question": "Где кнопка?", "answer": "Слева", "image": "happ-buttons.png"},
+                    {"question": "Сколько устройств?", "answer": "Зависит от тарифа"},
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        service = MagicMock()
+        service.init_schema = AsyncMock()
+        service.get_faq_hash = AsyncMock(return_value=None)
+        service.get_faq_count = AsyncMock(return_value=0)
+        service.get_indexed_faq_count = AsyncMock(return_value=0)
+        service.clear_faq = AsyncMock()
+        service.index_faq_batch = AsyncMock(return_value=2)
+        service.update_faq_hash = AsyncMock()
+        service.mark_ready = MagicMock()
+
+        await FaqInitializer(service=service, faq_path=faq_file).run()
+
+        indexed = service.index_faq_batch.await_args.args[0]
+        assert indexed[0].image == "happ-buttons.png"
+        assert indexed[1].image is None

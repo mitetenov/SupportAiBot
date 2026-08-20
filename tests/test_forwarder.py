@@ -217,3 +217,73 @@ async def test_forward_error_to_topic(mock_db):
     assert "Error response" in first_call_text
     assert "@admin" in second_call_text
     assert "DeepSeek 500 server error" in second_call_text
+
+
+@pytest.mark.asyncio
+async def test_the_illustration_lands_in_the_topic_after_the_answer(mock_db):
+    """The operator needs the picture in the thread to point at it in a reply.
+
+    Copying it out of the user's own chat is also what records the mapping, so
+    an operator replying to it reaches the user as a reply to that same picture.
+    """
+    bot = MagicMock()
+    bot.copy_message = AsyncMock(
+        side_effect=[DummyCopyMessageResult(200), DummyCopyMessageResult(201)]
+    )
+    bot.send_message = AsyncMock()
+
+    topic_manager = MagicMock()
+    topic_manager.resolve_topic_id = AsyncMock(return_value=42)
+
+    forwarder = SupportGroupForwarder(
+        sender=TelegramMessageSender(bot),
+        topic_manager=topic_manager,
+        db_manager=mock_db,
+        support_group_chat_id=-100123,
+        admin_username="admin",
+    )
+
+    await forwarder.forward_to_support(
+        user_chat_id=1,
+        user_message_ids=[100],
+        user=DummyUser(1, username="johndoe"),
+        bot_response="Нажмите левую кнопку",
+        needs_escalation=False,
+        illustration_message_id=907,
+    )
+
+    assert bot.copy_message.await_args_list[-1].kwargs["message_id"] == 907
+    # Text first, picture after: the thread reads in the order the user saw it.
+    assert bot.send_message.await_count == 1
+
+    picture_mapping = mock_db.message_mappings[-1]
+    assert picture_mapping.topic_message_id == 201
+    assert picture_mapping.user_chat_id == 1
+    assert picture_mapping.user_message_id == 907
+
+
+@pytest.mark.asyncio
+async def test_no_illustration_means_nothing_extra_is_copied(mock_db):
+    bot = MagicMock()
+    bot.copy_message = AsyncMock(return_value=DummyCopyMessageResult(200))
+    bot.send_message = AsyncMock()
+
+    topic_manager = MagicMock()
+    topic_manager.resolve_topic_id = AsyncMock(return_value=42)
+
+    forwarder = SupportGroupForwarder(
+        sender=TelegramMessageSender(bot),
+        topic_manager=topic_manager,
+        db_manager=mock_db,
+        support_group_chat_id=-100123,
+    )
+
+    await forwarder.forward_to_support(
+        user_chat_id=1,
+        user_message_ids=[100],
+        user=DummyUser(1),
+        bot_response="Ответ",
+        needs_escalation=False,
+    )
+
+    assert bot.copy_message.await_count == 1

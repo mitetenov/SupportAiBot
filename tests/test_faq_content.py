@@ -118,3 +118,28 @@ class TestGapsOperatorsAnsweredByHand:
     def test_the_prompt_offers_the_proxy_fallback_during_diagnosis(self) -> None:
         assert "TUN" in SupportPrompt.SYSTEM
         assert "Proxy" in SupportPrompt.SYSTEM
+
+
+class TestIllustratedEntries:
+    """An entry may name a screenshot; the file has to actually ship with it."""
+
+    def test_every_named_image_exists_in_the_image_directory(
+        self, entries: list[dict[str, Any]]
+    ) -> None:
+        missing = [
+            e["image"]
+            for e in entries
+            if e.get("image") and not (Path("faq/images") / e["image"]).is_file()
+        ]
+        assert not missing, f"faq.json names images that are not in faq/images/: {missing}"
+
+    def test_the_button_question_is_covered(self, entries: list[dict[str, Any]]) -> None:
+        """Six repeats in /gaps and no entry at all — every instruction said
+        "press the left button" and nothing said where that button is.
+
+        The entry stands on its own in text. Adding "image": "happ-buttons.png"
+        once the screenshot is in faq/images/ is the whole of turning the
+        picture on; the test above is what stops it being named before then.
+        """
+        entry = find(entries, "где кнопка обновить")
+        assert "слева от надписи vpn" in entry["answer"].lower()

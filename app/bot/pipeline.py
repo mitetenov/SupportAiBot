@@ -10,7 +10,7 @@ from app.bot.keyed_lock import KeyedLock
 from app.bot.rate_limiter import UserRateLimiter
 from app.bot.sender import TelegramMessageSender
 from app.bot.typing import TypingIndicator
-from app.constants import get_message
+from app.constants import faq_image_path, get_message
 from app.llm.base import LlmClient, LlmProcessingException
 from app.llm.escalation import EscalationPolicy
 from app.rag.knowledge_gaps import KnowledgeGapService
@@ -107,6 +107,7 @@ class UserMessagePipeline:
                 response = get_message("bot.llm.empty")
 
             await self.sender.send(chat_id, response)
+            illustration_message_id = await self._send_illustration(chat_id, reply.faq_context)
 
             escalate = EscalationPolicy.model_requested_escalation(
                 reply.text
@@ -118,6 +119,7 @@ class UserMessagePipeline:
                 user,
                 response,
                 escalate,
+                illustration_message_id=illustration_message_id,
             )
             # batch.user_text, not text: a captionless screenshot carries a prompt
             # we wrote, and reporting it back as the user's question fills /gaps
@@ -139,6 +141,24 @@ class UserMessagePipeline:
             await self.report_failure(batch, user, get_message("bot.llm.error"), e, chat_id)
         finally:
             session.close()
+
+    async def _send_illustration(self, chat_id: int, faq_context: Any) -> int | None:
+        """Send the screenshot named by the best-matching FAQ entry, if it names one.
+
+        The entry that came back first is the one the answer was most likely
+        built from, so its picture is the one to show. Getting that wrong costs
+        a stray screenshot under a correct answer, which is why this is decided
+        here from the retrieval result rather than by asking the model to mark
+        it — a marker would cost tokens on every request instead.
+        """
+        results = getattr(faq_context, "results", None) or []
+        if not results:
+            return None
+
+        path = faq_image_path(getattr(results[0], "image", None))
+        if path is None:
+            return None
+        return await self.sender.send_photo(chat_id, path)
 
     async def report_failure(
         self,

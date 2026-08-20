@@ -11,6 +11,9 @@ class FaqEntry:
     question: str
     answer: str
     keywords: str | None = None
+    #: File name under faq/images/ to send alongside the answer, when the entry
+    #: is better shown than described.
+    image: str | None = None
 
 
 @dataclass(frozen=True)
@@ -21,6 +24,7 @@ class FaqResult:
     answer: str
     similarity: float
     rrf_score: float
+    image: str | None = None
 
 
 @dataclass(frozen=True)
