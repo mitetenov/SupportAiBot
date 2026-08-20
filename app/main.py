@@ -115,6 +115,7 @@ async def main() -> None:
     health_runner: web.AppRunner | None = None
     mcp_client: HttpMcpClient | None = None
     message_buffer: UserMessageBuffer | None = None
+    pipeline: UserMessagePipeline | None = None
     typing_indicator: TypingIndicator | None = None
     maintenance: MaintenanceScheduler | None = None
 
@@ -271,10 +272,16 @@ async def main() -> None:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
     finally:
+        # aiogram installs its own SIGINT/SIGTERM handlers in start_polling, so
+        # `docker stop` unwinds through here rather than killing the process.
         logger.info("Shutting down VPN Support Bot...")
         if maintenance is not None:
             await maintenance.stop()
         if message_buffer is not None:
+            # Anything still buffered or being answered gets its turn first;
+            # only then do the clients it needs get closed underneath it.
+            if pipeline is not None:
+                await message_buffer.drain(pipeline.handle)
             message_buffer.shutdown()
         if typing_indicator is not None:
             typing_indicator.shutdown()

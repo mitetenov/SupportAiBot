@@ -6,6 +6,7 @@ from typing import Any
 from app.bot.buffer import MessageBatch
 from app.bot.conversation_state import ConversationState
 from app.bot.forwarder import SupportGroupForwarder
+from app.bot.keyed_lock import KeyedLock
 from app.bot.rate_limiter import UserRateLimiter
 from app.bot.sender import TelegramMessageSender
 from app.bot.typing import TypingIndicator
@@ -39,9 +40,18 @@ class UserMessagePipeline:
         self.knowledge_gap_service = knowledge_gap_service
         self.conversation_state = conversation_state
         self.typing_indicator = typing_indicator
+        # One turn per user at a time. Two batches answered concurrently for the
+        # same person interleave their writes to the chat history, and the model
+        # sees a conversation neither of them actually had.
+        self._turns = KeyedLock()
 
     async def handle(self, batch: MessageBatch) -> None:
-        """Process an incoming coalesced message batch."""
+        """Process an incoming coalesced message batch, one turn per user."""
+        user_id = getattr(batch.user, "id", None) or getattr(batch.last_message.chat, "id", None)
+        async with self._turns.hold(user_id):
+            await self._handle_turn(batch)
+
+    async def _handle_turn(self, batch: MessageBatch) -> None:
         chat_id = getattr(batch.last_message.chat, "id", None)
         user = batch.user
         user_id = getattr(user, "id", chat_id)
@@ -68,9 +78,7 @@ class UserMessagePipeline:
             )
             return
 
-        session = None
-        if hasattr(self.typing_indicator, "start"):
-            session = self.typing_indicator.start(chat_id)
+        session = self.typing_indicator.start(chat_id)
 
         try:
             if batch.has_image():
@@ -116,8 +124,7 @@ class UserMessagePipeline:
             logger.error("Error processing message from user %d: %s", user_id, e, exc_info=True)
             await self.report_failure(batch, user, get_message("bot.llm.error"), e)
         finally:
-            if session is not None and hasattr(session, "close"):
-                session.close()
+            session.close()
 
     async def report_failure(
         self,

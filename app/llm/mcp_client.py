@@ -1,7 +1,6 @@
 """HTTP client for Model Context Protocol (MCP) JSON-RPC 2.0 communication."""
 
 import asyncio
-import inspect
 import json
 import logging
 import uuid
@@ -50,6 +49,15 @@ class McpTool:
 
 
 @runtime_checkable
+class AdminNotifier(Protocol):
+    """The half of AdminNotifier this client uses."""
+
+    async def notify_error(self, context: str, error: Exception) -> None:
+        """Tell the support group that something failed."""
+        ...
+
+
+@runtime_checkable
 class McpClientInterface(Protocol):
     """Interface for MCP clients."""
 
@@ -83,7 +91,7 @@ class HttpMcpClient(McpClientInterface):
         base_url: str | None = None,
         http_client: httpx.AsyncClient | None = None,
         settings: Settings | None = None,
-        admin_notifier: Any | None = None,
+        admin_notifier: AdminNotifier | None = None,
     ) -> None:
         if base_url is None and settings is not None:
             base_url = settings.remnawave_mcp_url
@@ -179,13 +187,10 @@ class HttpMcpClient(McpClientInterface):
 
     async def _notify_admins(self, context: str, error: Exception) -> None:
         """Forward a failure to the support group, tolerating a missing notifier."""
-        notify = getattr(self.admin_notifier, "notify_error", None)
-        if notify is None:
+        if self.admin_notifier is None:
             return
         try:
-            result = notify(context, error=error)
-            if inspect.isawaitable(result):
-                await result
+            await self.admin_notifier.notify_error(context, error=error)
         except Exception as e:
             logger.warning("Failed to notify admins about %s: %s", context, e)
 

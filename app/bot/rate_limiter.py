@@ -1,6 +1,5 @@
 """Caps how often a user can trigger a model call."""
 
-import threading
 import time
 from collections.abc import Callable
 from datetime import timedelta
@@ -32,8 +31,9 @@ class UserRateLimiter:
             retention.total_seconds() if isinstance(retention, timedelta) else float(retention)
         )
         self._time_func = time_func if time_func is not None else time.time
+        # No lock: the bot runs one event loop, and neither method below
+        # awaits between reading a timestamp and writing it back.
         self._last_request_at: dict[int, float] = {}
-        self._lock = threading.Lock()
 
     def try_acquire(self, user_id: int) -> bool:
         """Attempts to acquire a rate limit slot for the given user ID.
@@ -41,12 +41,11 @@ class UserRateLimiter:
         Returns True if allowed (and updates the timestamp), False if blocked.
         """
         now = self._time_func()
-        with self._lock:
-            last = self._last_request_at.get(user_id)
-            if last is None or (now - last) >= self.min_interval:
-                self._last_request_at[user_id] = now
-                return True
-            return False
+        last = self._last_request_at.get(user_id)
+        if last is None or (now - last) >= self.min_interval:
+            self._last_request_at[user_id] = now
+            return True
+        return False
 
     def evict_stale_entries(self) -> int:
         """Removes entries older than retention window.
@@ -55,8 +54,7 @@ class UserRateLimiter:
         """
         now = self._time_func()
         cutoff = now - self.retention
-        with self._lock:
-            stale_keys = [uid for uid, ts in self._last_request_at.items() if ts < cutoff]
-            for uid in stale_keys:
-                del self._last_request_at[uid]
-            return len(stale_keys)
+        stale_keys = [uid for uid, ts in self._last_request_at.items() if ts < cutoff]
+        for uid in stale_keys:
+            del self._last_request_at[uid]
+        return len(stale_keys)
