@@ -67,7 +67,3 @@ class TestSupportPrompt:
         assert "Incy" in SupportPrompt.SYSTEM
         assert "n/a" in SupportPrompt.SYSTEM
         assert "несовместим" in SupportPrompt.SYSTEM
-
-    def test_camel_case_method_aliases(self) -> None:
-        assert "Telegram ID: 999" in SupportPrompt.withTelegramUserId(999)
-        assert "Telegram ID: 888" in SupportPrompt.withFaqContext("FAQ text", 888)

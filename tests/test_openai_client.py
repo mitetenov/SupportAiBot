@@ -21,6 +21,8 @@ def settings() -> Settings:
     return Settings(
         telegram_bot_token="test_token",
         telegram_support_group_chat_id=-1001234567890,
+        llm_provider="openai",
+        embedding_provider="openai",
         openai_api_key="sk-openai-test-key",
         openai_model="gpt-5.6-luna",
         openai_base_url="http://localhost:9999",
@@ -76,7 +78,9 @@ class TestOpenAiClient:
         assert conv[2]["content"] == "Hello"
 
     def test_build_initial_conversation_with_image(self, openai_client: OpenAiClient):
-        conv = openai_client.build_initial_conversation("Describe this", 123, None, "base64data", "image/png")
+        conv = openai_client.build_initial_conversation(
+            "Describe this", 123, None, "base64data", "image/png"
+        )
         assert len(conv) == 3
         user_msg = conv[2]
         assert user_msg["role"] == "user"
@@ -162,7 +166,9 @@ class TestOpenAiClient:
 
     def test_add_tool_calls_to_conversation(self, openai_client: OpenAiClient):
         conv = []
-        openai_client.add_tool_calls_to_conversation(conv, openai_client.parse_response("""
+        openai_client.add_tool_calls_to_conversation(
+            conv,
+            openai_client.parse_response("""
         {
             "output": [{
                 "type": "function_call",
@@ -171,7 +177,8 @@ class TestOpenAiClient:
                 "arguments": "{\\"uuid\\": \\"abc-123\\"}"
             }]
         }
-        """))
+        """),
+        )
 
         assert len(conv) == 1
         assert conv[0]["type"] == "function_call"

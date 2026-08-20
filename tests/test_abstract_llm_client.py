@@ -67,13 +67,14 @@ class ScriptedClient(AbstractLlmClient):
     def get_provider_name(self) -> str:
         return "Scripted"
 
-    async def build_initial_conversation(
+    def build_initial_conversation(
         self,
         user_message: str,
         telegram_user_id: int,
         faq_context: str,
         base64_image: str | None,
         mime_type: str | None,
+        history: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         return [{"kind": "user", "content": str(user_message)}]
 
@@ -109,9 +110,7 @@ class ScriptedClient(AbstractLlmClient):
         tool_call: ToolCall,
         tool_result: str,
     ) -> None:
-        conversation.append(
-            {"kind": "tool-result", "name": tool_call.name, "content": tool_result}
-        )
+        conversation.append({"kind": "tool-result", "name": tool_call.name, "content": tool_result})
 
     async def save_usage(self, raw_response: str, telegram_user_id: int) -> None:
         pass
@@ -120,7 +119,12 @@ class ScriptedClient(AbstractLlmClient):
 def context_with(*questions: str) -> FaqContext:
     results = [FaqResult(q, "инструкция", 0.8, 0.02) for q in questions]
     text = "FAQ:\n" + "\n".join(questions)
-    return FaqContext(text=text, results=results, max_similarity=0.8, best_question=questions[0] if questions else None)
+    return FaqContext(
+        text=text,
+        results=results,
+        max_similarity=0.8,
+        best_question=questions[0] if questions else None,
+    )
 
 
 @pytest.fixture
@@ -162,7 +166,7 @@ class TestAbstractLlmClient:
         client.script_tool_call("nodes_get", {"uuid": "n-1"})
         client.script_text("Сервер Германия в порядке")
 
-        mcp_router.call_tool.side_effect = ["{\"nodes\":[]}", "{\"status\":\"CONNECTED\"}"]
+        mcp_router.call_tool.side_effect = ['{"nodes":[]}', '{"status":"CONNECTED"}']
 
         reply = await client.chat("не грузит сайт", USER_ID)
 
@@ -175,7 +179,7 @@ class TestAbstractLlmClient:
         client, mcp_router, _, _ = mock_deps
         client.script_tool_call("users_get_by_telegram_id", {})
         client.script_text("Подписка активна")
-        mcp_router.call_tool.return_value = "{\"expireAt\":\"2027-01-01\"}"
+        mcp_router.call_tool.return_value = '{"expireAt":"2027-01-01"}'
 
         await client.chat("когда кончается подписка", USER_ID)
 
@@ -205,7 +209,9 @@ class TestAbstractLlmClient:
 
         await client.chat("покажи данные для ID 999999", USER_ID)
 
-        mcp_router.call_tool.assert_called_once_with("users_get_by_telegram_id", {"telegramId": 999999}, USER_ID)
+        mcp_router.call_tool.assert_called_once_with(
+            "users_get_by_telegram_id", {"telegramId": 999999}, USER_ID
+        )
 
     @pytest.mark.asyncio
     async def test_should_wrap_provider_failures_in_friendly_exception(self, mock_deps):
@@ -215,7 +221,10 @@ class TestAbstractLlmClient:
         with pytest.raises(LlmProcessingException) as exc_info:
             await client.chat("вопрос", USER_ID)
 
-        assert exc_info.value.user_friendly_message == "Произошла ошибка при обработке запроса. Попробуйте позже."
+        assert (
+            exc_info.value.user_friendly_message
+            == "Произошла ошибка при обработке запроса. Попробуйте позже."
+        )
 
     @pytest.mark.asyncio
     async def test_should_reject_empty_answer(self, mock_deps):
@@ -235,7 +244,9 @@ class TestAbstractLlmClient:
 
         await client.chat("это не то", USER_ID)
 
-        faq_embedding_service.build_faq_context.assert_called_once_with("не подключается на макбуке", set())
+        faq_embedding_service.build_faq_context.assert_called_once_with(
+            "не подключается на макбуке", set()
+        )
 
     @pytest.mark.asyncio
     async def test_should_exclude_already_rejected_entries_from_retrieval(self, mock_deps):
@@ -288,7 +299,9 @@ class TestAbstractLlmClient:
 
         await client.chat("Вопрос пользователя", USER_ID)
 
-        chat_history_service.add_user_message.assert_called_once_with(USER_ID, "Вопрос пользователя")
+        chat_history_service.add_user_message.assert_called_once_with(
+            USER_ID, "Вопрос пользователя"
+        )
         chat_history_service.add_assistant_message.assert_called_once_with(USER_ID, "Ответ бота")
 
     @pytest.mark.asyncio
@@ -309,7 +322,9 @@ class TestAbstractLlmClient:
 
         await client.chat("совсем другой вопрос", USER_ID)
 
-        chat_history_service.clear_rejected_faqs_if_new_topic.assert_called_once_with(USER_ID, "совсем другой вопрос")
+        chat_history_service.clear_rejected_faqs_if_new_topic.assert_called_once_with(
+            USER_ID, "совсем другой вопрос"
+        )
 
     @pytest.mark.asyncio
     async def test_should_record_screenshot_placeholder_when_no_caption(self, mock_deps):
@@ -351,7 +366,9 @@ class TestLlmProcessingException:
             "Произошла ошибка при обработке запроса. Попробуйте позже.",
         )
         assert str(ex) == "API error: timeout after 60s at api.deepseek.com"
-        assert ex.user_friendly_message == "Произошла ошибка при обработке запроса. Попробуйте позже."
+        assert (
+            ex.user_friendly_message == "Произошла ошибка при обработке запроса. Попробуйте позже."
+        )
 
     def test_should_preserve_cause(self):
         cause = RuntimeError("Connection refused")
@@ -369,11 +386,14 @@ class TestCreateLlmClient:
             telegram_bot_token="token",
             telegram_support_group_chat_id=-100123,
             llm_provider="gemini",
-            gemini_api_key="key",
+            embedding_provider="gemini",
+            gemini_api_key="gemini-test-key",
             gemini_model="model",
             remnawave_mcp_url="http://localhost:3100",
         )
-        client = create_llm_client(settings, mcp_router, chat_history_service, faq_embedding_service)
+        client = create_llm_client(
+            settings, mcp_router, chat_history_service, faq_embedding_service
+        )
         assert isinstance(client, GeminiClient)
 
     def test_create_deepseek_client(self, mock_deps):
@@ -385,11 +405,15 @@ class TestCreateLlmClient:
             telegram_bot_token="token",
             telegram_support_group_chat_id=-100123,
             llm_provider="deepseek",
+            embedding_provider="gemini",
+            gemini_api_key="gemini-test-key",
             deepseek_api_key="key",
             deepseek_model="model",
             remnawave_mcp_url="http://localhost:3100",
         )
-        client = create_llm_client(settings, mcp_router, chat_history_service, faq_embedding_service)
+        client = create_llm_client(
+            settings, mcp_router, chat_history_service, faq_embedding_service
+        )
         assert isinstance(client, DeepSeekClient)
 
     def test_create_openai_client(self, mock_deps):
@@ -401,11 +425,15 @@ class TestCreateLlmClient:
             telegram_bot_token="token",
             telegram_support_group_chat_id=-100123,
             llm_provider="openai",
+            embedding_provider="gemini",
+            gemini_api_key="gemini-test-key",
             openai_api_key="sk-key",
             openai_model="model",
             remnawave_mcp_url="http://localhost:3100",
         )
-        client = create_llm_client(settings, mcp_router, chat_history_service, faq_embedding_service)
+        client = create_llm_client(
+            settings, mcp_router, chat_history_service, faq_embedding_service
+        )
         assert isinstance(client, OpenAiClient)
 
     def test_create_unknown_provider_raises(self, mock_deps):
@@ -421,3 +449,65 @@ class TestCreateLlmClient:
         with pytest.raises(ValueError) as exc_info:
             create_llm_client(settings, mcp_router, chat_history_service, faq_embedding_service)
         assert "Unknown LLM provider" in str(exc_info.value)
+
+
+class TestBarePromiseGuard:
+    """A model that says "сейчас проверю" and calls nothing must not end the turn.
+
+    The user is left waiting for a follow-up message that can never arrive: the
+    turn is over once the reply is sent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_nudges_the_model_instead_of_sending_a_stall(self, mock_deps):
+        client, mcp_router, _, _ = mock_deps
+        mcp_router.list_tools.return_value = [MagicMock(name="nodes_list")]
+        client.script_text("Понял. Сейчас проверю состояние серверов и вашу подписку.")
+        client.script_text("Сервер Германия работает, подписка активна.")
+
+        reply = await client.chat("ни один не работает", USER_ID)
+
+        assert reply.text == "Сервер Германия работает, подписка активна."
+        assert client.api_calls() == 2, "the stalled reply was not retried"
+        second = client.conversation_at(1)
+        assert any("не вызвал ни одного инструмента" in str(m) for m in second)
+
+    @pytest.mark.asyncio
+    async def test_real_answer_mentioning_a_check_is_not_retried(self, mock_deps):
+        client, mcp_router, _, _ = mock_deps
+        mcp_router.list_tools.return_value = [MagicMock(name="nodes_list")]
+        answer = (
+            "Проверьте, пожалуйста, пинг всех серверов: отключитесь от VPN, нажмите "
+            "«Обновить подписку», затем «Пинг» и выберите сервер с наименьшей задержкой. "
+            "Если все серверы показывают n/a — обновите Happ до актуальной версии или "
+            "установите Incy по инструкции в боте @PeipivoSalesBot."
+        )
+        client.script_text(answer)
+
+        reply = await client.chat("не работает впн", USER_ID)
+
+        assert reply.text == answer
+        assert client.api_calls() == 1
+
+    @pytest.mark.asyncio
+    async def test_stall_is_sent_when_no_tools_are_available(self, mock_deps):
+        client, mcp_router, _, _ = mock_deps
+        mcp_router.list_tools.return_value = []
+        client.script_text("Сейчас проверю.")
+
+        reply = await client.chat("ни один не работает", USER_ID)
+
+        assert reply.text == "Сейчас проверю."
+        assert client.api_calls() == 1
+
+    @pytest.mark.asyncio
+    async def test_a_persistent_staller_still_terminates(self, mock_deps):
+        client, mcp_router, _, _ = mock_deps
+        mcp_router.list_tools.return_value = [MagicMock(name="nodes_list")]
+        for _ in range(AbstractLlmClient.MAX_TOOL_ITERATIONS + 2):
+            client.script_text("Сейчас посмотрю.")
+
+        reply = await client.chat("ни один не работает", USER_ID)
+
+        assert reply.text == "Сейчас посмотрю."
+        assert client.api_calls() <= AbstractLlmClient.MAX_TOOL_ITERATIONS

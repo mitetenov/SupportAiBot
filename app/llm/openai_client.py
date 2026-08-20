@@ -77,7 +77,9 @@ class OpenAiClient(AbstractLlmClient):
         tools = self.mcp_router.list_tools()
         definitions: list[dict[str, Any]] = []
         for tool in tools:
-            params = tool.input_schema if tool.input_schema else {"type": "object", "properties": {}}
+            params = (
+                tool.input_schema if tool.input_schema else {"type": "object", "properties": {}}
+            )
             function: dict[str, Any] = {
                 "type": "function",
                 "name": tool.name,
@@ -135,9 +137,6 @@ class OpenAiClient(AbstractLlmClient):
 
         return messages
 
-    async def _get_conversation_history(self, telegram_user_id: int) -> list[dict[str, Any]]:
-        return await self.chat_history_service.get_history(telegram_user_id)
-
     async def call_api(
         self,
         conversation: list[dict[str, Any]],
@@ -150,7 +149,9 @@ class OpenAiClient(AbstractLlmClient):
             "Content-Type": "application/json",
         }
         body = self.build_request_body(conversation)
-        logger.debug("OpenAI Responses API request (%d tools available)", len(self.tool_definitions))
+        logger.debug(
+            "OpenAI Responses API request (%d tools available)", len(self.tool_definitions)
+        )
 
         response = await self.http_client.post(url, json=body, headers=headers)
         if response.status_code == 401:
@@ -221,7 +222,9 @@ class OpenAiClient(AbstractLlmClient):
             raise
         except Exception as e:
             logger.error("Failed to parse OpenAI response: %s", e)
-            raise LlmProcessingException(f"Parse error: {e}", "Ошибка обработки ответа модели.") from e
+            raise LlmProcessingException(
+                f"Parse error: {e}", "Ошибка обработки ответа модели."
+            ) from e
 
     def add_tool_calls_to_conversation(
         self,
@@ -229,12 +232,14 @@ class OpenAiClient(AbstractLlmClient):
         response: LlmResponse,
     ) -> None:
         for tc in response.tool_calls:
-            conversation.append({
-                "type": "function_call",
-                "call_id": tc.id,
-                "name": tc.name,
-                "arguments": json.dumps(tc.arguments or {}),
-            })
+            conversation.append(
+                {
+                    "type": "function_call",
+                    "call_id": tc.id,
+                    "name": tc.name,
+                    "arguments": json.dumps(tc.arguments or {}),
+                }
+            )
 
     def add_tool_result_to_conversation(
         self,
@@ -242,11 +247,13 @@ class OpenAiClient(AbstractLlmClient):
         tool_call: ToolCall,
         tool_result: str,
     ) -> None:
-        conversation.append({
-            "type": "function_call_output",
-            "call_id": tool_call.id,
-            "output": tool_result,
-        })
+        conversation.append(
+            {
+                "type": "function_call_output",
+                "call_id": tool_call.id,
+                "output": tool_result,
+            }
+        )
 
     async def save_usage(self, raw_response: str, telegram_user_id: int) -> None:
         if self.db_manager is None:

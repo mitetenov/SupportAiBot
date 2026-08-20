@@ -19,6 +19,9 @@ def client() -> DeepSeekClient:
     settings = Settings(
         telegram_bot_token="test_token",
         telegram_support_group_chat_id=-1001234567890,
+        llm_provider="deepseek",
+        embedding_provider="gemini",
+        gemini_api_key="gemini-test-key",
         deepseek_api_key="sk-test",
         deepseek_model="deepseek-chat",
         deepseek_base_url="http://localhost:9999",
@@ -40,10 +43,22 @@ def client() -> DeepSeekClient:
 
 class TestContextualSearchQuery:
     def test_prefix_context_for_continuation_particle(self, client: DeepSeekClient):
-        assert client.build_contextual_search_query(USER_ID, "а на айфоне?") == f"{PREVIOUS} а на айфоне?"
-        assert client.build_contextual_search_query(USER_ID, "и на компе?") == f"{PREVIOUS} и на компе?"
-        assert client.build_contextual_search_query(USER_ID, "но у меня андроид") == f"{PREVIOUS} но у меня андроид"
-        assert client.build_contextual_search_query(USER_ID, "ну так что?") == f"{PREVIOUS} ну так что?"
+        assert (
+            client.build_contextual_search_query(USER_ID, "а на айфоне?")
+            == f"{PREVIOUS} а на айфоне?"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "и на компе?")
+            == f"{PREVIOUS} и на компе?"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "но у меня андроид")
+            == f"{PREVIOUS} но у меня андроид"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "ну так что?")
+            == f"{PREVIOUS} ну так что?"
+        )
 
     def test_prefix_context_for_bare_platform_name(self, client: DeepSeekClient):
         assert client.build_contextual_search_query(USER_ID, "айфон") == f"{PREVIOUS} айфон"
@@ -60,18 +75,49 @@ class TestContextualSearchQuery:
         assert client.build_contextual_search_query(USER_ID, "телевизор") == f"{PREVIOUS} телевизор"
 
     def test_prefix_context_for_anaphoric_reference(self, client: DeepSeekClient):
-        assert client.build_contextual_search_query(USER_ID, "это не помогло") == f"{PREVIOUS} это не помогло"
-        assert client.build_contextual_search_query(USER_ID, "этот вариант") == f"{PREVIOUS} этот вариант"
-        assert client.build_contextual_search_query(USER_ID, "эта ошибка") == f"{PREVIOUS} эта ошибка"
-        assert client.build_contextual_search_query(USER_ID, "туда не заходит") == f"{PREVIOUS} туда не заходит"
-        assert client.build_contextual_search_query(USER_ID, "там ошибка") == f"{PREVIOUS} там ошибка"
-        assert client.build_contextual_search_query(USER_ID, "тут не работает") == f"{PREVIOUS} тут не работает"
-        assert client.build_contextual_search_query(USER_ID, "оно не грузит") == f"{PREVIOUS} оно не грузит"
+        assert (
+            client.build_contextual_search_query(USER_ID, "это не помогло")
+            == f"{PREVIOUS} это не помогло"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "этот вариант")
+            == f"{PREVIOUS} этот вариант"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "эта ошибка") == f"{PREVIOUS} эта ошибка"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "туда не заходит")
+            == f"{PREVIOUS} туда не заходит"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "там ошибка") == f"{PREVIOUS} там ошибка"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "тут не работает")
+            == f"{PREVIOUS} тут не работает"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "оно не грузит")
+            == f"{PREVIOUS} оно не грузит"
+        )
         assert client.build_contextual_search_query(USER_ID, "его нет") == f"{PREVIOUS} его нет"
-        assert client.build_contextual_search_query(USER_ID, "её не видно") == f"{PREVIOUS} её не видно"
-        assert client.build_contextual_search_query(USER_ID, "в нём ошибка") == f"{PREVIOUS} в нём ошибка"
-        assert client.build_contextual_search_query(USER_ID, "с ним не работает") == f"{PREVIOUS} с ним не работает"
-        assert client.build_contextual_search_query(USER_ID, "такое бывает?") == f"{PREVIOUS} такое бывает?"
+        assert (
+            client.build_contextual_search_query(USER_ID, "её не видно")
+            == f"{PREVIOUS} её не видно"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "в нём ошибка")
+            == f"{PREVIOUS} в нём ошибка"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "с ним не работает")
+            == f"{PREVIOUS} с ним не работает"
+        )
+        assert (
+            client.build_contextual_search_query(USER_ID, "такое бывает?")
+            == f"{PREVIOUS} такое бывает?"
+        )
 
     def test_prefix_context_for_bare_acknowledgement(self, client: DeepSeekClient):
         assert client.build_contextual_search_query(USER_ID, "да") == f"{PREVIOUS} да"

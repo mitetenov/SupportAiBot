@@ -75,7 +75,9 @@ class DeepSeekClient(AbstractLlmClient):
         tools = self.mcp_router.list_tools()
         definitions: list[dict[str, Any]] = []
         for tool in tools:
-            params = tool.input_schema if tool.input_schema else {"type": "object", "properties": {}}
+            params = (
+                tool.input_schema if tool.input_schema else {"type": "object", "properties": {}}
+            )
             function: dict[str, Any] = {
                 "name": tool.name,
                 "description": tool.description or "",
@@ -118,9 +120,6 @@ class DeepSeekClient(AbstractLlmClient):
 
         messages.append({"role": "user", "content": user_message})
         return messages
-
-    async def _get_conversation_history(self, telegram_user_id: int) -> list[dict[str, Any]]:
-        return await self.chat_history_service.get_history(telegram_user_id)
 
     async def chat_with_image(
         self,
@@ -207,14 +206,16 @@ class DeepSeekClient(AbstractLlmClient):
     ) -> None:
         tool_call_maps: list[dict[str, Any]] = []
         for tc in response.tool_calls:
-            tool_call_maps.append({
-                "id": tc.id,
-                "type": "function",
-                "function": {
-                    "name": tc.name,
-                    "arguments": json.dumps(tc.arguments or {}),
-                },
-            })
+            tool_call_maps.append(
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": json.dumps(tc.arguments or {}),
+                    },
+                }
+            )
         conversation.append({"role": "assistant", "tool_calls": tool_call_maps})
 
     def add_tool_result_to_conversation(
@@ -223,11 +224,13 @@ class DeepSeekClient(AbstractLlmClient):
         tool_call: ToolCall,
         tool_result: str,
     ) -> None:
-        conversation.append({
-            "role": "tool",
-            "tool_call_id": tool_call.id,
-            "content": tool_result,
-        })
+        conversation.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": tool_result,
+            }
+        )
 
     async def save_usage(self, raw_response: str, telegram_user_id: int) -> None:
         if self.db_manager is None:

@@ -78,9 +78,7 @@ def _copy_properties(cleaned: dict[str, Any], field_name: str, value: Any) -> No
 
 
 def _copy_nested_schema(cleaned: dict[str, Any], field_name: str, value: Any) -> None:
-    cleaned[field_name] = (
-        sanitize_schema_params(value) if isinstance(value, dict) else value
-    )
+    cleaned[field_name] = sanitize_schema_params(value) if isinstance(value, dict) else value
 
 
 class GeminiClient(AbstractLlmClient):
@@ -103,7 +101,9 @@ class GeminiClient(AbstractLlmClient):
         )
         self.settings = settings
         self.model = settings.gemini_model or "gemini-2.5-flash"
-        self.base_url = (settings.gemini_base_url or "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+        self.base_url = (
+            settings.gemini_base_url or "https://generativelanguage.googleapis.com/v1beta"
+        ).rstrip("/")
         self.api_key = settings.gemini_api_key or ""
         self._http_client = http_client
         self._own_client = False
@@ -167,14 +167,20 @@ class GeminiClient(AbstractLlmClient):
         if faq_context and faq_context.strip():
             dynamic_context += f"\n\n{faq_context.strip()}"
 
-        contents.append({
-            "role": "user",
-            "parts": [{"text": f"[Система: Контекст текущего пользователя]\n{dynamic_context}"}],
-        })
-        contents.append({
-            "role": "model",
-            "parts": [{"text": "Принято. Я готов помочь пользователю."}],
-        })
+        contents.append(
+            {
+                "role": "user",
+                "parts": [
+                    {"text": f"[Система: Контекст текущего пользователя]\n{dynamic_context}"}
+                ],
+            }
+        )
+        contents.append(
+            {
+                "role": "model",
+                "parts": [{"text": "Принято. Я готов помочь пользователю."}],
+            }
+        )
 
         if history:
             contents.extend(history)
@@ -185,12 +191,14 @@ class GeminiClient(AbstractLlmClient):
                 user_parts.append({"text": user_message})
             else:
                 user_parts.append({"text": user_message or ""})
-            user_parts.append({
-                "inline_data": {
-                    "mime_type": mime_type if mime_type else "image/jpeg",
-                    "data": base64_image,
+            user_parts.append(
+                {
+                    "inline_data": {
+                        "mime_type": mime_type if mime_type else "image/jpeg",
+                        "data": base64_image,
+                    }
                 }
-            })
+            )
         else:
             user_parts.append({"text": user_message})
 
@@ -323,10 +331,22 @@ class GeminiClient(AbstractLlmClient):
         if tool_call.thought_signature is not None:
             function_response["thought_signature"] = tool_call.thought_signature
 
-        conversation.append({
-            "role": "function",
-            "parts": [{"functionResponse": function_response}],
-        })
+        conversation.append(
+            {
+                "role": "function",
+                "parts": [{"functionResponse": function_response}],
+            }
+        )
+
+    def add_retry_nudge_to_conversation(
+        self,
+        conversation: list[dict[str, Any]],
+        assistant_text: str,
+        instruction: str,
+    ) -> None:
+        if assistant_text:
+            conversation.append({"role": "model", "parts": [{"text": assistant_text}]})
+        conversation.append({"role": "user", "parts": [{"text": instruction}]})
 
     async def save_usage(self, raw_response: str, telegram_user_id: int) -> None:
         if self.db_manager is None:

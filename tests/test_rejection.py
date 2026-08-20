@@ -1,5 +1,7 @@
 """Unit tests for RejectionDetector domain logic."""
 
+import pytest
+
 from app.llm.rejection import RejectionDetector, is_rejection
 
 
@@ -35,3 +37,57 @@ class TestRejectionDetector:
         assert RejectionDetector.is_rejection("это не то") is True
         assert RejectionDetector.is_rejection("не подходит") is True
         assert RejectionDetector.is_rejection("обычный вопрос") is False
+
+
+class TestFollowUpRejections:
+    """«Сделал как сказали — не изменилось» тоже отказ.
+
+    Раньше такие формулировки отказом не считались, из-за чего набор уже
+    показанных FAQ сбрасывался каждый ход, и бот предлагал ту же инструкцию
+    по кругу вместо перехода к следующей.
+    """
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "все равно не работает",
+            "всё равно не работает",
+            "всё ещё не работает",
+            "по-прежнему не работает",
+            "по прежнему не подключается",
+            "ничего не изменилось",
+            "ничего не поменялось",
+            "ничего не помогает",
+            "то же самое",
+            "тоже самое",
+            "опять не работает",
+            "снова не работает",
+            "также не работает",
+            "так же не работает",
+            "не заработало",
+            "без изменений",
+            "не помогло",
+        ],
+    )
+    def test_recognised_as_rejection(self, message: str) -> None:
+        assert is_rejection(message) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "не работает впн",
+            "не могу подключиться",
+            "не работает германия",
+            "как оплатить подписку",
+            "где скачать приложение",
+            "сколько стоит",
+            "верните деньги",
+            "привет",
+            "нужен оператор",
+        ],
+    )
+    def test_first_complaint_is_not_a_rejection(self, message: str) -> None:
+        assert is_rejection(message) is False
+
+    def test_yo_and_e_are_the_same_phrase(self) -> None:
+        assert is_rejection("всё ещё не работает") == is_rejection("все еще не работает")

@@ -19,6 +19,8 @@ def settings() -> Settings:
     return Settings(
         telegram_bot_token="test_token",
         telegram_support_group_chat_id=-1001234567890,
+        llm_provider="gemini",
+        embedding_provider="gemini",
         gemini_api_key="gemini-test-key",
         gemini_model="gemini-2.5-flash",
         gemini_base_url="http://localhost:9999",
@@ -50,7 +52,9 @@ class TestGeminiClient:
     def test_supports_images(self, gemini_client: GeminiClient):
         assert gemini_client.supports_images() is True
 
-    def test_build_request_body_includes_system_prompt_and_tool_config(self, gemini_client: GeminiClient):
+    def test_build_request_body_includes_system_prompt_and_tool_config(
+        self, gemini_client: GeminiClient
+    ):
         body = gemini_client.build_request_body([])
         system_instruction = body.get("system_instruction")
         assert system_instruction is not None
@@ -78,7 +82,9 @@ class TestGeminiClient:
         assert conv[-1]["parts"][0]["text"] == "Hello"
 
     def test_build_initial_conversation_for_image(self, gemini_client: GeminiClient):
-        conv = gemini_client.build_initial_conversation("Describe", 123, "FAQ", "base64data", "image/png")
+        conv = gemini_client.build_initial_conversation(
+            "Describe", 123, "FAQ", "base64data", "image/png"
+        )
         assert conv[-1]["role"] == "user"
         parts = conv[-1]["parts"]
         assert len(parts) == 2
@@ -171,11 +177,9 @@ class TestGeminiClient:
                 "mode": {"any_of": [{"type": "string"}, {"type": "integer"}]},
                 "nested": {
                     "type": "object",
-                    "properties": {
-                        "extra": {"additionalProperties": False, "type": "string"}
-                    }
-                }
-            }
+                    "properties": {"extra": {"additionalProperties": False, "type": "string"}},
+                },
+            },
         }
         sanitized = sanitize_schema_params(schema)
         assert "$schema" not in sanitized
@@ -183,7 +187,9 @@ class TestGeminiClient:
         assert "propertyNames" not in sanitized
         assert sanitized["properties"]["kind"] == {"enum": ["device"]}
         assert "anyOf" in sanitized["properties"]["mode"]
-        assert "additionalProperties" not in sanitized["properties"]["nested"]["properties"]["extra"]
+        assert (
+            "additionalProperties" not in sanitized["properties"]["nested"]["properties"]["extra"]
+        )
 
     @pytest.mark.asyncio
     async def test_save_usage(self, gemini_client: GeminiClient):

@@ -38,7 +38,7 @@ def create_llm_client(
     settings: Settings,
     mcp_router: McpRouter,
     chat_history_service: ChatHistoryService,
-    faq_embedding_service: FaqEmbeddingService,
+    faq_service: FaqEmbeddingService,
     db_manager: DatabaseSessionManager | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> LlmClient:
@@ -49,7 +49,7 @@ def create_llm_client(
             settings=settings,
             mcp_router=mcp_router,
             chat_history_service=chat_history_service,
-            faq_embedding_service=faq_embedding_service,
+            faq_embedding_service=faq_service,
             db_manager=db_manager,
             http_client=http_client,
         )
@@ -58,7 +58,7 @@ def create_llm_client(
             settings=settings,
             mcp_router=mcp_router,
             chat_history_service=chat_history_service,
-            faq_embedding_service=faq_embedding_service,
+            faq_embedding_service=faq_service,
             db_manager=db_manager,
             http_client=http_client,
         )
@@ -67,7 +67,7 @@ def create_llm_client(
             settings=settings,
             mcp_router=mcp_router,
             chat_history_service=chat_history_service,
-            faq_embedding_service=faq_embedding_service,
+            faq_embedding_service=faq_service,
             db_manager=db_manager,
             http_client=http_client,
         )

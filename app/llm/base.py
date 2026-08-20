@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -26,11 +25,6 @@ class LlmReply:
     text: str
     faq_context: FaqContext = field(default_factory=lambda: FaqContext.EMPTY)
 
-    @property
-    def faqContext(self) -> FaqContext:
-        """Java parity property alias."""
-        return self.faq_context
-
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -40,11 +34,6 @@ class ToolCall:
     id: str = ""
     arguments: dict[str, Any] = field(default_factory=dict)
     thought_signature: str | None = None
-
-    @property
-    def thoughtSignature(self) -> str | None:
-        """Java parity property alias."""
-        return self.thought_signature
 
 
 @dataclass(frozen=True)
@@ -59,17 +48,6 @@ class LlmResponse:
         """Return True if response contains at least one tool call."""
         return bool(self.tool_calls)
 
-    # Java parity aliases
-    hasToolCalls = has_tool_calls
-
-    @property
-    def toolCalls(self) -> list[ToolCall]:
-        return self.tool_calls
-
-    @property
-    def rawParts(self) -> list[dict[str, Any]]:
-        return self.raw_parts
-
 
 class LlmProcessingException(Exception):
     """Exception raised when an LLM provider request or parsing fails."""
@@ -83,13 +61,6 @@ class LlmProcessingException(Exception):
         super().__init__(message)
         self.user_friendly_message = user_friendly_message
         self.cause = cause
-
-    @property
-    def userFriendlyMessage(self) -> str:
-        return self.user_friendly_message
-
-    def getUserFriendlyMessage(self) -> str:
-        return self.user_friendly_message
 
 
 @runtime_checkable
@@ -120,6 +91,25 @@ class AbstractLlmClient(ABC, LlmClient):
 
     MAX_TOOL_ITERATIONS: int = 5
     TOOL_RESULT_MAX_LOG_LENGTH: int = 2000
+
+    # First-person "I will go and look" with nothing actually done. Anchored on
+    # first-person endings so an imperative aimed at the user ("проверьте пинг")
+    # never matches.
+    BARE_PROMISE_PATTERN: re.Pattern[str] = re.compile(
+        r"\b(проверю|проверим|проверяю|посмотрю|посмотрим|смотрю|гляну|глянем"
+        r"|уточню|уточняю|запрошу|узнаю|выясню|сверюсь|сверю)\b",
+        re.IGNORECASE | re.UNICODE,
+    )
+
+    #: A promise longer than this is treated as a real answer that merely
+    #: mentions checking something, not as a bare stall.
+    MAX_BARE_PROMISE_LENGTH: int = 220
+
+    RETRY_NUDGE: str = (
+        "Ты написал, что сейчас что-то проверишь, но не вызвал ни одного инструмента. "
+        "Вызови нужный инструмент прямо сейчас и ответь пользователю по существу. "
+        "Не описывай намерение — либо инструмент, либо готовый ответ."
+    )
 
     FOLLOW_UP_PATTERN: re.Pattern[str] = re.compile(
         r"^(а|и|но|ну)\s"
@@ -208,26 +198,19 @@ class AbstractLlmClient(ABC, LlmClient):
             search_query or "", rejected_faqs
         )
 
-        if inspect.iscoroutinefunction(self.build_initial_conversation):
-            conversation = await self.build_initial_conversation(
-                user_message, telegram_user_id, faq_context.text, base64_image, mime_type
-            )
-        else:
-            history = await self._get_conversation_history(telegram_user_id)
-            conversation = self.build_initial_conversation(
-                user_message,
-                telegram_user_id,
-                faq_context.text,
-                base64_image,
-                mime_type,
-                history=history,
-            )
+        history = await self._get_conversation_history(telegram_user_id)
+        conversation = self.build_initial_conversation(
+            user_message,
+            telegram_user_id,
+            faq_context.text,
+            base64_image,
+            mime_type,
+            history=history,
+        )
 
         while iteration < self.MAX_TOOL_ITERATIONS:
             try:
-                raw_response = await self.call_api(
-                    conversation, faq_context.text, telegram_user_id
-                )
+                raw_response = await self.call_api(conversation, faq_context.text, telegram_user_id)
                 await self.save_usage(raw_response, telegram_user_id)
                 llm_response = self.parse_response(raw_response)
 
@@ -236,7 +219,19 @@ class AbstractLlmClient(ABC, LlmClient):
                     iteration += 1
                     continue
 
-                if llm_response.text and llm_response.text.strip():
+                if llm_response.text:
+                    if self._is_bare_promise(llm_response.text) and iteration + 1 < (
+                        self.MAX_TOOL_ITERATIONS
+                    ):
+                        logger.info(
+                            "%s promised to check something without calling a tool — nudging",
+                            self.get_provider_name(),
+                        )
+                        self.add_retry_nudge_to_conversation(
+                            conversation, llm_response.text, self.RETRY_NUDGE
+                        )
+                        iteration += 1
+                        continue
                     return LlmReply(text=llm_response.text, faq_context=faq_context)
 
                 raise LlmProcessingException(
@@ -277,6 +272,35 @@ class AbstractLlmClient(ABC, LlmClient):
             tool_result = await self.mcp_router.call_tool(tc.name, tc.arguments, telegram_user_id)
             logger.info("Tool %s result: %s", tc.name, self._truncate(tool_result))
             self.add_tool_result_to_conversation(conversation, tc, tool_result)
+
+    def _is_bare_promise(self, text: str) -> bool:
+        """True when the model announced it would check something and did nothing.
+
+        Sending this straight to the user dead-ends the conversation: they are
+        told to wait for an answer that is never coming, because the turn is
+        over. Only meaningful while tools are actually on the table.
+        """
+        stripped = text.strip()
+        if not stripped or len(stripped) > self.MAX_BARE_PROMISE_LENGTH:
+            return False
+        if not self.mcp_router.list_tools():
+            return False
+        return self.BARE_PROMISE_PATTERN.search(stripped) is not None
+
+    def add_retry_nudge_to_conversation(
+        self,
+        conversation: list[dict[str, Any]],
+        assistant_text: str,
+        instruction: str,
+    ) -> None:
+        """Record the stalled reply and ask for action instead.
+
+        Default is the {role, content} shape used by OpenAI and DeepSeek;
+        Gemini overrides it with its own parts format.
+        """
+        if assistant_text:
+            conversation.append({"role": "assistant", "content": assistant_text})
+        conversation.append({"role": "user", "content": instruction})
 
     def build_contextual_search_query(
         self, telegram_user_id: int, user_message: str | None

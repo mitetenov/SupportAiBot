@@ -20,6 +20,9 @@ def settings() -> Settings:
     return Settings(
         telegram_bot_token="test_token",
         telegram_support_group_chat_id=-1001234567890,
+        llm_provider="deepseek",
+        embedding_provider="gemini",
+        gemini_api_key="gemini-test-key",
         deepseek_api_key="deepseek-test-key",
         deepseek_model="deepseek-chat",
         deepseek_base_url="http://localhost:9999",
@@ -54,9 +57,13 @@ class TestDeepSeekClient:
     async def test_chat_with_image_raises_friendly_exception(self, deepseek_client: DeepSeekClient):
         with pytest.raises(LlmProcessingException) as exc_info:
             await deepseek_client.chat_with_image("text", 123, "base64", "image/png")
-        assert "DeepSeek не поддерживает обработку изображений" in exc_info.value.user_friendly_message
+        assert (
+            "DeepSeek не поддерживает обработку изображений" in exc_info.value.user_friendly_message
+        )
 
-    def test_build_initial_conversation_with_system_and_dynamic_context(self, deepseek_client: DeepSeekClient):
+    def test_build_initial_conversation_with_system_and_dynamic_context(
+        self, deepseek_client: DeepSeekClient
+    ):
         conv = deepseek_client.build_initial_conversation("Hello", 123, "FAQ content", None, None)
         assert len(conv) == 3
         assert conv[0]["role"] == "system"
@@ -144,7 +151,9 @@ class TestDeepSeekClient:
         assert response.tool_calls[0].name == "nodes_list"
         assert response.tool_calls[0].arguments == {"status": "CONNECTED"}
 
-    def test_add_tool_calls_to_conversation_serializes_arguments_as_json_string(self, deepseek_client: DeepSeekClient):
+    def test_add_tool_calls_to_conversation_serializes_arguments_as_json_string(
+        self, deepseek_client: DeepSeekClient
+    ):
         conv = []
         response = deepseek_client.parse_response("""
         {
