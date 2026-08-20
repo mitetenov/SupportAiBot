@@ -27,7 +27,6 @@ MESSAGES: dict[str, str] = {
     "bot.ratelimit.wait": "Вы пишете быстрее, чем я успеваю отвечать. Передал сообщение оператору — он ответит в этом чате.",
     "bot.llm.error": "Произошла ошибка при обработке запроса. Попробуйте позже.",
     "bot.llm.empty": "Передаю ваш запрос оператору. Ожидайте ответа в этом чате.",
-
     # Non-text, non-photo attachments
     "bot.media.unsupported": (
         "Пока я работаю только с текстом и скриншотами. "
@@ -38,7 +37,6 @@ MESSAGES: dict[str, str] = {
     "bot.photo.upload.error": "Не удалось загрузить изображение. Попробуйте ещё раз.",
     "bot.photo.error": "Произошла ошибка при загрузке изображения. Попробуйте позже.",
     "bot.photo.default.prompt": "Посмотри на скриншот. Опиши, что на нём отображается, и помоги решить проблему.",
-
     # Stats and knowledge gaps
     "bot.stats.empty": "Статистика пока пуста.",
     "bot.stats.no.data": "Нет данных по {0}.",
@@ -54,7 +52,6 @@ MESSAGES: dict[str, str] = {
     "bot.gaps.empty": "Пробелы в знаниях пока не обнаружены.",
     "bot.gaps.header": "Топ пробелов в знаниях:",
     "bot.gaps.row": "{0}. [{1} раз] {2}\n   ({3})",
-
     # Support group messages
     "support.operator.prefix": "Поддержка: {0}",
     "support.sent": "Отправлено пользователю.",
@@ -64,7 +61,6 @@ MESSAGES: dict[str, str] = {
     "support.media.received": "[Пользователь прислал вложение, которое бот не обрабатывает]",
     "support.ratelimited": "[AI не отвечал — пользователь пишет слишком часто]",
     "support.ai.suppressed": "[AI не отвечал — оператор недавно был активен]",
-
     # Admin notifications
     "admin.error.prefix": "[ОШИБКА БОТА]",
     "admin.error.details": "Детали ошибки:",

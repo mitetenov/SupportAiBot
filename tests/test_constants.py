@@ -137,7 +137,9 @@ class TestEscalationRegexes:
             "позови живого оператора",
             "нужен живой человек",
         ]:
-            assert EscalationRegexes.ASKS_FOR_HUMAN.search(phrase) is not None, f"Failed on {phrase}"
+            assert EscalationRegexes.ASKS_FOR_HUMAN.search(phrase) is not None, (
+                f"Failed on {phrase}"
+            )
 
     def test_asks_for_human_does_not_match_subwords(self) -> None:
         for phrase in [
@@ -145,4 +147,6 @@ class TestEscalationRegexes:
             "болит живот",
             "сайт оживает через раз",
         ]:
-            assert EscalationRegexes.ASKS_FOR_HUMAN.search(phrase) is None, f"Matched falsely on {phrase}"
+            assert EscalationRegexes.ASKS_FOR_HUMAN.search(phrase) is None, (
+                f"Matched falsely on {phrase}"
+            )

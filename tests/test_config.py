@@ -9,7 +9,9 @@ from app.config import Settings, get_settings
 class TestStartupValidator:
     """Test suite matching all validation rules from StartupValidator.java."""
 
-    def test_should_validate_deepseek_provider(self, valid_settings_dict: dict[str, object]) -> None:
+    def test_should_validate_deepseek_provider(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
         """Verify valid DeepSeek settings pass validation."""
         settings = Settings(**valid_settings_dict)
         assert settings.llm_provider == "deepseek"
@@ -37,14 +39,18 @@ class TestStartupValidator:
         assert settings.llm_provider == "openai"
         assert settings.openai_api_key == "sk-proj-test123456"
 
-    def test_should_throw_when_bot_token_missing(self, valid_settings_dict: dict[str, object]) -> None:
+    def test_should_throw_when_bot_token_missing(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
         """Verify error when TELEGRAM_BOT_TOKEN is missing or None."""
         valid_settings_dict["telegram_bot_token"] = ""
         with pytest.raises((ValueError, ValidationError)) as exc_info:
             Settings(**valid_settings_dict)
         assert "TELEGRAM_BOT_TOKEN" in str(exc_info.value)
 
-    def test_should_throw_when_bot_token_blank(self, valid_settings_dict: dict[str, object]) -> None:
+    def test_should_throw_when_bot_token_blank(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
         """Verify error when TELEGRAM_BOT_TOKEN is whitespace only."""
         valid_settings_dict["telegram_bot_token"] = "   "
         with pytest.raises((ValueError, ValidationError)) as exc_info:
@@ -69,7 +75,9 @@ class TestStartupValidator:
             Settings(**valid_settings_dict)
         assert "отрицательным" in str(exc_info.value)
 
-    def test_should_throw_for_unknown_provider(self, valid_settings_dict: dict[str, object]) -> None:
+    def test_should_throw_for_unknown_provider(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
         """Verify error for unknown LLM provider."""
         valid_settings_dict["llm_provider"] = "unknown"
         with pytest.raises((ValueError, ValidationError)) as exc_info:
@@ -77,7 +85,9 @@ class TestStartupValidator:
         assert "Неизвестный LLM_PROVIDER" in str(exc_info.value)
         assert "deepseek" in str(exc_info.value)
 
-    def test_should_throw_for_typo_in_provider(self, valid_settings_dict: dict[str, object]) -> None:
+    def test_should_throw_for_typo_in_provider(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
         """Verify error for typo in LLM provider."""
         valid_settings_dict["llm_provider"] = "openei"
         with pytest.raises((ValueError, ValidationError)) as exc_info:
@@ -249,9 +259,7 @@ class TestTelegramAdminIdsParsing:
         settings = Settings(**valid_settings_dict)
         assert settings.telegram_support_admin_telegram_ids == {12345, 67890}
 
-    def test_should_skip_non_numeric_admin_id(
-        self, valid_settings_dict: dict[str, object]
-    ) -> None:
+    def test_should_skip_non_numeric_admin_id(self, valid_settings_dict: dict[str, object]) -> None:
         valid_settings_dict["telegram_support_admin_telegram_ids"] = "abc"
         settings = Settings(**valid_settings_dict)
         assert settings.telegram_support_admin_telegram_ids == set()
@@ -275,9 +283,14 @@ class TestSettingsHelperProperties:
         valid_settings_dict["pgvector_password"] = "p@ss:word"
 
         settings = Settings(**valid_settings_dict)
-        assert settings.database_url == "postgresql+asyncpg://custom_user:p@ss:word@db.internal:5433/custom_db"
+        assert (
+            settings.database_url
+            == "postgresql+asyncpg://custom_user:p@ss:word@db.internal:5433/custom_db"
+        )
 
-    def test_get_settings_caching(self, valid_settings_dict: dict[str, object], monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_get_settings_caching(
+        self, valid_settings_dict: dict[str, object], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         for k, v in valid_settings_dict.items():
             if isinstance(v, set):
                 monkeypatch.setenv(k.upper(), ",".join(map(str, v)))
