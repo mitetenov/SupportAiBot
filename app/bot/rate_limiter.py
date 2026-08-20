@@ -60,7 +60,3 @@ class UserRateLimiter:
             for uid in stale_keys:
                 del self._last_request_at[uid]
             return len(stale_keys)
-
-    # CamelCase aliases for Java parity / convenience
-    tryAcquire = try_acquire
-    evictStaleEntries = evict_stale_entries

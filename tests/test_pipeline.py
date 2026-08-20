@@ -8,6 +8,7 @@ from app.bot.buffer import MessageBatch
 from app.bot.conversation_state import ConversationState
 from app.bot.pipeline import UserMessagePipeline
 from app.bot.rate_limiter import UserRateLimiter
+from app.bot.sender import TelegramMessageSender
 from app.llm.base import LlmProcessingException, LlmReply
 
 
@@ -70,7 +71,7 @@ async def test_pipeline_normal_flow():
 
     pipeline = UserMessagePipeline(
         llm_client=llm_client,
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         forwarder=forwarder,
         rate_limiter=rate_limiter,
         knowledge_gap_service=gap_service,
@@ -103,7 +104,7 @@ async def test_pipeline_strips_escalate_and_flags_admin():
 
     pipeline = UserMessagePipeline(
         llm_client=llm_client,
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         forwarder=forwarder,
         rate_limiter=UserRateLimiter(min_interval=0),
         knowledge_gap_service=MagicMock(evaluate=AsyncMock()),
@@ -136,7 +137,7 @@ async def test_pipeline_rate_limited():
 
     pipeline = UserMessagePipeline(
         llm_client=llm_client,
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         forwarder=forwarder,
         rate_limiter=rate_limiter,
         knowledge_gap_service=MagicMock(),
@@ -167,7 +168,7 @@ async def test_pipeline_operator_suppression():
 
     pipeline = UserMessagePipeline(
         llm_client=llm_client,
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         forwarder=forwarder,
         rate_limiter=UserRateLimiter(),
         knowledge_gap_service=MagicMock(),
@@ -198,7 +199,7 @@ async def test_pipeline_handles_llm_processing_exception():
 
     pipeline = UserMessagePipeline(
         llm_client=llm_client,
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         forwarder=forwarder,
         rate_limiter=UserRateLimiter(min_interval=0),
         knowledge_gap_service=MagicMock(),

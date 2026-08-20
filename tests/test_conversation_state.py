@@ -164,11 +164,3 @@ class TestConversationState:
 
         assert state.last_query(self.USER_ID) is not None
         assert state.is_operator_recently_active(self.USER_ID) is True
-
-    def test_camel_case_method_aliases(self) -> None:
-        state = ConversationState()
-        state.recordQuery(self.USER_ID, "вопрос", None)
-        state.recordOperatorReply(self.USER_ID)
-        assert state.lastQuery(self.USER_ID) is not None
-        assert state.isOperatorRecentlyActive(self.USER_ID) is True
-        state.evictExpired()

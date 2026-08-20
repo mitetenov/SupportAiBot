@@ -24,11 +24,6 @@ class BufferedMessage:
         """Factory method for creating a text-only buffered message."""
         return cls(message=message, text=text, base64_image=None, mime_type=None)
 
-    @classmethod
-    def text_message(cls, message: Any, text: str) -> "BufferedMessage":
-        """Factory method for creating a text-only buffered message."""
-        return cls(message=message, text=text, base64_image=None, mime_type=None)
-
 
 @dataclass(frozen=True)
 class MessageBatch:
@@ -48,7 +43,9 @@ class MessageBatch:
             raise ValueError("Cannot create MessageBatch from empty message list")
 
         last = messages[-1]
-        ids = [getattr(m.message, "message_id", None) or getattr(m.message, "id", 0) for m in messages]
+        ids = [
+            getattr(m.message, "message_id", None) or getattr(m.message, "id", 0) for m in messages
+        ]
 
         text_parts = [m.text for m in messages if m.text and str(m.text).strip()]
         merged_text = "\n".join(text_parts)
@@ -56,7 +53,11 @@ class MessageBatch:
         # At most one image per batch
         with_image = next((m for m in messages if m.base64_image is not None), None)
 
-        user = getattr(last.message, "from_user", None) or getattr(last.message, "from", None) or getattr(last.message, "user", None)
+        user = (
+            getattr(last.message, "from_user", None)
+            or getattr(last.message, "from", None)
+            or getattr(last.message, "user", None)
+        )
 
         return cls(
             last_message=last.message,
@@ -70,11 +71,6 @@ class MessageBatch:
     def has_image(self) -> bool:
         """Return True if batch contains an image."""
         return self.base64_image is not None
-
-    @property
-    def hasImage(self) -> bool:
-        """Java parity property alias."""
-        return self.has_image()
 
     def size(self) -> int:
         """Return number of merged messages."""
@@ -101,6 +97,10 @@ class UserMessageBuffer:
         self.max_messages = max_messages
         self._loop = loop
         self._pending: dict[int, _Batch] = {}
+        # Strong references to in-flight dispatches. Without them the event loop
+        # only holds a weak reference and the task can be garbage-collected
+        # mid-answer; it is also the only place an escaped exception is visible.
+        self._inflight: set[asyncio.Task[Any]] = set()
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         if self._loop is not None and not self._loop.is_closed():
@@ -167,17 +167,36 @@ class UserMessageBuffer:
         try:
             message_batch = MessageBatch.of(batch.messages)
             res = sink(message_batch)
-            if inspect.iscoroutine(res):
-                asyncio.create_task(res)
-            elif inspect.isawaitable(res) and not isinstance(res, (asyncio.Future, asyncio.Task)):
-                asyncio.create_task(res)
+            if inspect.isawaitable(res) and not isinstance(res, asyncio.Task):
+                self._track(asyncio.ensure_future(res), user_id)
+            elif isinstance(res, asyncio.Task):
+                self._track(res, user_id)
         except Exception as e:
             logger.error("Failed to dispatch buffered messages for user %d: %s", user_id, e)
 
+    def _track(self, task: asyncio.Task[Any], user_id: int) -> None:
+        """Hold the task until it finishes, and surface anything it raised."""
+        self._inflight.add(task)
+
+        def _done(finished: asyncio.Task[Any]) -> None:
+            self._inflight.discard(finished)
+            if finished.cancelled():
+                return
+            error = finished.exception()
+            if error is not None:
+                logger.error(
+                    "Unhandled error while answering user %d: %s", user_id, error, exc_info=error
+                )
+
+        task.add_done_callback(_done)
+
     def shutdown(self) -> None:
-        """Cancel all pending flush timers."""
+        """Cancel all pending flush timers and any dispatch still in flight."""
         for batch in self._pending.values():
             if batch.handle is not None:
                 batch.handle.cancel()
                 batch.handle = None
         self._pending.clear()
+        for task in list(self._inflight):
+            task.cancel()
+        self._inflight.clear()

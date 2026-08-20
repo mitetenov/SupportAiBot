@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.bot.forwarder import SupportGroupForwarder
+from app.bot.sender import TelegramMessageSender
 from app.storage.models import MessageMapping
 
 
@@ -62,7 +63,7 @@ async def test_forward_to_support_with_existing_topic(mock_db):
     topic_manager.resolve_topic_id = AsyncMock(return_value=42)
 
     forwarder = SupportGroupForwarder(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         topic_manager=topic_manager,
         db_manager=mock_db,
         support_group_chat_id=-100123,
@@ -109,7 +110,7 @@ async def test_forward_to_support_with_escalation_includes_admin_tag(mock_db):
     topic_manager.resolve_topic_id = AsyncMock(return_value=42)
 
     forwarder = SupportGroupForwarder(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         topic_manager=topic_manager,
         db_manager=mock_db,
         support_group_chat_id=-100123,
@@ -146,7 +147,7 @@ async def test_recreate_topic_when_first_copy_fails(mock_db):
     topic_manager.recreate_stale_topic = AsyncMock(return_value=99)
 
     forwarder = SupportGroupForwarder(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         topic_manager=topic_manager,
         db_manager=mock_db,
         support_group_chat_id=-100123,
@@ -170,14 +171,16 @@ async def test_recreate_topic_when_first_copy_fails(mock_db):
 @pytest.mark.asyncio
 async def test_resolve_user_name_variants(mock_db):
     forwarder = SupportGroupForwarder(
-        bot=MagicMock(),
+        sender=TelegramMessageSender(MagicMock()),
         topic_manager=MagicMock(),
         db_manager=mock_db,
         support_group_chat_id=-100123,
     )
 
     assert forwarder.resolve_user_name(DummyUser(1, username="test")) == "@test"
-    assert forwarder.resolve_user_name(DummyUser(2, first_name="John", last_name="Doe")) == "John Doe"
+    assert (
+        forwarder.resolve_user_name(DummyUser(2, first_name="John", last_name="Doe")) == "John Doe"
+    )
     assert forwarder.resolve_user_name(DummyUser(3, first_name="John")) == "John"
     assert forwarder.resolve_user_name(DummyUser(4)) == "User 4"
 
@@ -191,7 +194,7 @@ async def test_forward_error_to_topic(mock_db):
     topic_manager.resolve_topic_id = AsyncMock(return_value=42)
 
     forwarder = SupportGroupForwarder(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         topic_manager=topic_manager,
         db_manager=mock_db,
         support_group_chat_id=-100123,

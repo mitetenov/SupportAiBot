@@ -37,7 +37,6 @@ async def test_should_download_and_base64_encode_the_photo():
     result = await downloader.download(photos)
 
     assert result.is_success()
-    assert result.isSuccess
     assert result.base64_image == base64.b64encode(b"\x01\x02\x03").decode("ascii")
     assert result.mime_type == "image/jpeg"
     assert result.error_message_key is None

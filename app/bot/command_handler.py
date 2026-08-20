@@ -3,9 +3,9 @@
 import logging
 from collections.abc import Iterable
 
-from aiogram import Bot
 from sqlalchemy import func, select
 
+from app.bot.sender import TelegramMessageSender
 from app.constants import get_message
 from app.rag.knowledge_gaps import KnowledgeGapService
 from app.storage.database import DatabaseSessionManager
@@ -22,12 +22,12 @@ class SupportCommandHandler:
 
     def __init__(
         self,
-        bot: Bot,
+        sender: TelegramMessageSender,
         db_manager: DatabaseSessionManager,
         knowledge_gap_service: KnowledgeGapService,
         admin_telegram_ids: Iterable[int] | None = None,
     ) -> None:
-        self.bot = bot
+        self.sender = sender
         self.db_manager = db_manager
         self.knowledge_gap_service = knowledge_gap_service
         self.admin_telegram_ids = set(admin_telegram_ids) if admin_telegram_ids else set()
@@ -55,11 +55,11 @@ class SupportCommandHandler:
 
     async def send_help(self, chat_id: int) -> None:
         """Send the standard help manual to user."""
-        await self.bot.send_message(chat_id=chat_id, text=get_message("bot.help"))
+        await self.sender.send(chat_id, get_message("bot.help"))
 
     async def send_unknown_command(self, chat_id: int) -> None:
         """Send unknown command fallback notice."""
-        await self.bot.send_message(chat_id=chat_id, text=get_message("bot.unknown.command"))
+        await self.sender.send(chat_id, get_message("bot.unknown.command"))
 
     async def handle_admin_command(self, chat_id: int, telegram_id: int, text: str) -> bool:
         """Execute admin command if sender is authorized and text matches."""
@@ -101,7 +101,9 @@ class SupportCommandHandler:
                     LlmTokenUsage.telegram_id,
                     func.sum(func.coalesce(LlmTokenUsage.total_tokens, 0)).label("total_tokens"),
                     func.sum(func.coalesce(LlmTokenUsage.prompt_tokens, 0)).label("prompt_tokens"),
-                    func.sum(func.coalesce(LlmTokenUsage.completion_tokens, 0)).label("completion_tokens"),
+                    func.sum(func.coalesce(LlmTokenUsage.completion_tokens, 0)).label(
+                        "completion_tokens"
+                    ),
                     func.count().label("request_count"),
                 )
                 .group_by(LlmTokenUsage.telegram_id)
@@ -112,7 +114,7 @@ class SupportCommandHandler:
             rows = res.fetchall()
 
         if not rows:
-            await self.bot.send_message(chat_id=chat_id, text=get_message("bot.stats.empty"))
+            await self.sender.send(chat_id, get_message("bot.stats.empty"))
             return
 
         lines = [get_message("bot.stats.top.header", limit)]
@@ -128,7 +130,7 @@ class SupportCommandHandler:
                 )
             )
 
-        await self.bot.send_message(chat_id=chat_id, text="\n".join(lines))
+        await self.sender.send(chat_id, "\n".join(lines))
 
     async def show_user_stats(self, chat_id: int, telegram_id: int) -> None:
         """Query token consumption for a single user ID."""
@@ -138,7 +140,9 @@ class SupportCommandHandler:
                     LlmTokenUsage.telegram_id,
                     func.sum(func.coalesce(LlmTokenUsage.total_tokens, 0)).label("total_tokens"),
                     func.sum(func.coalesce(LlmTokenUsage.prompt_tokens, 0)).label("prompt_tokens"),
-                    func.sum(func.coalesce(LlmTokenUsage.completion_tokens, 0)).label("completion_tokens"),
+                    func.sum(func.coalesce(LlmTokenUsage.completion_tokens, 0)).label(
+                        "completion_tokens"
+                    ),
                     func.count().label("request_count"),
                 )
                 .where(LlmTokenUsage.telegram_id == telegram_id)
@@ -149,7 +153,7 @@ class SupportCommandHandler:
 
         name = await self.resolve_user_name(telegram_id)
         if row is None or (row.request_count or 0) == 0:
-            await self.bot.send_message(chat_id=chat_id, text=get_message("bot.stats.no.data", name))
+            await self.sender.send(chat_id, get_message("bot.stats.no.data", name))
             return
 
         text = get_message(
@@ -160,13 +164,13 @@ class SupportCommandHandler:
             self.format_number(row.completion_tokens or 0),
             self.format_number(row.total_tokens or 0),
         )
-        await self.bot.send_message(chat_id=chat_id, text=text)
+        await self.sender.send(chat_id, text)
 
     async def handle_gaps(self, chat_id: int) -> None:
         """Query top detected knowledge gaps and render summary."""
         gaps = await self.knowledge_gap_service.get_top_gaps()
         if not gaps:
-            await self.bot.send_message(chat_id=chat_id, text=get_message("bot.gaps.empty"))
+            await self.sender.send(chat_id, get_message("bot.gaps.empty"))
             return
 
         lines = [get_message("bot.gaps.header")]
@@ -181,7 +185,7 @@ class SupportCommandHandler:
                 )
             )
 
-        await self.bot.send_message(chat_id=chat_id, text="\n".join(lines))
+        await self.sender.send(chat_id, "\n".join(lines))
 
     async def resolve_user_name(self, telegram_id: int | None) -> str:
         """Resolve username handle from user_names table or fallback to Telegram ID."""

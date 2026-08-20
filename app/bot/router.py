@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from aiogram import Bot, F, Router
+from aiogram import F, Router
 from aiogram.types import Message, MessageReactionUpdated
 from sqlalchemy import select
 
@@ -14,6 +14,7 @@ from app.bot.conversation_state import ConversationState
 from app.bot.forwarder import SupportGroupForwarder
 from app.bot.photo_downloader import PhotoDownloader
 from app.bot.pipeline import UserMessagePipeline
+from app.bot.sender import TelegramMessageSender
 from app.constants import get_message
 from app.llm.base import LlmClient
 from app.rag.knowledge_gaps import KnowledgeGapService
@@ -42,11 +43,11 @@ async def ensure_user_info(db_manager: DatabaseSessionManager, user: Any) -> Non
             db_user.last_name = getattr(user, "last_name", None)
             db_user.updated_at = datetime.now(UTC)
     except Exception as e:
-        logger.debug("Failed to record user profile for %s: %s", user_id, e)
+        logger.warning("Failed to record user profile for %s: %s", user_id, e)
 
 
 def setup_router(
-    bot: Bot,
+    sender: TelegramMessageSender,
     llm_client: LlmClient,
     forwarder: SupportGroupForwarder,
     db_manager: DatabaseSessionManager,
@@ -75,29 +76,26 @@ def setup_router(
                     stmt = select(MessageMapping).where(
                         MessageMapping.topic_message_id == message_id
                     )
-                    res = await session.execute(stmt)
-                    mapping = res.scalar_one_or_none()
-                    if mapping is not None:
-                        await bot.set_message_reaction(
-                            chat_id=mapping.user_chat_id,
-                            message_id=mapping.user_message_id,
-                            reaction=new_reactions,
-                        )
                 else:
                     stmt = select(MessageMapping).where(
                         MessageMapping.user_chat_id == chat_id,
                         MessageMapping.user_message_id == message_id,
                     )
-                    res = await session.execute(stmt)
-                    mapping = res.scalar_one_or_none()
-                    if mapping is not None:
-                        await bot.set_message_reaction(
-                            chat_id=support_group_chat_id,
-                            message_id=mapping.topic_message_id,
-                            reaction=new_reactions,
-                        )
+                res = await session.execute(stmt)
+                mapping = res.scalar_one_or_none()
         except Exception as e:
-            logger.debug("Failed to sync message reaction: %s", e)
+            logger.warning("Failed to look up mapping for reaction sync: %s", e)
+            return
+
+        if mapping is None:
+            return
+
+        if chat_id == support_group_chat_id:
+            await sender.set_reaction(mapping.user_chat_id, mapping.user_message_id, new_reactions)
+        else:
+            await sender.set_reaction(
+                support_group_chat_id, mapping.topic_message_id, new_reactions
+            )
 
     # 2. Support group operator messages
     @router.message(F.chat.id == support_group_chat_id)
@@ -119,25 +117,39 @@ def setup_router(
             return
 
         user_id = mapping.user_id
-        text = (message.text or message.caption or "").strip()
+        # Deliberately not falling back to the caption: a photo with a caption is
+        # still media, and copying it delivers both halves. Reading the caption as
+        # the operator's message would drop the image.
+        text = (message.text or "").strip()
 
         if not text:
-            # Media without text: copy to user
-            try:
-                await bot.copy_message(
-                    chat_id=user_id,
-                    from_chat_id=support_group_chat_id,
-                    message_id=message.message_id,
-                )
-            except Exception as e:
-                logger.warning("Failed to copy support media to user %d: %s", user_id, e)
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=get_message("support.fallback.media"),
-                )
+            copied = await sender.copy_message(
+                chat_id=user_id,
+                from_chat_id=support_group_chat_id,
+                message_id=message.message_id,
+            )
+            if copied is None:
+                await sender.send(user_id, get_message("support.fallback.media"))
         else:
-            replied_to = message.reply_to_message
-            if replied_to is not None:
+            await _deliver_operator_text(message, topic_id, user_id, text)
+
+        # Confirm delivery with a text reply in the topic
+        await sender.send_reply(
+            support_group_chat_id,
+            message.message_id,
+            get_message("support.sent"),
+            message_thread_id=topic_id,
+        )
+
+        conversation_state.record_operator_reply(user_id)
+
+    async def _deliver_operator_text(
+        message: Message, topic_id: int, user_id: int, text: str
+    ) -> None:
+        """Route the operator's text back as a reply when the target is known."""
+        replied_to = message.reply_to_message
+        if replied_to is not None:
+            try:
                 async with db_manager.session() as session:
                     stmt = select(MessageMapping).where(
                         MessageMapping.topic_message_id == replied_to.message_id,
@@ -145,36 +157,15 @@ def setup_router(
                     )
                     res = await session.execute(stmt)
                     msg_mapping = res.scalar_one_or_none()
+            except Exception as e:
+                logger.warning("Failed to resolve operator reply target: %s", e)
+                msg_mapping = None
 
-                if msg_mapping is not None:
-                    await bot.send_message(
-                        chat_id=msg_mapping.user_chat_id,
-                        reply_to_message_id=msg_mapping.user_message_id,
-                        text=text,
-                    )
-                else:
-                    await bot.send_message(
-                        chat_id=user_id,
-                        text=get_message("support.operator.prefix", text),
-                    )
-            else:
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=get_message("support.operator.prefix", text),
-                )
+            if msg_mapping is not None:
+                await sender.send_reply(msg_mapping.user_chat_id, msg_mapping.user_message_id, text)
+                return
 
-        # Confirm delivery with text reply in topic
-        try:
-            await bot.send_message(
-                chat_id=support_group_chat_id,
-                message_thread_id=topic_id,
-                reply_to_message_id=message.message_id,
-                text=get_message("support.sent"),
-            )
-        except Exception as e:
-            logger.warning("Failed to confirm delivery in topic %d: %s", topic_id, e)
-
-        conversation_state.record_operator_reply(user_id)
+        await sender.send(user_id, get_message("support.operator.prefix", text))
 
     # 3. Direct user messages
     @router.message()
@@ -198,7 +189,7 @@ def setup_router(
             if cmd == "/start":
                 await chat_history_service.clear(user_id)
                 conversation_state.clear(user_id)
-                await bot.send_message(chat_id=chat_id, text=get_message("bot.start.welcome"))
+                await sender.send(chat_id, get_message("bot.start.welcome"))
                 return
             if cmd == "/help":
                 await command_handler.send_help(chat_id)
@@ -211,7 +202,7 @@ def setup_router(
                         user_id,
                         last.faq_context_or_empty(),
                     )
-                await bot.send_message(chat_id=chat_id, text=get_message("bot.operator.transfer"))
+                await sender.send(chat_id, get_message("bot.operator.transfer"))
                 await forwarder.forward_to_support(
                     chat_id,
                     [message.message_id],
@@ -229,17 +220,13 @@ def setup_router(
         # Plain text
         if text:
             buffered = BufferedMessage.from_text(message, text)
-            message_buffer.submit(
-                user_id,
-                buffered,
-                pipeline.handle,
-            )
+            message_buffer.submit(user_id, buffered, pipeline.handle)
             return
 
         # Photos
         if message.photo:
             if not llm_client.supports_images():
-                await bot.send_message(chat_id=chat_id, text=get_message("bot.photo.notsupported"))
+                await sender.send(chat_id, get_message("bot.photo.notsupported"))
                 await forwarder.forward_to_support(
                     chat_id,
                     [message.message_id],
@@ -252,7 +239,7 @@ def setup_router(
             result = await photo_downloader.download(message.photo)
             if not result.is_success():
                 key = result.error_message_key or "bot.photo.error"
-                await bot.send_message(chat_id=chat_id, text=get_message(key))
+                await sender.send(chat_id, get_message(key))
                 return
 
             caption = (message.caption or "").strip()
@@ -263,15 +250,11 @@ def setup_router(
                 base64_image=result.base64_image,
                 mime_type=result.mime_type,
             )
-            message_buffer.submit(
-                user_id,
-                buffered,
-                pipeline.handle,
-            )
+            message_buffer.submit(user_id, buffered, pipeline.handle)
             return
 
         # Unsupported media (voice notes, videos, stickers, files, documents)
-        await bot.send_message(chat_id=chat_id, text=get_message("bot.media.unsupported"))
+        await sender.send(chat_id, get_message("bot.media.unsupported"))
         await forwarder.forward_to_support(
             chat_id,
             [message.message_id],

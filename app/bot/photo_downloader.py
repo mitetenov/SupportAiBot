@@ -36,11 +36,6 @@ class PhotoDownloadResult:
         """Return True if image was successfully downloaded."""
         return self.base64_image is not None
 
-    @property
-    def isSuccess(self) -> bool:
-        """Java parity property alias."""
-        return self.is_success()
-
 
 class PhotoDownloader:
     """Downloads Telegram photos and base64-encodes them for vision LLM providers."""

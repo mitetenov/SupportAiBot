@@ -129,7 +129,6 @@ async def test_should_carry_the_image_from_a_batch():
     assert len(delivered) == 1
     batch = delivered[0]
     assert batch.has_image()
-    assert batch.hasImage
     assert batch.base64_image == "BASE64_DATA"
     assert batch.mime_type == "image/png"
     assert batch.text == "смотри\nскриншот"

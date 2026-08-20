@@ -4,8 +4,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from aiogram import Bot
-
+from app.bot.sender import TelegramMessageSender
 from app.bot.topic_manager import TopicManager
 from app.constants import get_message
 from app.storage.database import DatabaseSessionManager
@@ -22,13 +21,13 @@ class SupportGroupForwarder:
 
     def __init__(
         self,
-        bot: Bot,
+        sender: TelegramMessageSender,
         topic_manager: TopicManager,
         db_manager: DatabaseSessionManager,
         support_group_chat_id: int,
         admin_username: str | None = None,
     ) -> None:
-        self.bot = bot
+        self.sender = sender
         self.topic_manager = topic_manager
         self.db_manager = db_manager
         self.support_group_chat_id = support_group_chat_id
@@ -58,7 +57,9 @@ class SupportGroupForwarder:
         # Recreate topic on first failure only
         ok = await self._forward_user_message(user_chat_id, user_message_ids[0], topic_id)
         if not ok:
-            logger.warning("Failed to forward to topic %s, recreating for user %s", topic_id, user_id)
+            logger.warning(
+                "Failed to forward to topic %s, recreating for user %s", topic_id, user_id
+            )
             topic_id = await self.topic_manager.recreate_stale_topic(user_id, user_name, topic_id)
             if topic_id is None:
                 logger.error("Failed to recreate topic for user %s", user_id)
@@ -80,27 +81,29 @@ class SupportGroupForwarder:
         topic_id: int,
     ) -> bool:
         """Copy single user message to topic and record mapping."""
-        try:
-            res = await self.bot.copy_message(
-                chat_id=self.support_group_chat_id,
-                from_chat_id=user_chat_id,
-                message_id=user_message_id,
-                message_thread_id=topic_id,
-            )
-            topic_msg_id = getattr(res, "message_id", None)
-            if topic_msg_id is not None:
-                async with self.db_manager.session() as session:
-                    mapping = MessageMapping(
-                        topic_message_id=topic_msg_id,
-                        topic_id=topic_id,
-                        user_chat_id=user_chat_id,
-                        user_message_id=user_message_id,
-                    )
-                    session.add(mapping)
-            return True
-        except Exception as e:
-            logger.warning("Error copying user message to topic %d: %s", topic_id, e)
+        topic_msg_id = await self.sender.copy_message(
+            chat_id=self.support_group_chat_id,
+            from_chat_id=user_chat_id,
+            message_id=user_message_id,
+            message_thread_id=topic_id,
+        )
+        if topic_msg_id is None:
             return False
+
+        try:
+            async with self.db_manager.session() as session:
+                mapping = MessageMapping(
+                    topic_message_id=topic_msg_id,
+                    topic_id=topic_id,
+                    user_chat_id=user_chat_id,
+                    user_message_id=user_message_id,
+                )
+                session.add(mapping)
+        except Exception as e:
+            logger.warning(
+                "Copied message %d but failed to record its mapping: %s", user_message_id, e
+            )
+        return True
 
     async def _send_bot_response(
         self,
@@ -122,11 +125,7 @@ class SupportGroupForwarder:
         else:
             truncated = bot_response
 
-        await self.bot.send_message(
-            chat_id=self.support_group_chat_id,
-            message_thread_id=topic_id,
-            text=header + truncated,
-        )
+        await self.sender.send_to_topic(self.support_group_chat_id, topic_id, header + truncated)
 
     async def forward_error_to_topic(
         self,
@@ -155,11 +154,7 @@ class SupportGroupForwarder:
             f"{get_message('admin.error.prefix')} {user_name}: {trunc_user_msg}\n\n"
             f"Бот ответил:\n{user_visible_message}"
         )
-        await self.bot.send_message(
-            chat_id=self.support_group_chat_id,
-            message_thread_id=topic_id,
-            text=msg1,
-        )
+        await self.sender.send_to_topic(self.support_group_chat_id, topic_id, msg1)
 
         trunc_err = (
             error_details[: self.SUPPORT_PREVIEW_MAX_LENGTH] + "..."
@@ -167,11 +162,7 @@ class SupportGroupForwarder:
             else error_details
         )
         msg2 = f"{admin_tag}{get_message('admin.error.details')}\n\n{trunc_err}"
-        await self.bot.send_message(
-            chat_id=self.support_group_chat_id,
-            message_thread_id=topic_id,
-            text=msg2,
-        )
+        await self.sender.send_to_topic(self.support_group_chat_id, topic_id, msg2)
 
     def resolve_user_name(self, user: Any) -> str:
         """Format user display handle: @username, First Last, First, or User <id>."""

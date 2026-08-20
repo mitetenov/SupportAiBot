@@ -3,12 +3,11 @@
 import logging
 from typing import Any
 
-from aiogram import Bot
-
 from app.bot.buffer import MessageBatch
 from app.bot.conversation_state import ConversationState
 from app.bot.forwarder import SupportGroupForwarder
 from app.bot.rate_limiter import UserRateLimiter
+from app.bot.sender import TelegramMessageSender
 from app.bot.typing import TypingIndicator
 from app.constants import get_message
 from app.llm.base import LlmClient, LlmProcessingException
@@ -26,7 +25,7 @@ class UserMessagePipeline:
     def __init__(
         self,
         llm_client: LlmClient,
-        bot: Bot,
+        sender: TelegramMessageSender,
         forwarder: SupportGroupForwarder,
         rate_limiter: UserRateLimiter,
         knowledge_gap_service: KnowledgeGapService,
@@ -34,7 +33,7 @@ class UserMessagePipeline:
         typing_indicator: TypingIndicator,
     ) -> None:
         self.llm_client = llm_client
-        self.bot = bot
+        self.sender = sender
         self.forwarder = forwarder
         self.rate_limiter = rate_limiter
         self.knowledge_gap_service = knowledge_gap_service
@@ -59,7 +58,7 @@ class UserMessagePipeline:
             return
 
         if not self.rate_limiter.try_acquire(user_id):
-            await self.bot.send_message(chat_id=chat_id, text=get_message("bot.ratelimit.wait"))
+            await self.sender.send(chat_id, get_message("bot.ratelimit.wait"))
             await self.forwarder.forward_to_support(
                 chat_id,
                 batch.message_ids,
@@ -90,12 +89,11 @@ class UserMessagePipeline:
             if not response:
                 response = get_message("bot.llm.empty")
 
-            await self.bot.send_message(chat_id=chat_id, text=response)
+            await self.sender.send(chat_id, response)
 
-            escalate = (
-                EscalationPolicy.model_requested_escalation(reply.text)
-                or EscalationPolicy.user_requests_human(text)
-            )
+            escalate = EscalationPolicy.model_requested_escalation(
+                reply.text
+            ) or EscalationPolicy.user_requests_human(text)
 
             await self.forwarder.forward_to_support(
                 chat_id,
@@ -130,7 +128,7 @@ class UserMessagePipeline:
     ) -> None:
         """Inform user of failure and forward error details to support topic."""
         chat_id = getattr(batch.last_message.chat, "id", None)
-        await self.bot.send_message(chat_id=chat_id, text=user_visible_message)
+        await self.sender.send(chat_id, user_visible_message)
         await self.forwarder.forward_error_to_topic(
             user,
             batch.text,

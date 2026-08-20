@@ -90,8 +90,3 @@ class TestUserRateLimiter:
         assert limiter.try_acquire(1) is True
         limiter.evict_stale_entries()
         assert limiter.try_acquire(1) is False
-
-    def test_camel_case_method_aliases(self, limiter: UserRateLimiter) -> None:
-        assert limiter.tryAcquire(100) is True
-        assert limiter.tryAcquire(100) is False
-        limiter.evictStaleEntries()

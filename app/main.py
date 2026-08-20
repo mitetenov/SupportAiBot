@@ -14,27 +14,37 @@ from app.bot.buffer import UserMessageBuffer
 from app.bot.command_handler import SupportCommandHandler
 from app.bot.conversation_state import ConversationState
 from app.bot.forwarder import SupportGroupForwarder
+from app.bot.maintenance import MaintenanceScheduler, build_default_jobs
 from app.bot.photo_downloader import PhotoDownloader
 from app.bot.pipeline import UserMessagePipeline
 from app.bot.rate_limiter import UserRateLimiter
 from app.bot.router import setup_router
+from app.bot.sender import TelegramMessageSender
 from app.bot.topic_manager import TopicManager
 from app.bot.typing import TypingIndicator
-from app.config import Settings, get_settings
-from app.llm.base import LlmClient
-from app.llm.deepseek import DeepSeekClient
-from app.llm.gemini import GeminiClient
+from app.config import get_settings
+from app.llm import create_llm_client
 from app.llm.mcp_client import HttpMcpClient
 from app.llm.mcp_router import McpRouter
-from app.llm.openai_client import OpenAiClient
 from app.rag.embedding import create_embedding_provider
 from app.rag.initializer import FaqInitializer
 from app.rag.knowledge_gaps import KnowledgeGapService
 from app.rag.service import FaqEmbeddingService
 from app.storage.chat_history import ChatHistoryService
-from app.storage.database import DatabaseSessionManager, get_db_manager
+from app.storage.database import get_db_manager
+from app.storage.schema_sync import sync_legacy_schema
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "create_health_app",
+    "create_llm_client",
+    "health_handler",
+    "main",
+    "register_bot_commands",
+    "start_health_server",
+    "stop_health_server",
+]
 
 
 async def health_handler(_request: web.Request) -> web.Response:
@@ -73,53 +83,12 @@ async def stop_health_server(runner: web.AppRunner) -> None:
 async def register_bot_commands(bot: Bot) -> None:
     """Register bot slash commands menu in Telegram."""
     commands = [
-        BotCommand(command="start", description="Начать общение с ботом"),
-        BotCommand(command="operator", description="Позвать оператора поддержки"),
-        BotCommand(command="help", description="Помощь и часто задаваемые вопросы"),
+        BotCommand(command="start", description="Начать заново, сбросить историю"),
+        BotCommand(command="operator", description="Связаться с живым оператором"),
+        BotCommand(command="help", description="Что умеет бот"),
     ]
     await bot.set_my_commands(commands)
     logger.info("Bot commands menu registered successfully")
-
-
-def create_llm_client(
-    settings: Settings,
-    mcp_router: McpRouter,
-    chat_history_service: ChatHistoryService,
-    faq_service: FaqEmbeddingService,
-    db_manager: DatabaseSessionManager,
-    http_client: httpx.AsyncClient,
-) -> LlmClient:
-    """Instantiate configured LLM client implementation."""
-    provider = settings.llm_provider.strip().lower()
-    if provider == "deepseek":
-        return DeepSeekClient(
-            settings=settings,
-            mcp_router=mcp_router,
-            chat_history_service=chat_history_service,
-            faq_embedding_service=faq_service,
-            db_manager=db_manager,
-            http_client=http_client,
-        )
-    elif provider == "gemini":
-        return GeminiClient(
-            settings=settings,
-            mcp_router=mcp_router,
-            chat_history_service=chat_history_service,
-            faq_embedding_service=faq_service,
-            db_manager=db_manager,
-            http_client=http_client,
-        )
-    elif provider == "openai":
-        return OpenAiClient(
-            settings=settings,
-            mcp_router=mcp_router,
-            chat_history_service=chat_history_service,
-            faq_embedding_service=faq_service,
-            db_manager=db_manager,
-            http_client=http_client,
-        )
-    else:
-        raise ValueError(f"Unknown LLM provider: {settings.llm_provider}")
 
 
 async def main() -> None:
@@ -140,16 +109,19 @@ async def main() -> None:
 
     http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
     bot = Bot(token=settings.telegram_bot_token)
+    sender = TelegramMessageSender(bot)
     db_manager = get_db_manager(settings.database_url)
 
     health_runner: web.AppRunner | None = None
     mcp_client: HttpMcpClient | None = None
     message_buffer: UserMessageBuffer | None = None
     typing_indicator: TypingIndicator | None = None
+    maintenance: MaintenanceScheduler | None = None
 
     try:
-        # 1. Initialize DB models
+        # 1. Initialize DB models, then reconcile anything an earlier version left behind
         await db_manager.init_models()
+        await sync_legacy_schema(db_manager.engine)
 
         # 2. Setup Embedding and RAG services
         embedding_provider = create_embedding_provider(settings, client=http_client)
@@ -181,6 +153,23 @@ async def main() -> None:
             readonly=settings.remnawave_mcp_readonly,
             settings=settings,
         )
+        if not mcp_router.list_tools():
+            # mcp-remnawave keeps a single global session and offers no way to
+            # release it, so a bot restarted on its own gets "already
+            # initialized" and comes up with no Remnawave tools at all. That is
+            # invisible to users — the model just answers without their data —
+            # so say it out loud rather than leaving one WARNING in the log.
+            logger.error(
+                "Starting WITHOUT Remnawave tools — the model cannot look up "
+                "subscriptions, nodes or devices. Restart %s to clear its session.",
+                settings.remnawave_mcp_url,
+            )
+            await admin_notifier.notify_error(
+                "Бот запущен БЕЗ инструментов Remnawave: MCP-сервер держит "
+                f"занятую сессию ({settings.remnawave_mcp_url}). "
+                "Перезапустите контейнер mcp-remnawave вместе с ботом.",
+                error=RuntimeError("no MCP tools exposed"),
+            )
 
         # 4. Setup Chat History & LLM Client
         chat_history_service = ChatHistoryService(
@@ -204,7 +193,7 @@ async def main() -> None:
             support_group_chat_id=settings.telegram_support_group_chat_id,
         )
         forwarder = SupportGroupForwarder(
-            bot=bot,
+            sender=sender,
             topic_manager=topic_manager,
             db_manager=db_manager,
             support_group_chat_id=settings.telegram_support_group_chat_id,
@@ -220,7 +209,7 @@ async def main() -> None:
         typing_indicator = TypingIndicator(bot=bot)
         pipeline = UserMessagePipeline(
             llm_client=llm_client,
-            bot=bot,
+            sender=sender,
             forwarder=forwarder,
             rate_limiter=rate_limiter,
             knowledge_gap_service=knowledge_gap_service,
@@ -228,7 +217,7 @@ async def main() -> None:
             typing_indicator=typing_indicator,
         )
         command_handler = SupportCommandHandler(
-            bot=bot,
+            sender=sender,
             db_manager=db_manager,
             knowledge_gap_service=knowledge_gap_service,
             admin_telegram_ids=settings.telegram_support_admin_telegram_ids,
@@ -240,7 +229,7 @@ async def main() -> None:
         )
 
         router = setup_router(
-            bot=bot,
+            sender=sender,
             llm_client=llm_client,
             forwarder=forwarder,
             db_manager=db_manager,
@@ -261,22 +250,30 @@ async def main() -> None:
         await faq_initializer.run()
         await knowledge_gap_service.init_schema()
 
-        # 7. Start Healthcheck server
+        # 7. Start recurring cleanups (chat history TTL, rate limiter, conversation state)
+        maintenance = MaintenanceScheduler(
+            build_default_jobs(chat_history_service, rate_limiter, conversation_state)
+        )
+        maintenance.start()
+
+        # 8. Start Healthcheck server
         health_app = create_health_app()
         health_runner = await start_health_server(
             health_app,
             port=settings.healthcheck_port,
         )
 
-        # 8. Register bot commands in Telegram
+        # 9. Register bot commands in Telegram
         await register_bot_commands(bot)
 
-        # 9. Start long-polling
+        # 10. Start long-polling
         logger.info("Starting Telegram bot long-polling...")
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
     finally:
         logger.info("Shutting down VPN Support Bot...")
+        if maintenance is not None:
+            await maintenance.stop()
         if message_buffer is not None:
             message_buffer.shutdown()
         if typing_indicator is not None:

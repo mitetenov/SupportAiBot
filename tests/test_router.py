@@ -18,6 +18,7 @@ from aiogram.types import (
 from app.bot.command_handler import SupportCommandHandler
 from app.bot.conversation_state import ConversationState
 from app.bot.router import setup_router
+from app.bot.sender import TelegramMessageSender
 from app.storage.chat_history import ChatHistoryService
 from app.storage.models import MessageMapping, TopicMapping
 from app.storage.models import User as DbUser
@@ -51,7 +52,9 @@ class MockDatabaseSessionManager:
             stmt_str = str(stmt)
             if "topic_mappings" in stmt_str:
                 for topic_id, mapping in self.topic_mappings_by_topic.items():
-                    if str(topic_id) in stmt_str or any(str(topic_id) in str(p) for p in (params or {}).values()):
+                    if str(topic_id) in stmt_str or any(
+                        str(topic_id) in str(p) for p in (params or {}).values()
+                    ):
                         result_mock.scalar_one_or_none.return_value = mapping
                         return result_mock
                 result_mock.scalar_one_or_none.return_value = (
@@ -64,12 +67,16 @@ class MockDatabaseSessionManager:
             if "message_mappings" in stmt_str:
                 if "topic_message_id" in stmt_str:
                     for m in self.message_mappings:
-                        if str(m.topic_message_id) in stmt_str or any(str(m.topic_message_id) in str(p) for p in (params or {}).values()):
+                        if str(m.topic_message_id) in stmt_str or any(
+                            str(m.topic_message_id) in str(p) for p in (params or {}).values()
+                        ):
                             result_mock.scalar_one_or_none.return_value = m
                             return result_mock
                 if "user_chat_id" in stmt_str and "user_message_id" in stmt_str:
                     for m in self.message_mappings:
-                        if str(m.user_message_id) in stmt_str or any(str(m.user_message_id) in str(p) for p in (params or {}).values()):
+                        if str(m.user_message_id) in stmt_str or any(
+                            str(m.user_message_id) in str(p) for p in (params or {}).values()
+                        ):
                             result_mock.scalar_one_or_none.return_value = m
                             return result_mock
                 result_mock.scalar_one_or_none.return_value = (
@@ -103,7 +110,7 @@ async def test_router_handles_start_command(mock_db):
     cmd_handler = SupportCommandHandler(bot, mock_db, MagicMock(), admin_telegram_ids={111})
 
     router = setup_router(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         llm_client=MagicMock(),
         forwarder=MagicMock(),
         db_manager=mock_db,
@@ -148,7 +155,7 @@ async def test_router_handles_operator_command(mock_db):
     cmd_handler = SupportCommandHandler(bot, mock_db, gap_service, admin_telegram_ids={111})
 
     router = setup_router(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         llm_client=MagicMock(),
         forwarder=forwarder,
         db_manager=mock_db,
@@ -185,7 +192,9 @@ async def test_router_handles_operator_command(mock_db):
 
 @pytest.mark.asyncio
 async def test_router_support_group_operator_reply(mock_db):
-    mock_db.topic_mappings_by_topic[42] = TopicMapping(user_id=100, topic_id=42, user_name="testuser")
+    mock_db.topic_mappings_by_topic[42] = TopicMapping(
+        user_id=100, topic_id=42, user_name="testuser"
+    )
     mock_db.message_mappings.append(
         MessageMapping(
             topic_message_id=500,
@@ -201,7 +210,7 @@ async def test_router_support_group_operator_reply(mock_db):
     conv_state = ConversationState()
 
     router = setup_router(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         llm_client=MagicMock(),
         forwarder=MagicMock(),
         db_manager=mock_db,
@@ -256,7 +265,7 @@ async def test_router_forwards_user_message_to_buffer(mock_db):
     buffer.submit = MagicMock()
 
     router = setup_router(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         llm_client=MagicMock(),
         forwarder=MagicMock(),
         db_manager=mock_db,
@@ -293,7 +302,7 @@ async def test_router_unsupported_media_handling(mock_db):
     forwarder = MagicMock(forward_to_support=AsyncMock())
 
     router = setup_router(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         llm_client=MagicMock(),
         forwarder=forwarder,
         db_manager=mock_db,
@@ -331,7 +340,7 @@ async def test_router_photo_when_images_unsupported(mock_db):
     llm_client = MagicMock(supports_images=MagicMock(return_value=False))
 
     router = setup_router(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         llm_client=llm_client,
         forwarder=forwarder,
         db_manager=mock_db,
@@ -376,7 +385,7 @@ async def test_router_reaction_sync_user_to_support(mock_db):
     bot.set_message_reaction = AsyncMock()
 
     router = setup_router(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         llm_client=MagicMock(),
         forwarder=MagicMock(),
         db_manager=mock_db,
@@ -409,3 +418,57 @@ async def test_router_reaction_sync_user_to_support(mock_db):
     kwargs = bot.set_message_reaction.call_args[1]
     assert kwargs["chat_id"] == -100123
     assert kwargs["message_id"] == 300
+
+
+@pytest.mark.asyncio
+async def test_router_copies_operator_media_that_carries_a_caption(mock_db):
+    """A photo with a caption is media, not a text message.
+
+    Reading the caption as the operator's reply delivered the words and dropped
+    the screenshot — which is usually the whole point of sending it.
+    """
+    mock_db.topic_mappings_by_topic[42] = TopicMapping(
+        user_id=100, topic_id=42, user_name="testuser"
+    )
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    bot.copy_message = AsyncMock(return_value=MagicMock(message_id=901))
+
+    router = setup_router(
+        sender=TelegramMessageSender(bot),
+        llm_client=MagicMock(),
+        forwarder=MagicMock(),
+        db_manager=mock_db,
+        chat_history_service=ChatHistoryService(),
+        knowledge_gap_service=MagicMock(),
+        command_handler=MagicMock(),
+        photo_downloader=MagicMock(),
+        message_buffer=MagicMock(),
+        pipeline=MagicMock(),
+        conversation_state=ConversationState(),
+        support_group_chat_id=-100123,
+    )
+
+    dp = Dispatcher()
+    dp.include_router(router)
+
+    op_msg = Message(
+        message_id=600,
+        date=123456,
+        chat=Chat(id=-100123, type="supergroup"),
+        from_user=User(id=777, is_bot=False, first_name="Operator"),
+        message_thread_id=42,
+        photo=[PhotoSize(file_id="f1", file_unique_id="u1", width=100, height=100)],
+        caption="Вот скриншот настроек",
+    )
+
+    await dp.feed_update(bot, Update(update_id=9, message=op_msg))
+
+    bot.copy_message.assert_awaited_once()
+    assert bot.copy_message.await_args.kwargs["chat_id"] == 100
+    assert bot.copy_message.await_args.kwargs["message_id"] == 600
+
+    # The only text sent is the in-topic delivery confirmation.
+    texts = [c.kwargs["text"] for c in bot.send_message.await_args_list]
+    assert texts == ["Отправлено пользователю."]

@@ -4,6 +4,8 @@ import logging
 
 from aiogram import Bot
 
+from app.constants import get_message
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,12 +27,10 @@ class AdminNotifier:
         """Send a silent diagnostic alert to the support group."""
         raw_msg = str(error) if error is not None else "null"
         error_message = (
-            raw_msg[: self.MAX_ERROR_LENGTH]
-            if len(raw_msg) > self.MAX_ERROR_LENGTH
-            else raw_msg
+            raw_msg[: self.MAX_ERROR_LENGTH] if len(raw_msg) > self.MAX_ERROR_LENGTH else raw_msg
         )
 
-        lines = ["[ОШИБКА БОТА]", context]
+        lines = [get_message("admin.error.prefix"), context]
         if user_id is not None:
             lines.append(f"User: {user_id}")
         lines.append("")

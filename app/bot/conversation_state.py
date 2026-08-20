@@ -149,10 +149,3 @@ class ConversationState:
         if removed > 0:
             logger.debug("Evicted %d stale conversation-state entries", removed)
         return removed
-
-    # CamelCase aliases for Java parity / convenience
-    recordQuery = record_query
-    lastQuery = last_query
-    recordOperatorReply = record_operator_reply
-    isOperatorRecentlyActive = is_operator_recently_active
-    evictExpired = evict_expired

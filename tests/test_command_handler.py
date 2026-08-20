@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.bot.command_handler import SupportCommandHandler
+from app.bot.sender import TelegramMessageSender
 from app.rag.knowledge_gaps import GapStatsDto
 from app.storage.models import LlmTokenUsage, User
 
@@ -36,7 +37,9 @@ class MockDatabaseSessionManager:
             result_mock = MagicMock()
             stmt_str = str(stmt)
             if "llm_token_usage" in stmt_str:
-                grouped = defaultdict(lambda: {"total": 0, "prompt": 0, "completion": 0, "count": 0})
+                grouped = defaultdict(
+                    lambda: {"total": 0, "prompt": 0, "completion": 0, "count": 0}
+                )
                 for u in self.token_usages:
                     g = grouped[u.telegram_id]
                     g["total"] += u.total_tokens or 0
@@ -57,7 +60,9 @@ class MockDatabaseSessionManager:
                 if "WHERE" in stmt_str or "where" in stmt_str:
                     # filter by telegram_id if present
                     for tid, g in grouped.items():
-                        if str(tid) in stmt_str or any(str(tid) in str(p) for p in (params or {}).values()):
+                        if str(tid) in stmt_str or any(
+                            str(tid) in str(p) for p in (params or {}).values()
+                        ):
                             matched_row = MagicMock()
                             matched_row.telegram_id = tid
                             matched_row.total_tokens = g["total"]
@@ -131,7 +136,7 @@ async def test_non_admin_cannot_execute_admin_command(mock_db):
     gap_service = MagicMock()
 
     handler = SupportCommandHandler(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         db_manager=mock_db,
         knowledge_gap_service=gap_service,
         admin_telegram_ids={111},
@@ -167,7 +172,7 @@ async def test_admin_stats_top_users(mock_db):
     gap_service = MagicMock()
 
     handler = SupportCommandHandler(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         db_manager=mock_db,
         knowledge_gap_service=gap_service,
         admin_telegram_ids={111},
@@ -199,7 +204,7 @@ async def test_admin_stats_single_user(mock_db):
     gap_service = MagicMock()
 
     handler = SupportCommandHandler(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         db_manager=mock_db,
         knowledge_gap_service=gap_service,
         admin_telegram_ids={111},
@@ -229,7 +234,7 @@ async def test_admin_gaps(mock_db):
     )
 
     handler = SupportCommandHandler(
-        bot=bot,
+        sender=TelegramMessageSender(bot),
         db_manager=mock_db,
         knowledge_gap_service=gap_service,
         admin_telegram_ids={111},

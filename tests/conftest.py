@@ -1,6 +1,37 @@
 """Global test fixtures and configuration."""
 
+import os
+
 import pytest
+
+from app.config import Settings, get_settings
+
+# Every field the bot reads from the environment. Left in place, a developer's
+# own .env or exported shell variables leak into Settings(...) and quietly change
+# what the validation tests are asserting about.
+_SETTINGS_ENV_PREFIXES = (
+    "TELEGRAM_",
+    "LLM_",
+    "EMBEDDING_",
+    "DEEPSEEK_",
+    "GEMINI_",
+    "OPENAI_",
+    "REMNAWAVE_",
+    "PGVECTOR_",
+    "CHAT_HISTORY_",
+    "CONVERSATION_",
+    "HEALTHCHECK_",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build Settings from explicit arguments only — no .env, no ambient env vars."""
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    for name in list(os.environ):
+        if name.startswith(_SETTINGS_ENV_PREFIXES):
+            monkeypatch.delenv(name, raising=False)
+    get_settings.cache_clear()
 
 
 @pytest.fixture
