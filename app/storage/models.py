@@ -14,7 +14,7 @@ class User(Base):
 
     __tablename__ = "user_names"
 
-    telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -34,7 +34,7 @@ class TopicMapping(Base):
 
     __tablename__ = "topic_mappings"
 
-    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     topic_id: Mapped[int] = mapped_column(Integer, nullable=False)
     user_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -55,12 +55,18 @@ class MessageMapping(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     topic_message_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     topic_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    user_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
-    user_message_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    user_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    user_message_id: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         nullable=False,
+    )
+
+    # Reaction sync looks the pair up together; two single-column indexes served
+    # neither query and cost a write each.
+    __table_args__ = (
+        Index("idx_message_mappings_user_message", "user_chat_id", "user_message_id"),
     )
 
     def __repr__(self) -> str:
@@ -76,7 +82,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     role: Mapped[str] = mapped_column(String(10), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
