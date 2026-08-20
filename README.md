@@ -1,21 +1,23 @@
 # VPN Support Bot
 
-Telegram-бот техподдержки VPN-сервиса. Принимает текстовые вопросы и скриншоты, ищет ответы в базе знаний (гибридный RAG через PGVector + Full-Text Search), получает данные пользователя через Remnawave (MCP-инструменты) и отвечает через LLM (DeepSeek, Gemini или OpenAI). Форвардит диалоги в форум-группу поддержки с автоэскалацией.
+Telegram-бот техподдержки VPN-сервиса на Python 3.12+. Принимает текстовые вопросы и скриншоты, ищет ответы в базе знаний (гибридный RAG через PGVector + Full-Text Search), получает данные пользователя через Remnawave (MCP-инструменты) и отвечает через LLM (DeepSeek, Gemini или OpenAI). Форвардит диалоги в форум-группу поддержки с автоэскалацией.
 
 ## Архитектура
 
 ```
-Пользователь → Telegram Bot → LLM (DeepSeek/Gemini/OpenAI) ↔ MCP Client (HTTP) → Remnawave
-                                 ↕
-                            PGVector + FTS (RAG/FAQ)
-                                 ↓
-                         Форум-группа поддержки
+Пользователь → Telegram Bot (aiogram 3) → LLM (DeepSeek/Gemini/OpenAI) ↔ MCP Client (HTTP) → Remnawave
+                                  ↕
+                      PGVector + FTS (RAG/FAQ)
+                                  ↓
+                        Форум-группа поддержки
 ```
 
+- **Стек**: Python 3.12+, aiogram 3.30+, SQLAlchemy 2.0 (asyncpg), pgvector-python, httpx, aiohttp, uv.
 - **LLM**: DeepSeek, Gemini или OpenAI (переключается через `LLM_PROVIDER`, список моделей — ниже)
 - **MCP**: [mcp-remnawave](https://github.com/mitetenov/mcp-remnawave) 3.2.x по HTTP-транспорту, панель Remnawave 3.3.x. Сервер поднят в режиме support (`REMNAWAVE_IS_SUPPORT=true`): он отдаёт 16 пользовательских инструментов и вырезает VPN-креды из каждого ответа панели. Поверх этого бот сужает список до 5 allow-list инструментов: `users_get_by_telegram_id`, `nodes_list`, `nodes_get`, `hwid_devices_list` и — при `REMNAWAVE_MCP_READONLY=false` — `hwid_device_delete`. Остальные инструменты сервера боту не видны и не вызываемы.
-- **RAG**: гибридный поиск по FAQ-базе — векторные эмбеддинги (Gemini/OpenAI) и полнотекстовый поиск PostgreSQL `tsvector` по русскому словарю объединяются через Reciprocal Rank Fusion
-- **Форвардинг**: каждому пользователю — отдельный топик в форум-группе
+- **RAG**: гибридный поиск по FAQ-базе — векторные эмбеддинги (Gemini/OpenAI) и полнотекстовый поиск PostgreSQL `tsvector` по русскому словарю объединяются через Reciprocal Rank Fusion ($k=60$).
+- **Форвардинг**: каждому пользователю — отдельный топик в форум-группе с поддержкой синхронизации реакций.
+- **Отправка**: весь исходящий трафик идёт через `TelegramMessageSender` — он режет сообщения длиннее 4096 символов по переводам строк и гасит ошибки отправки, чтобы недоставленный ответ не отменял пересылку обращения оператору.
 
 ### Защита персональных данных
 
@@ -25,15 +27,13 @@ Telegram-бот техподдержки VPN-сервиса. Принимает 
 
 ```bash
 git clone https://github.com/mitetenov/SupportAiBot.git && cd SupportAiBot
-cp .env.example .env   # заполнить переменные
+cp .env.example .env   # заполнить переменные — его читают все три сервиса
 docker compose pull
 docker compose up -d
-docker compose exec support-bot wget -qO- http://localhost:8080/actuator/health
+docker compose exec support-bot python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
 ```
 
-Образ: [`mitetenov/supportbot`](https://hub.docker.com/r/mitetenov/supportbot) — 237 МБ, включает FAQ-базу и урезанный через `jlink` Java-рантайм только с нужными модулями. Не требует Java/Maven на хосте. MCP-сервер — отдельный сервис `mcp-remnawave` в compose.
-
-Образ собирается послойно: зависимости (63 МБ) лежат отдельно от кода приложения (700 КБ), поэтому пересборка после правки кода занимает секунды и заливает в реестр меньше мегабайта.
+Образ: [`mitetenov/supportbot`](https://hub.docker.com/r/mitetenov/supportbot) — ~75 МБ на базе `python:3.12-slim` с установкой зависимостей через `uv`. MCP-сервер — отдельный сервис `mcp-remnawave` в compose.
 
 **Важно**: перед запуском отключите privacy mode бота в BotFather (`/setprivacy` → Disable), иначе бот не будет видеть сообщения в группе.
 
@@ -92,9 +92,9 @@ docker compose exec support-bot wget -qO- http://localhost:8080/actuator/health
 
 ## RAG / База знаний
 
-FAQ хранится в `bot/src/main/resources/faq/faq.json` и вшит в JAR при сборке. Каждая запись — `question`, `answer` и `keywords`. При старте бот индексирует их в PGVector (`gemini-embedding-001`, 2000 измерений, либо OpenAI) и в `tsvector`-индекс PostgreSQL.
+FAQ хранится в `faq/faq.json`. Каждая запись — `question`, `answer` и `keywords`. При старте бот индексирует их в PGVector (`gemini-embedding-001`, 2000 измерений, либо OpenAI) и в `tsvector`-индекс PostgreSQL.
 
-Поиск гибридный: векторный и полнотекстовый каналы ранжируются независимо и объединяются через **Reciprocal Rank Fusion**. Это существенно: при взвешенной сумме баллов реальные значения `ts_rank` (~0.05) никогда не перевешивали порог, и запись, найденная только по ключевому слову, до модели не доходила.
+Поиск гибридный: векторный и полнотекстовый каналы ранжируются независимо и объединяются через **Reciprocal Rank Fusion**.
 
 Эмбеддинги запросов кэшируются (LRU на 256 записей), поэтому повторные и однотипные вопросы не порождают новых обращений к провайдеру.
 
@@ -117,24 +117,50 @@ docker compose up -d --force-recreate support-bot
 
 ## Локальная разработка
 
-Требуется **JDK 21**. На JDK 22+ inline mock maker Mockito не может инструментировать классы и весь набор тестов падает, поэтому версия проверяется в фазе `validate` с понятным сообщением.
+Требуется **Python 3.12+**.
 
+Установка зависимостей из lock-файла (те же версии, что и в образе):
 ```bash
-export JAVA_HOME=$(/usr/libexec/java_home -v 21)
+uv sync --extra dev
+```
+
+Без `uv` — но тогда версии не закреплены:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+Запуск приложения:
+```bash
 export $(grep -v '^#' .env | xargs)
-mvn -pl bot spring-boot:run
+python3 -m app.main
 ```
 
-Тесты:
-
+Запуск тестов и линтера:
 ```bash
-JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn -pl bot test
+uv run pytest -v
+uv run ruff check .
+uv run ruff format --check .
 ```
+
+Зависимости закреплены в `uv.lock`. После правки `pyproject.toml` обновите его командой `uv lock` — CI падает, если файлы разошлись.
 
 ## Хранилище
 
 - PostgreSQL 17 + PGVector — маппинг пользователь↔топик, гибридный FAQ-поиск (векторы + FTS)
 - Docker volume `pgvector-data` для персистентности
+- Схема создаётся при старте (`create_all` + явный DDL для `faq` и `knowledge_gaps`). Миграций нет: существующие таблицы не изменяются, поэтому изменение модели на живой базе нужно применять руками.
+
+## Фоновые задачи
+
+Три очистки крутятся всё время, пока бот жив:
+
+| Задача | Период | Что делает |
+|---|---|---|
+| `chat-history-eviction` | 1 ч | Удаляет сообщения старше `CHAT_HISTORY_TTL_DAYS` и выгружает неактивные диалоги из памяти |
+| `rate-limiter-eviction` | 10 мин | Чистит записи rate-limiter'а |
+| `conversation-state-eviction` | 15 мин | Чистит просроченные последние запросы и метки активности оператора |
 
 ## Выбор LLM
 
