@@ -20,7 +20,7 @@ push → mcp-remnawave (main)
 
 | Job | Когда | Что делает |
 |-----|-------|------------|
-| `test` | всегда, включая PR | `ruff check .` и `pytest -v` на Python 3.12 (`uv`). Это merge-gate: именно его стоит требовать в branch protection |
+| `test` | всегда, включая PR | `ruff check .` и `pytest -v` на Python 3.14 (`uv`). Это merge-gate: именно его стоит требовать в branch protection |
 | `build` | только не-PR (`master`, ручной запуск) | multi-arch образ (linux/amd64 + linux/arm64), пуш в Docker Hub |
 
 Теги образа: `latest`, `:{version из pyproject.toml}`, `:{sha}`.

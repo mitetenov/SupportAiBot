@@ -22,7 +22,7 @@ from app.bot.router import setup_router
 from app.bot.sender import TelegramMessageSender
 from app.bot.topic_manager import TopicManager
 from app.bot.typing import TypingIndicator
-from app.config import get_settings
+from app.config import get_settings, reveal
 from app.llm import create_llm_client
 from app.llm.mcp_client import HttpMcpClient
 from app.llm.mcp_router import McpRouter
@@ -108,7 +108,7 @@ async def main() -> None:
     )
 
     http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
-    bot = Bot(token=settings.telegram_bot_token)
+    bot = Bot(token=reveal(settings.telegram_bot_token))
     sender = TelegramMessageSender(bot)
     db_manager = get_db_manager(settings.database_url)
 

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from app.config import Settings
+from app.config import Settings, reveal
 from app.constants import SupportPrompt
 from app.llm.base import (
     AbstractLlmClient,
@@ -49,7 +49,7 @@ class DeepSeekClient(AbstractLlmClient):
         self.settings = settings
         self.model = settings.deepseek_model or "deepseek-chat"
         self.base_url = (settings.deepseek_base_url or "https://api.deepseek.com/v1").rstrip("/")
-        self.api_key = settings.deepseek_api_key or ""
+        self.api_key = reveal(settings.deepseek_api_key)
         self._http_client = http_client
         self._own_client = False
         self.tool_definitions = self._build_tool_definitions()

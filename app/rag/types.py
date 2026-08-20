@@ -23,7 +23,7 @@ class FaqContext:
     max_similarity: float
     best_question: str | None
 
-    EMPTY: ClassVar["FaqContext"]
+    EMPTY: ClassVar[FaqContext]
 
     def is_empty(self) -> bool:
         """Return True if no FAQ results were matched."""

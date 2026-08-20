@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from app.config import Settings
+from app.config import Settings, reveal
 from app.constants import SupportPrompt
 from app.llm.base import (
     AbstractLlmClient,
@@ -104,7 +104,7 @@ class GeminiClient(AbstractLlmClient):
         self.base_url = (
             settings.gemini_base_url or "https://generativelanguage.googleapis.com/v1beta"
         ).rstrip("/")
-        self.api_key = settings.gemini_api_key or ""
+        self.api_key = reveal(settings.gemini_api_key)
         self._http_client = http_client
         self._own_client = False
         self.sanitized_tools = self._build_sanitized_tools()

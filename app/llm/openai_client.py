@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from app.config import Settings
+from app.config import Settings, reveal
 from app.constants import SupportPrompt
 from app.llm.base import (
     AbstractLlmClient,
@@ -43,12 +43,12 @@ class OpenAiClient(AbstractLlmClient):
             faq_embedding_service=faq_embedding_service,
             db_manager=db_manager,
         )
-        api_key = settings.openai_api_key
-        if not api_key or not api_key.strip():
+        api_key = reveal(settings.openai_api_key).strip()
+        if not api_key:
             raise ValueError("OpenAI API key must not be null or blank")
 
         self.settings = settings
-        self.api_key = api_key.strip()
+        self.api_key = api_key
         self.model = settings.openai_model or "gpt-5.6-luna"
         self.base_url = (settings.openai_base_url or "https://api.openai.com/v1").rstrip("/")
         self.temperature = settings.openai_temperature

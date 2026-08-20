@@ -23,12 +23,12 @@ class PhotoDownloadResult:
     error_message_key: str | None = None
 
     @classmethod
-    def ok(cls, base64_image: str, mime_type: str) -> "PhotoDownloadResult":
+    def ok(cls, base64_image: str, mime_type: str) -> PhotoDownloadResult:
         """Factory for successful download."""
         return cls(base64_image=base64_image, mime_type=mime_type, error_message_key=None)
 
     @classmethod
-    def failed(cls, error_message_key: str) -> "PhotoDownloadResult":
+    def failed(cls, error_message_key: str) -> PhotoDownloadResult:
         """Factory for failed download carrying user-facing error key."""
         return cls(base64_image=None, mime_type=None, error_message_key=error_message_key)
 

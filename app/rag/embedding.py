@@ -5,7 +5,7 @@ from typing import Protocol, runtime_checkable
 
 import httpx
 
-from app.config import Settings
+from app.config import Settings, reveal
 
 logger = logging.getLogger(__name__)
 
@@ -178,14 +178,14 @@ def create_embedding_provider(
     provider_name = settings.embedding_provider.strip().lower()
     if provider_name == "openai":
         return OpenAiEmbeddingProvider(
-            api_key=settings.openai_api_key or "",
+            api_key=reveal(settings.openai_api_key),
             base_url=settings.openai_base_url,
             model=settings.openai_embedding_model,
             client=client,
         )
     elif provider_name == "gemini":
         return GeminiEmbeddingProvider(
-            api_key=settings.gemini_api_key or "",
+            api_key=reveal(settings.gemini_api_key),
             base_url=settings.gemini_base_url,
             client=client,
         )

@@ -20,7 +20,7 @@ class BufferedMessage:
     mime_type: str | None = None
 
     @classmethod
-    def from_text(cls, message: Any, text: str) -> "BufferedMessage":
+    def from_text(cls, message: Any, text: str) -> BufferedMessage:
         """Factory method for creating a text-only buffered message."""
         return cls(message=message, text=text, base64_image=None, mime_type=None)
 
@@ -37,7 +37,7 @@ class MessageBatch:
     mime_type: str | None = None
 
     @classmethod
-    def of(cls, messages: list[BufferedMessage]) -> "MessageBatch":
+    def of(cls, messages: list[BufferedMessage]) -> MessageBatch:
         """Create a merged batch from a list of buffered messages."""
         if not messages:
             raise ValueError("Cannot create MessageBatch from empty message list")

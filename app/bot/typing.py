@@ -33,7 +33,7 @@ class TypingSession:
             except asyncio.CancelledError:
                 break
 
-    def start(self) -> "TypingSession":
+    def start(self) -> TypingSession:
         """Start the background typing loop task."""
         if self._task is None or self._task.done():
             self._stopped = False
@@ -57,7 +57,7 @@ class TypingSession:
             except asyncio.CancelledError:
                 pass
 
-    async def __aenter__(self) -> "TypingSession":
+    async def __aenter__(self) -> TypingSession:
         return self.start()
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
