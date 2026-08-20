@@ -1,17 +1,20 @@
-"""Base classes, protocols, and data models for LLM clients."""
+from __future__ import annotations
 
 import inspect
 import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from app.llm.mcp_router import McpRouter
 from app.llm.rejection import is_rejection
-from app.rag.service import FaqContext, FaqEmbeddingService
-from app.storage.chat_history import ChatHistoryService
-from app.storage.database import DatabaseSessionManager
+from app.rag.types import FaqContext
+
+if TYPE_CHECKING:
+    from app.llm.mcp_router import McpRouter
+    from app.rag.service import FaqEmbeddingService
+    from app.storage.chat_history import ChatHistoryService
+    from app.storage.database import DatabaseSessionManager
 
 logger = logging.getLogger(__name__)
 

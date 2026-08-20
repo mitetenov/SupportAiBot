@@ -20,16 +20,14 @@ class BufferedMessage:
     mime_type: str | None = None
 
     @classmethod
-    def text_message(cls, message: Any, text: str) -> "BufferedMessage":
+    def from_text(cls, message: Any, text: str) -> "BufferedMessage":
         """Factory method for creating a text-only buffered message."""
         return cls(message=message, text=text, base64_image=None, mime_type=None)
 
-    # Alias matching Java BufferedMessage.text(...)
-    text_factory = text_message
-
-
-# Add text classmethod on BufferedMessage
-BufferedMessage.text = BufferedMessage.text_message  # type: ignore[attr-defined]
+    @classmethod
+    def text_message(cls, message: Any, text: str) -> "BufferedMessage":
+        """Factory method for creating a text-only buffered message."""
+        return cls(message=message, text=text, base64_image=None, mime_type=None)
 
 
 @dataclass(frozen=True)
@@ -169,7 +167,9 @@ class UserMessageBuffer:
         try:
             message_batch = MessageBatch.of(batch.messages)
             res = sink(message_batch)
-            if inspect.isawaitable(res):
+            if inspect.iscoroutine(res):
+                asyncio.create_task(res)
+            elif inspect.isawaitable(res) and not isinstance(res, (asyncio.Future, asyncio.Task)):
                 asyncio.create_task(res)
         except Exception as e:
             logger.error("Failed to dispatch buffered messages for user %d: %s", user_id, e)

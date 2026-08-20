@@ -18,10 +18,9 @@ from app.rag.service import (
     REFERRAL_FAQ_QUERY,
     RRF_K,
     SEARCH_LIMIT,
-    FaqContext,
     FaqEmbeddingService,
-    FaqResult,
 )
+from app.rag.types import FaqContext, FaqResult
 
 __all__ = [
     "CONNECTION_FAQ_QUERY",

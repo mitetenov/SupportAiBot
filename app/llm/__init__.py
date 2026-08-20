@@ -1,4 +1,6 @@
-"""LLM integration module containing clients, policies, prompts, and routers."""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import httpx
 
@@ -25,9 +27,11 @@ from app.llm.mcp_router import McpRouter
 from app.llm.openai_client import OpenAiClient
 from app.llm.prompt import SupportPrompt
 from app.llm.rejection import RejectionDetector, is_rejection
-from app.rag.service import FaqEmbeddingService
-from app.storage.chat_history import ChatHistoryService
-from app.storage.database import DatabaseSessionManager
+
+if TYPE_CHECKING:
+    from app.rag.service import FaqEmbeddingService
+    from app.storage.chat_history import ChatHistoryService
+    from app.storage.database import DatabaseSessionManager
 
 
 def create_llm_client(

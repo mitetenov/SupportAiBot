@@ -1,6 +1,5 @@
 """Main aiogram Router: user text/photos/commands, support topic forwarding, and reaction sync."""
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -229,11 +228,11 @@ def setup_router(
 
         # Plain text
         if text:
-            buffered = BufferedMessage.text(message, text)
+            buffered = BufferedMessage.from_text(message, text)
             message_buffer.submit(
                 user_id,
                 buffered,
-                lambda batch: asyncio.create_task(pipeline.handle(batch)),
+                pipeline.handle,
             )
             return
 
@@ -267,7 +266,7 @@ def setup_router(
             message_buffer.submit(
                 user_id,
                 buffered,
-                lambda batch: asyncio.create_task(pipeline.handle(batch)),
+                pipeline.handle,
             )
             return
 

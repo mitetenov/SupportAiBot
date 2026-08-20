@@ -1,8 +1,8 @@
-"""DeepSeek LLM client implementation using OpenAI-compatible chat completions."""
+from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -15,11 +15,13 @@ from app.llm.base import (
     LlmResponse,
     ToolCall,
 )
-from app.llm.mcp_router import McpRouter
-from app.rag.service import FaqEmbeddingService
-from app.storage.chat_history import ChatHistoryService
-from app.storage.database import DatabaseSessionManager
 from app.storage.models import LlmTokenUsage
+
+if TYPE_CHECKING:
+    from app.llm.mcp_router import McpRouter
+    from app.rag.service import FaqEmbeddingService
+    from app.storage.chat_history import ChatHistoryService
+    from app.storage.database import DatabaseSessionManager
 
 logger = logging.getLogger(__name__)
 
