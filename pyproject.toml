@@ -1,5 +1,9 @@
 [project]
 name = "vpn-support-bot"
+# Only the major component is authoritative. CI reads it, looks up the highest
+# minor already published to Docker Hub, and publishes the next one — so an
+# ordinary merge to master needs no edit here. Raise the major by hand for a
+# breaking change, and run `uv lock` afterwards so this file and uv.lock agree.
 version = "2.0.1"
 description = "AI-powered Telegram Support Bot for VPN service"
 readme = "README.md"

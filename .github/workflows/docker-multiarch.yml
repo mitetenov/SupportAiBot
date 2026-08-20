@@ -66,12 +66,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
 
-      - name: Extract version from pyproject.toml
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      # The major line is declared by hand in pyproject.toml; the minor is taken
+      # from what is already on Docker Hub. So an ordinary merge to master never
+      # touches the version and never lands on a tag that exists, and two merges
+      # arriving together cannot pick the same number — unlike a scheme that
+      # commits the bump back to master.
+      - name: Pick the version to publish
         id: version
-        run: |
-          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Building version ${VERSION}"
+        run: python3 .github/scripts/next_version.py mitetenov/supportbot >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4.2.0
@@ -86,15 +93,17 @@ jobs:
           password: ${{ secrets.DOCKER_TOKEN }}
 
       # :latest and the commit sha are always safe to move. The version tag is
-      # not: with the version left at its previous value, a rebuild silently
-      # replaces the image that tag already points at, and there is nothing to
-      # roll back to. Runs after the login so a repository that is not public
-      # fails the check loudly instead of reading "cannot see it" as "free".
+      # not: replacing the image a version tag points at leaves nothing to roll
+      # back to. The step above is what keeps that from happening; this one is
+      # the second pair of eyes, and it asks the registry the way the push will.
+      # Runs after the login so a repository that is not public fails the check
+      # loudly instead of reading "cannot see it" as "free".
       - name: Refuse to overwrite a published version
         run: |
           TAG="mitetenov/supportbot:${{ steps.version.outputs.version }}"
           if docker manifest inspect "$TAG" > /dev/null 2>&1; then
-            echo "::error::$TAG is already published. Bump the version in pyproject.toml."
+            echo "::error::$TAG is already published, but the version picker chose it."
+            echo "::error::That means the tag listing was incomplete — do not retry blindly."
             exit 1
           fi
           echo "$TAG is free"
