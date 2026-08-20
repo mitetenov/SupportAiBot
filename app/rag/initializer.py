@@ -37,19 +37,30 @@ class FaqInitializer:
             current_hash = self.compute_hash(self.faq_path)
             stored_hash = await self.service.get_faq_hash()
             faq_count = await self.service.get_faq_count()
+            # Rows without an embedding are invisible to search, so counting rows
+            # alone is not evidence that the FAQ is usable.
+            indexed_count = await self.service.get_indexed_faq_count()
 
             if (
                 current_hash is not None
                 and current_hash == stored_hash
-                and faq_count is not None
                 and faq_count > 0
+                and indexed_count == faq_count
             ):
                 logger.info(
-                    "FAQ database is up to date (hash matches, count = %d). Skipping re-indexing.",
-                    faq_count,
+                    "FAQ database is up to date (hash matches, %d entries embedded). "
+                    "Skipping re-indexing.",
+                    indexed_count,
                 )
                 self.service.mark_ready()
                 return
+
+            if faq_count > 0 and indexed_count < faq_count:
+                logger.warning(
+                    "%d of %d FAQ entries have no embedding — re-indexing regardless of the hash",
+                    faq_count - indexed_count,
+                    faq_count,
+                )
 
             with open(self.faq_path, encoding="utf-8") as f:
                 entries: list[dict[str, Any]] = json.load(f)

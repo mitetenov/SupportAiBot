@@ -8,6 +8,7 @@ from collections import OrderedDict
 from sqlalchemy import text
 
 from app.rag.embedding import EmbeddingProvider
+from app.rag.schema import ensure_vector_column
 from app.rag.types import FaqContext, FaqResult
 from app.storage.database import DatabaseSessionManager
 
@@ -37,6 +38,7 @@ HYBRID_SEARCH_SQL = text("""
                        websearch_to_tsquery('russian', :clean_query)) AS fts_rank
         FROM faq
         WHERE embedding IS NOT NULL
+          AND NOT (question = ANY(CAST(:excluded AS text[])))
     ),
     ranked AS (
         SELECT question, answer, vector_sim, fts_rank,
@@ -57,6 +59,7 @@ VECTOR_SEARCH_SQL = text("""
     SELECT question, answer, 1 - (embedding <=> CAST(:vector_str AS vector)) AS vector_sim
     FROM faq
     WHERE embedding IS NOT NULL
+      AND NOT (question = ANY(CAST(:excluded AS text[])))
     ORDER BY embedding <=> CAST(:vector_str AS vector)
     LIMIT :limit
 """)
@@ -106,8 +109,7 @@ class FaqEmbeddingService:
             )
 
             try:
-                await session.execute(text("ALTER TABLE faq DROP COLUMN IF EXISTS embedding"))
-                await session.execute(text(f"ALTER TABLE faq ADD COLUMN embedding vector({dim})"))
+                await ensure_vector_column(session, "faq", "embedding", dim)
                 await session.execute(text("ALTER TABLE faq DROP COLUMN IF EXISTS image"))
                 await session.execute(text("ALTER TABLE faq DROP COLUMN IF EXISTS images"))
                 await session.execute(
@@ -176,6 +178,19 @@ class FaqEmbeddingService:
                 return int(row[0]) if row else 0
         except Exception as e:
             logger.warning("Failed to get FAQ count: %s", e)
+            return 0
+
+    async def get_indexed_faq_count(self) -> int:
+        """Count FAQ rows that actually carry an embedding and are therefore searchable."""
+        try:
+            async with self.db_manager.session() as session:
+                result = await session.execute(
+                    text("SELECT COUNT(*) FROM faq WHERE embedding IS NOT NULL")
+                )
+                row = result.fetchone()
+                return int(row[0]) if row else 0
+        except Exception as e:
+            logger.warning("Failed to count indexed FAQ rows: %s", e)
             return 0
 
     async def clear_faq(self) -> None:
@@ -252,8 +267,13 @@ class FaqEmbeddingService:
             )
         logger.debug("Indexed FAQ: %s with keywords: %s", question, searchable)
 
-    async def search(self, query: str) -> list[FaqResult]:
-        """Perform hybrid search combining vector cosine distance and Russian FTS with RRF."""
+    async def search(self, query: str, exclude: set[str] | None = None) -> list[FaqResult]:
+        """Perform hybrid search combining vector cosine distance and Russian FTS with RRF.
+
+        ``exclude`` is applied inside the query rather than to its output: the
+        LIMIT has to be spent on entries the user has not been shown yet,
+        otherwise filtering afterwards just empties an already-small result set.
+        """
         if not self.ready or not query or not query.strip():
             return []
 
@@ -275,6 +295,7 @@ class FaqEmbeddingService:
                         "min_vector_sim": MIN_VECTOR_SIMILARITY,
                         "min_fts_rank": MIN_FTS_RANK,
                         "limit": SEARCH_LIMIT,
+                        "excluded": sorted(exclude) if exclude else [],
                     },
                 )
                 rows = result.fetchall()
@@ -289,9 +310,11 @@ class FaqEmbeddingService:
                 ]
         except Exception as e:
             logger.warning("FAQ hybrid search failed, falling back to pure vector search: %s", e)
-            return await self._search_pure_vector(vector_str)
+            return await self._search_pure_vector(vector_str, exclude)
 
-    async def _search_pure_vector(self, vector_str: str) -> list[FaqResult]:
+    async def _search_pure_vector(
+        self, vector_str: str, exclude: set[str] | None = None
+    ) -> list[FaqResult]:
         """Fallback to pure vector cosine search when FTS or hybrid fails."""
         try:
             async with self.db_manager.session() as session:
@@ -300,6 +323,7 @@ class FaqEmbeddingService:
                     {
                         "vector_str": vector_str,
                         "limit": SEARCH_LIMIT,
+                        "excluded": sorted(exclude) if exclude else [],
                     },
                 )
                 rows = result.fetchall()
@@ -320,16 +344,18 @@ class FaqEmbeddingService:
             logger.warning("FAQ pure vector search failed: %s", e)
             return []
 
-    async def search_with_fallback(self, query: str) -> list[FaqResult]:
+    async def search_with_fallback(
+        self, query: str, exclude: set[str] | None = None
+    ) -> list[FaqResult]:
         """Perform search with connection and referral fallback queries and deduplication."""
-        results = list(await self.search(query))
+        results = list(await self.search(query, exclude))
 
         if self._looks_like_connection_issue(query):
-            conn_results = await self.search(CONNECTION_FAQ_QUERY)
+            conn_results = await self.search(CONNECTION_FAQ_QUERY, exclude)
             self._merge_deduped(results, conn_results)
 
         if self._looks_like_referral_query(query):
-            ref_results = await self.search(REFERRAL_FAQ_QUERY)
+            ref_results = await self.search(REFERRAL_FAQ_QUERY, exclude)
             self._merge_deduped(results, ref_results)
 
         results.sort(key=lambda r: r.rrf_score, reverse=True)
@@ -350,7 +376,7 @@ class FaqEmbeddingService:
         exclude_questions: set[str] | None = None,
     ) -> FaqContext:
         """Retrieve FAQ entries for LLM context, filter excluded questions, and format instructions."""
-        results = await self.search_with_fallback(user_query)
+        results = await self.search_with_fallback(user_query, exclude_questions)
         if exclude_questions:
             results = [r for r in results if r.question not in exclude_questions]
 

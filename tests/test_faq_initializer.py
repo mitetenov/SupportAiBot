@@ -48,6 +48,7 @@ class TestFaqInitializer:
         mock_service.init_schema = AsyncMock()
         mock_service.get_faq_hash = AsyncMock()
         mock_service.get_faq_count = AsyncMock(return_value=1)
+        mock_service.get_indexed_faq_count = AsyncMock(return_value=1)
         mock_service.clear_faq = AsyncMock()
         mock_service.index_faq = AsyncMock()
         mock_service.update_faq_hash = AsyncMock()
@@ -78,6 +79,7 @@ class TestFaqInitializer:
         mock_service.init_schema = AsyncMock()
         mock_service.get_faq_hash = AsyncMock(return_value="old_different_hash")
         mock_service.get_faq_count = AsyncMock(return_value=0)
+        mock_service.get_indexed_faq_count = AsyncMock(return_value=0)
         mock_service.clear_faq = AsyncMock()
         mock_service.index_faq = AsyncMock()
         mock_service.update_faq_hash = AsyncMock()
@@ -105,3 +107,58 @@ class TestFaqInitializer:
         await initializer.run()
 
         mock_service.mark_ready.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_reindexes_when_rows_lost_their_embeddings(self, tmp_path: Path) -> None:
+        """A matching hash is not evidence the FAQ is searchable.
+
+        init_schema used to drop and re-add the embedding column on every start.
+        With the hash unchanged the initializer then skipped re-indexing, so every
+        row sat with a NULL embedding and FAQ search silently returned nothing for
+        the entire life of the deployment.
+        """
+        faq_file = tmp_path / "faq.json"
+        faq_data = [
+            {"question": "Q1", "answer": "A1", "keywords": ["k1"]},
+            {"question": "Q2", "answer": "A2", "keywords": ["k2"]},
+        ]
+        faq_file.write_text(json.dumps(faq_data), encoding="utf-8")
+
+        mock_service = MagicMock()
+        mock_service.init_schema = AsyncMock()
+        mock_service.get_faq_count = AsyncMock(return_value=2)
+        mock_service.get_indexed_faq_count = AsyncMock(return_value=0)
+        mock_service.clear_faq = AsyncMock()
+        mock_service.index_faq = AsyncMock()
+        mock_service.update_faq_hash = AsyncMock()
+        mock_service.mark_ready = MagicMock()
+
+        initializer = FaqInitializer(service=mock_service, faq_path=faq_file)
+        mock_service.get_faq_hash = AsyncMock(return_value=initializer.compute_hash(faq_file))
+
+        await initializer.run()
+
+        mock_service.clear_faq.assert_awaited_once()
+        assert mock_service.index_faq.await_count == 2
+        mock_service.mark_ready.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_skips_only_when_every_row_is_embedded(self, tmp_path: Path) -> None:
+        faq_file = tmp_path / "faq.json"
+        faq_file.write_text(json.dumps([{"question": "Q1", "answer": "A1"}]), encoding="utf-8")
+
+        mock_service = MagicMock()
+        mock_service.init_schema = AsyncMock()
+        mock_service.get_faq_count = AsyncMock(return_value=10)
+        mock_service.get_indexed_faq_count = AsyncMock(return_value=9)
+        mock_service.clear_faq = AsyncMock()
+        mock_service.index_faq = AsyncMock()
+        mock_service.update_faq_hash = AsyncMock()
+        mock_service.mark_ready = MagicMock()
+
+        initializer = FaqInitializer(service=mock_service, faq_path=faq_file)
+        mock_service.get_faq_hash = AsyncMock(return_value=initializer.compute_hash(faq_file))
+
+        await initializer.run()
+
+        mock_service.clear_faq.assert_awaited_once()

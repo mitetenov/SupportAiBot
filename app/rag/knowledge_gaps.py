@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy import text
 
 from app.rag.embedding import EmbeddingProvider
+from app.rag.schema import ensure_vector_column
 from app.rag.service import FaqContext, FaqEmbeddingService
 from app.storage.database import DatabaseSessionManager
 
@@ -107,12 +108,7 @@ class KnowledgeGapService:
             )
 
             try:
-                await session.execute(
-                    text("ALTER TABLE knowledge_gaps DROP COLUMN IF EXISTS embedding")
-                )
-                await session.execute(
-                    text(f"ALTER TABLE knowledge_gaps ADD COLUMN embedding vector({dim})")
-                )
+                await ensure_vector_column(session, "knowledge_gaps", "embedding", dim)
             except Exception as e:
                 logger.warning("Knowledge gaps column alteration warning: %s", e)
 

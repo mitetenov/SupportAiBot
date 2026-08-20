@@ -217,7 +217,7 @@ class TestFaqSearchLogic:
         service.mark_ready()
 
         # Mock search method
-        async def mock_search_fn(q: str) -> list[FaqResult]:
+        async def mock_search_fn(q: str, exclude: set[str] | None = None) -> list[FaqResult]:
             if q == CONNECTION_FAQ_QUERY:
                 return [
                     FaqResult("Не могу подключиться к VPN", "Инструкция 1", 0.85, 0.03),
@@ -242,7 +242,7 @@ class TestFaqSearchLogic:
         service = FaqEmbeddingService(db_manager=db_manager, embedding_provider=provider)
         service.mark_ready()
 
-        async def mock_search_fn(q: str) -> list[FaqResult]:
+        async def mock_search_fn(q: str, exclude: set[str] | None = None) -> list[FaqResult]:
             if q == REFERRAL_FAQ_QUERY:
                 return [
                     FaqResult("Реферальная программа", "Ответ реф", 0.80, 0.03),
@@ -295,3 +295,63 @@ class TestFaqSearchLogic:
         )
         assert ctx3.is_empty() is True
         assert ctx3 == FaqContext.EMPTY
+
+
+class TestExclusionHappensInTheQuery:
+    """Already-shown entries must be excluded by the query, not after it.
+
+    The system prompt promises the model that "уже показанные инструкции
+    исключаются из подборки автоматически". Filtering the result set afterwards
+    could not honour that: the SQL LIMIT had already spent its three slots on
+    entries the user had just rejected, so a follow-up like «все равно не
+    работает» produced an empty FAQ context and the bot fell back to asking
+    which server the user was on — instead of moving on to the next instruction.
+    """
+
+    @staticmethod
+    def _service_with_capture() -> tuple[FaqEmbeddingService, list[dict]]:
+        provider = DummyEmbeddingProvider(dimension=4)
+        db_manager = MagicMock()
+        session = MagicMock()
+        captured: list[dict] = []
+
+        async def execute(_stmt, params=None):
+            captured.append(params or {})
+            result = MagicMock()
+            result.fetchall.return_value = []
+            return result
+
+        session.execute = AsyncMock(side_effect=execute)
+        db_manager.session.return_value.__aenter__.return_value = session
+
+        service = FaqEmbeddingService(db_manager=db_manager, embedding_provider=provider)
+        service.mark_ready()
+        return service, captured
+
+    @pytest.mark.asyncio
+    async def test_excluded_questions_reach_the_sql_parameters(self) -> None:
+        service, captured = self._service_with_capture()
+
+        await service.search("не работает", exclude={"Вопрос Б", "Вопрос А"})
+
+        assert captured, "query was never executed"
+        assert captured[0]["excluded"] == ["Вопрос А", "Вопрос Б"]
+
+    @pytest.mark.asyncio
+    async def test_no_exclusions_sends_an_empty_array(self) -> None:
+        service, captured = self._service_with_capture()
+
+        await service.search("не работает")
+
+        assert captured[0]["excluded"] == []
+
+    @pytest.mark.asyncio
+    async def test_fallback_searches_exclude_the_same_entries(self) -> None:
+        service, captured = self._service_with_capture()
+
+        # "не работает" trips the connection fallback, so more than one search runs.
+        await service.search_with_fallback("не работает впн", exclude={"Показанный вопрос"})
+
+        assert len(captured) >= 2, "connection fallback did not run"
+        for params in captured:
+            assert params["excluded"] == ["Показанный вопрос"]
