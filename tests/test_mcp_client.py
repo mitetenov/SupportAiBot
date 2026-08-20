@@ -1,5 +1,6 @@
 """Unit tests for HttpMcpClient."""
 
+import asyncio
 import json
 from unittest.mock import MagicMock
 
@@ -10,6 +11,7 @@ from app.llm.mcp_client import (
     HttpMcpClient,
     McpTool,
     extract_json_from_sse,
+    looks_like_expired_session,
 )
 
 
@@ -318,3 +320,152 @@ class TestHttpMcpClient:
             err_data = json.loads(res_err)
             assert "error" in err_data
             admin_notifier.notify_error.assert_called()
+
+
+class TestSessionRecovery:
+    """The MCP server can restart under a running bot; the bot must not stay blind.
+
+    mcp-remnawave keeps one session and forgets it when it restarts. Every
+    tools/call after that came back as an error and the model answered without
+    the user's subscription data — for as long as the bot stayed up.
+    """
+
+    @staticmethod
+    def _server() -> tuple[httpx.MockTransport, dict]:
+        """An MCP server whose session can be killed mid-test.
+
+        ``state["dead"]`` is the set of session ids the server has forgotten —
+        exactly what a restarted mcp-remnawave looks like to a running bot.
+        """
+        state: dict = {"sessions": 0, "calls": 0, "dead": set()}
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content.decode("utf-8"))
+            method = body.get("method")
+
+            if method == "initialize":
+                state["sessions"] += 1
+                return httpx.Response(
+                    200,
+                    headers={"Mcp-Session-Id": f"sess-{state['sessions']}"},
+                    json={"jsonrpc": "2.0", "id": body["id"], "result": {}},
+                )
+            if method == "notifications/initialized":
+                return httpx.Response(200, json={})
+
+            if request.headers.get("Mcp-Session-Id") in state["dead"]:
+                return httpx.Response(404, text="Session not found")
+
+            if method == "tools/list":
+                return httpx.Response(
+                    200,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {"tools": [{"name": "nodes_list"}]},
+                    },
+                )
+            if method == "tools/call":
+                state["calls"] += 1
+                return httpx.Response(
+                    200,
+                    json={"jsonrpc": "2.0", "id": body["id"], "result": {"ok": True}},
+                )
+            return httpx.Response(500, text="unexpected")
+
+        return httpx.MockTransport(handle), state
+
+    @pytest.mark.asyncio
+    async def test_a_forgotten_session_is_renegotiated_and_the_call_replayed(self) -> None:
+        transport, state = self._server()
+
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            assert await client.init() is True
+
+            state["dead"].add("sess-1")  # the MCP server restarts
+            result = json.loads(await client.call_tool("nodes_list", {}))
+
+        assert result == {"ok": True}, "the call was not replayed after reconnecting"
+        assert state["sessions"] == 2, "a new session was not negotiated"
+        assert client.session_id == "sess-2"
+
+    @pytest.mark.asyncio
+    async def test_a_healthy_session_is_left_alone(self) -> None:
+        transport, state = self._server()
+
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            await client.init()
+
+            await client.call_tool("nodes_list", {})
+
+        assert state["sessions"] == 1, "a working session was thrown away"
+
+    @pytest.mark.asyncio
+    async def test_gives_up_with_an_error_when_the_new_session_is_dead_too(self) -> None:
+        transport, state = self._server()
+
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            await client.init()
+
+            state["dead"].update({"sess-1", "sess-2"})
+            result = json.loads(await client.call_tool("nodes_list", {}))
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_concurrent_calls_negotiate_only_one_new_session(self) -> None:
+        transport, state = self._server()
+
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            await client.init()
+
+            state["dead"].add("sess-1")
+            results = await asyncio.gather(*(client.call_tool("nodes_list", {}) for _ in range(3)))
+
+        assert state["sessions"] == 2, "each in-flight call re-initialised on its own"
+        assert all(json.loads(r) == {"ok": True} for r in results)
+
+    @pytest.mark.asyncio
+    async def test_a_tool_error_is_not_mistaken_for_an_expired_session(self) -> None:
+        def handle(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content.decode("utf-8"))
+            if body.get("method") == "initialize":
+                return httpx.Response(
+                    200,
+                    headers={"Mcp-Session-Id": "sess-1"},
+                    json={"jsonrpc": "2.0", "id": body["id"], "result": {}},
+                )
+            if body.get("method") == "tools/list":
+                return httpx.Response(
+                    200, json={"jsonrpc": "2.0", "id": body["id"], "result": {"tools": []}}
+                )
+            if body.get("method") == "tools/call":
+                return httpx.Response(400, text="Invalid arguments for nodes_get")
+            return httpx.Response(200, json={})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
+            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            await client.init()
+
+            result = json.loads(await client.call_tool("nodes_get", {}))
+
+        assert "error" in result
+        assert client.session_id == "sess-1", "a bad request must not drop the session"
+
+
+class TestExpiredSessionDetection:
+    def test_404_means_the_session_is_gone(self) -> None:
+        assert looks_like_expired_session(httpx.Response(404, text="Session not found")) is True
+
+    def test_400_about_a_session_counts(self) -> None:
+        assert looks_like_expired_session(httpx.Response(400, text="No valid session ID")) is True
+
+    def test_an_ordinary_bad_request_does_not(self) -> None:
+        assert looks_like_expired_session(httpx.Response(400, text="Invalid arguments")) is False
+
+    def test_a_server_error_does_not(self) -> None:
+        assert looks_like_expired_session(httpx.Response(500, text="boom")) is False

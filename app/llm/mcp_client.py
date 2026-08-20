@@ -1,5 +1,6 @@
 """HTTP client for Model Context Protocol (MCP) JSON-RPC 2.0 communication."""
 
+import asyncio
 import inspect
 import json
 import logging
@@ -16,6 +17,23 @@ logger = logging.getLogger(__name__)
 
 class McpException(Exception):
     """Failure communicating with an MCP server."""
+
+
+class McpSessionExpired(McpException):
+    """The server no longer recognises our session id.
+
+    Raised when the MCP server was restarted under a running bot: the session we
+    hold is gone, and every tool call fails until a new one is negotiated.
+    """
+
+
+def looks_like_expired_session(response: httpx.Response) -> bool:
+    """Whether this error response means "your session is gone", not "bad request"."""
+    if response.status_code == 404:
+        return True
+    if response.status_code in (400, 401) and "session" in response.text.lower():
+        return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -77,6 +95,11 @@ class HttpMcpClient(McpClientInterface):
         self._session_id: str | None = None
         self._initialized = False
         self._cached_tools: list[McpTool] = []
+        # Serialises recovery so a burst of tool calls negotiates one session
+        # rather than one each; the counter tells a caller whether the session
+        # it failed on has already been replaced.
+        self._session_lock = asyncio.Lock()
+        self._session_generation = 0
 
     @property
     def initialized(self) -> bool:
@@ -237,6 +260,40 @@ class HttpMcpClient(McpClientInterface):
                     )
             self._cached_tools = tool_list
 
+    async def _recover_session(self, failed_generation: int) -> bool:
+        """Negotiate a new session after the old one stopped being recognised.
+
+        Without this the bot answered without Remnawave data for as long as it
+        stayed up: the MCP server can be restarted on its own (a deploy, a crash
+        loop), and every tool call after that failed on a session id the server
+        had forgotten.
+        """
+        async with self._session_lock:
+            if self._session_generation != failed_generation:
+                # Another task already re-initialised while we waited for the lock.
+                return self._initialized
+
+            logger.warning("MCP session at %s expired — re-initializing", self.base_url)
+            previous_tools = {tool.name for tool in self._cached_tools}
+            self._session_id = None
+            self._initialized = False
+
+            recovered = await self.init()
+            self._session_generation += 1
+
+            if not recovered:
+                logger.error("Could not re-establish the MCP session at %s", self.base_url)
+                return False
+
+            current_tools = {tool.name for tool in self._cached_tools}
+            if current_tools != previous_tools:
+                logger.warning(
+                    "MCP tool set changed after reconnect: %s -> %s",
+                    sorted(previous_tools),
+                    sorted(current_tools),
+                )
+            return True
+
     async def _send_request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         self._request_id += 1
         req: dict[str, Any] = {
@@ -249,6 +306,10 @@ class HttpMcpClient(McpClientInterface):
 
         response = await self._post(req)
         if response.is_error:
+            if looks_like_expired_session(response):
+                raise McpSessionExpired(
+                    f"MCP session rejected: {response.status_code} - {response.text}"
+                )
             raise McpException(f"MCP HTTP error: {response.status_code} - {response.text}")
 
         json_payload = extract_json_from_sse(response.text)
@@ -269,19 +330,39 @@ class HttpMcpClient(McpClientInterface):
             logger.warning("Failed to send MCP notification %s: %s", method, e)
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None = None) -> str:
-        """Execute a tool and return result as JSON string."""
+        """Execute a tool and return result as JSON string.
+
+        A session the server has forgotten is re-negotiated once and the call is
+        replayed: the exposed tools are read-only lookups plus one idempotent
+        delete, so a second attempt is safe.
+        """
         if not self._initialized:
             return json.dumps({"error": "MCP client not initialized"})
+
+        generation = self._session_generation
         try:
-            result = await self._send_request(
-                "tools/call",
-                {"name": tool_name, "arguments": arguments if arguments is not None else {}},
-            )
-            return json.dumps(result) if not isinstance(result, str) else result
+            return await self._invoke_tool(tool_name, arguments)
+        except McpSessionExpired:
+            if not await self._recover_session(generation):
+                return json.dumps({"error": f"MCP session lost and not recovered: {tool_name}"})
+            try:
+                return await self._invoke_tool(tool_name, arguments)
+            except Exception as e:
+                logger.error("Tool %s failed after reconnect: %s", tool_name, e, exc_info=True)
+                await self._notify_admins(f"MCP tool call failed after reconnect: {tool_name}", e)
+                return json.dumps({"error": str(e) if str(e) else "unknown error"})
         except Exception as e:
             logger.error("Failed to call tool: %s: %s", tool_name, e, exc_info=True)
             await self._notify_admins(f"MCP tool call failed: {tool_name}", e)
             return json.dumps({"error": str(e) if str(e) else "unknown error"})
+
+    async def _invoke_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> str:
+        """One tools/call round trip, with the result rendered as a JSON string."""
+        result = await self._send_request(
+            "tools/call",
+            {"name": tool_name, "arguments": arguments if arguments is not None else {}},
+        )
+        return json.dumps(result) if not isinstance(result, str) else result
 
     def shutdown(self) -> None:
         """Synchronously reset initialization state and session ID."""
