@@ -32,7 +32,7 @@ from app.rag.knowledge_gaps import KnowledgeGapService
 from app.rag.service import FaqEmbeddingService
 from app.storage.chat_history import ChatHistoryService
 from app.storage.database import get_db_manager
-from app.storage.schema_sync import sync_legacy_schema
+from app.storage.schema import sync_legacy_schema
 
 logger = logging.getLogger(__name__)
 

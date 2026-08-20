@@ -115,7 +115,7 @@ class Settings(BaseSettings):
             for x in v:
                 try:
                     result.add(int(x))
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     continue
             return result
         if isinstance(v, str):

@@ -55,3 +55,17 @@ def valid_settings_dict() -> dict[str, object]:
         "pgvector_user": "bot",
         "pgvector_password": "secret_password",
     }
+
+
+@pytest.fixture(autouse=True)
+def _skip_retry_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Take the wall-clock cost out of the retry policy.
+
+    Several tests drive a provider that answers 500 or 429; with the real
+    backoff each of them would sit in asyncio.sleep for over a second.
+    """
+
+    async def instant(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.retry._sleep", instant)

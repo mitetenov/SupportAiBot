@@ -7,9 +7,9 @@ from datetime import UTC, datetime
 from sqlalchemy import text
 
 from app.rag.embedding import EmbeddingProvider
-from app.rag.schema import ensure_vector_column
 from app.rag.service import FaqContext, FaqEmbeddingService
 from app.storage.database import DatabaseSessionManager
+from app.storage.schema import ensure_knowledge_gap_schema
 
 logger = logging.getLogger(__name__)
 
@@ -78,50 +78,13 @@ class KnowledgeGapService:
         self.embedding_provider = embedding_provider
 
     async def init_schema(self) -> None:
-        """Initialize PostgreSQL table schema and vector index for knowledge gaps."""
+        """Settle the vector dimension and index for ``knowledge_gaps``.
+
+        The table itself is an ORM model created by ``create_all``.
+        """
         logger.info("Initializing knowledge_gaps database schema")
-        dim = self.embedding_provider.get_dimension()
-
         async with self.db_manager.session() as session:
-            try:
-                await session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            except Exception as e:
-                logger.warning("Could not create vector extension: %s", e)
-
-            await session.execute(
-                text(f"""
-                CREATE TABLE IF NOT EXISTS knowledge_gaps (
-                    id BIGSERIAL PRIMARY KEY,
-                    user_query VARCHAR(2000) NOT NULL,
-                    embedding VECTOR({dim}),
-                    best_faq_question VARCHAR(2000),
-                    max_similarity DOUBLE PRECISION,
-                    faq_count INTEGER DEFAULT 0,
-                    trigger_reason VARCHAR(20),
-                    bot_response VARCHAR(500),
-                    gap_count INTEGER DEFAULT 1,
-                    first_seen TIMESTAMP WITH TIME ZONE NOT NULL,
-                    last_seen TIMESTAMP WITH TIME ZONE NOT NULL,
-                    telegram_id BIGINT
-                )
-                """)
-            )
-
-            try:
-                await ensure_vector_column(session, "knowledge_gaps", "embedding", dim)
-            except Exception as e:
-                logger.warning("Knowledge gaps column alteration warning: %s", e)
-
-            try:
-                await session.execute(
-                    text("""
-                    CREATE INDEX IF NOT EXISTS knowledge_gaps_embedding_idx
-                    ON knowledge_gaps USING hnsw (embedding vector_cosine_ops)
-                    """)
-                )
-            except Exception as e:
-                logger.warning("Could not create knowledge_gaps index: %s", e)
-
+            await ensure_knowledge_gap_schema(session, self.embedding_provider.get_dimension())
         logger.info("Knowledge gaps schema initialized successfully")
 
     async def evaluate(

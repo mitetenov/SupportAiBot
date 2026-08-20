@@ -5,6 +5,15 @@ from typing import ClassVar
 
 
 @dataclass(frozen=True)
+class FaqEntry:
+    """One question/answer pair on its way into the index."""
+
+    question: str
+    answer: str
+    keywords: str | None = None
+
+
+@dataclass(frozen=True)
 class FaqResult:
     """A single retrieved FAQ entry."""
 

@@ -1,11 +1,12 @@
 """Embedding provider protocols and implementations for Gemini and OpenAI APIs."""
 
 import logging
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import httpx
 
 from app.config import Settings, reveal
+from app.retry import post_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,66 @@ class EmbeddingProvider(Protocol):
         """
         ...
 
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Generate embeddings for several texts in one request.
 
-class GeminiEmbeddingProvider:
+        Returns one vector per input, in the order given; an entry that could
+        not be embedded comes back as an empty list.
+        """
+        ...
+
+
+def _read_values(
+    entries: list[Any],
+    expected: int,
+    key: str,
+) -> list[list[float]]:
+    """Pull float lists out of a batch response, padding what is missing."""
+    vectors: list[list[float]] = []
+    for position in range(expected):
+        entry = entries[position] if position < len(entries) else None
+        values = entry.get(key) if isinstance(entry, dict) else None
+        if isinstance(values, list) and values:
+            vectors.append([float(x) for x in values])
+        else:
+            vectors.append([])
+    return vectors
+
+
+class _HttpEmbeddingProvider:
+    """Shared HTTP plumbing: an injected client when there is one, retries always."""
+
+    REQUEST_TIMEOUT: float = 60.0
+
+    _client: httpx.AsyncClient | None
+
+    async def _post(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> httpx.Response:
+        """POST with the shared retry policy, borrowing or creating a client."""
+        if self._client is not None:
+            return await post_with_retry(
+                self._client,
+                url,
+                headers=headers,
+                json=payload,
+                timeout=self.REQUEST_TIMEOUT,
+                description=f"{type(self).__name__} embedding",
+            )
+        async with httpx.AsyncClient(timeout=self.REQUEST_TIMEOUT) as client:
+            return await post_with_retry(
+                client,
+                url,
+                headers=headers,
+                json=payload,
+                description=f"{type(self).__name__} embedding",
+            )
+
+
+class GeminiEmbeddingProvider(_HttpEmbeddingProvider):
     """Embedding provider using Google Gemini's REST API."""
 
     DIMENSION: int = 2000
@@ -65,11 +124,7 @@ class GeminiEmbeddingProvider:
         }
 
         try:
-            if self._client is not None:
-                response = await self._client.post(url, headers=headers, json=payload, timeout=60.0)
-            else:
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    response = await client.post(url, headers=headers, json=payload)
+            response = await self._post(url, headers, payload)
 
             if response.status_code != 200:
                 logger.error(
@@ -96,8 +151,49 @@ class GeminiEmbeddingProvider:
             logger.error("Gemini embedding request exception: %s", e)
             return []
 
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Embed several texts through Gemini's batchEmbedContents endpoint."""
+        if not texts:
+            return []
 
-class OpenAiEmbeddingProvider:
+        url = f"{self.base_url}/models/{self.MODEL}:batchEmbedContents"
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "requests": [
+                {
+                    "model": f"models/{self.MODEL}",
+                    "content": {"parts": [{"text": item}]},
+                    "outputDimensionality": self.DIMENSION,
+                }
+                for item in texts
+            ]
+        }
+
+        try:
+            response = await self._post(url, headers, payload)
+            if response.status_code != 200:
+                logger.error(
+                    "Gemini batch embedding failed with status %d: %s",
+                    response.status_code,
+                    response.text,
+                )
+                return [[] for _ in texts]
+
+            embeddings = response.json().get("embeddings")
+            if not isinstance(embeddings, list):
+                logger.error("No embeddings array in Gemini batch response: %s", response.text)
+                return [[] for _ in texts]
+
+            return _read_values(embeddings, len(texts), key="values")
+        except Exception as e:
+            logger.error("Gemini batch embedding request exception: %s", e)
+            return [[] for _ in texts]
+
+
+class OpenAiEmbeddingProvider(_HttpEmbeddingProvider):
     """Embedding provider using OpenAI's REST API."""
 
     DIMENSION: int = 1536
@@ -137,11 +233,7 @@ class OpenAiEmbeddingProvider:
         }
 
         try:
-            if self._client is not None:
-                response = await self._client.post(url, headers=headers, json=payload, timeout=60.0)
-            else:
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    response = await client.post(url, headers=headers, json=payload)
+            response = await self._post(url, headers, payload)
 
             if response.status_code != 200:
                 logger.error(
@@ -168,6 +260,50 @@ class OpenAiEmbeddingProvider:
         except Exception as e:
             logger.error("OpenAI embedding request exception: %s", e)
             return []
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Embed several texts in one call — the OpenAI endpoint takes an array."""
+        if not texts:
+            return []
+
+        url = f"{self.base_url}/embeddings"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "input": texts,
+            "dimensions": self.DIMENSION,
+        }
+
+        try:
+            response = await self._post(url, headers, payload)
+            if response.status_code != 200:
+                logger.error(
+                    "OpenAI batch embedding failed with status %d: %s",
+                    response.status_code,
+                    response.text,
+                )
+                return [[] for _ in texts]
+
+            data_list = response.json().get("data")
+            if not isinstance(data_list, list):
+                logger.error("No data array in OpenAI batch embedding response: %s", response.text)
+                return [[] for _ in texts]
+
+            # The API documents that entries may come back out of order.
+            ordered: list[dict[str, object]] = [{} for _ in texts]
+            for entry in data_list:
+                if not isinstance(entry, dict):
+                    continue
+                index = entry.get("index")
+                if isinstance(index, int) and 0 <= index < len(texts):
+                    ordered[index] = entry
+            return _read_values(ordered, len(texts), key="embedding")
+        except Exception as e:
+            logger.error("OpenAI batch embedding request exception: %s", e)
+            return [[] for _ in texts]
 
 
 def create_embedding_provider(

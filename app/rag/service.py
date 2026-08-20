@@ -1,16 +1,18 @@
 """FAQ vector embedding service with PGVector hybrid search and Reciprocal Rank Fusion."""
 
+import asyncio
 import logging
 import re
 import uuid
 from collections import OrderedDict
+from collections.abc import Sequence
 
 from sqlalchemy import text
 
 from app.rag.embedding import EmbeddingProvider
-from app.rag.schema import ensure_vector_column
-from app.rag.types import FaqContext, FaqResult
+from app.rag.types import FaqContext, FaqEntry, FaqResult
 from app.storage.database import DatabaseSessionManager
+from app.storage.schema import FAQ_FTS_EXPRESSION, ensure_faq_search_schema
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,14 @@ MIN_FTS_RANK: float = 0.01
 RRF_K: int = 60
 EMBEDDING_CACHE_SIZE: int = 256
 
+#: How many rows each branch of the hybrid search contributes to the fusion.
+#: Larger than SEARCH_LIMIT so the two rankings have something to disagree
+#: about, small enough that both branches stay index-only.
+CANDIDATE_LIMIT: int = 20
+
+#: Texts sent to the embedding provider in one HTTP call while indexing.
+EMBED_BATCH_SIZE: int = 32
+
 GLOBAL_SEARCH_ALIASES: list[str] = ["vpn", "впн", "вэпэн"]
 
 CONNECTION_FAQ_QUERY: str = "Не могу подключиться к VPN / не работает / не заходит"
@@ -28,31 +38,66 @@ REFERRAL_FAQ_QUERY: str = (
     "Реферальная программа, партнёрка, реферальная ссылка, пригласить друга, бонусы, рефералы"
 )
 
-HYBRID_SEARCH_SQL = text("""
-    WITH scored AS (
+# Reciprocal Rank Fusion over two index-backed branches.
+#
+# The previous version scored every row in the table — cosine distance and
+# ts_rank in the select list, RANK() over the whole result — so neither the HNSW
+# index nor the GIN index could be used and the cost grew with the size of the
+# FAQ. Each branch now stands on its own as an ``ORDER BY <=> ... LIMIT`` and an
+# ``@@`` match, which is exactly the shape those indices serve; the fusion
+# happens over the two short candidate lists.
+HYBRID_SEARCH_SQL = text(f"""
+    WITH vector_candidates AS (
         SELECT question,
                answer,
-               1 - (embedding <=> CAST(:vector_str AS vector)) AS vector_sim,
-               ts_rank(to_tsvector('russian',
-                           question || ' ' || COALESCE(keywords, '') || ' ' || answer),
-                       websearch_to_tsquery('russian', :clean_query)) AS fts_rank
+               1 - (embedding <=> CAST(:vector_str AS vector)) AS vector_sim
         FROM faq
         WHERE embedding IS NOT NULL
           AND NOT (question = ANY(CAST(:excluded AS text[])))
+        ORDER BY embedding <=> CAST(:vector_str AS vector)
+        LIMIT :candidates
     ),
-    ranked AS (
-        SELECT question, answer, vector_sim, fts_rank,
-               RANK() OVER (ORDER BY vector_sim DESC) AS vector_pos,
-               RANK() OVER (ORDER BY fts_rank DESC)   AS fts_pos
-        FROM scored
+    vector_ranked AS (
+        SELECT question, answer, vector_sim,
+               ROW_NUMBER() OVER (ORDER BY vector_sim DESC) AS vector_pos
+        FROM vector_candidates
+    ),
+    fts_candidates AS (
+        SELECT question,
+               answer,
+               ts_rank({FAQ_FTS_EXPRESSION}, websearch_to_tsquery('russian', :clean_query))
+                   AS fts_rank
+        FROM faq
+        WHERE {FAQ_FTS_EXPRESSION} @@ websearch_to_tsquery('russian', :clean_query)
+          AND NOT (question = ANY(CAST(:excluded AS text[])))
+        ORDER BY fts_rank DESC
+        LIMIT :candidates
+    ),
+    fts_ranked AS (
+        SELECT question, answer, fts_rank,
+               ROW_NUMBER() OVER (ORDER BY fts_rank DESC) AS fts_pos
+        FROM fts_candidates
+    ),
+    fused AS (
+        SELECT COALESCE(v.question, f.question) AS question,
+               COALESCE(v.answer, f.answer)     AS answer,
+               COALESCE(v.vector_sim, 0)        AS vector_sim,
+               COALESCE(f.fts_rank, 0)          AS fts_rank,
+               COALESCE(1.0 / (:rrf_k + v.vector_pos), 0)
+               + COALESCE(1.0 / (:rrf_k + f.fts_pos), 0) AS rrf_score
+        FROM vector_ranked v
+        FULL OUTER JOIN fts_ranked f ON v.question = f.question
     )
-    SELECT question, answer, vector_sim, fts_rank,
-           (1.0 / (:rrf_k + vector_pos))
-           + CASE WHEN fts_rank > 0 THEN 1.0 / (:rrf_k + fts_pos) ELSE 0 END AS rrf_score
-    FROM ranked
+    SELECT question, answer, vector_sim, fts_rank, rrf_score
+    FROM fused
     WHERE vector_sim >= :min_vector_sim OR fts_rank >= :min_fts_rank
     ORDER BY rrf_score DESC
     LIMIT :limit
+""")
+
+INSERT_FAQ_SQL = text("""
+    INSERT INTO faq (id, question, answer, embedding, keywords)
+    VALUES (:id, :question, :answer, CAST(:vector_str AS vector), :keywords)
 """)
 
 VECTOR_SEARCH_SQL = text("""
@@ -88,61 +133,15 @@ class FaqEmbeddingService:
         logger.info("FAQ service marked as ready for search")
 
     async def init_schema(self) -> None:
-        """Initialize PostgreSQL table schemas, vector extension, and indices for FAQ."""
+        """Bring the FAQ table in line with the configured embedding provider.
+
+        Tables and columns come from the ORM models via ``create_all``; only the
+        vector dimension and the search indices are settled here, because
+        neither is known before the provider exists.
+        """
         logger.info("Initializing FAQ database schema")
-        dim = self.embedding_provider.get_dimension()
-
         async with self.db_manager.session() as session:
-            try:
-                await session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            except Exception as e:
-                logger.warning("Could not execute CREATE EXTENSION vector: %s", e)
-
-            await session.execute(
-                text("""
-                CREATE TABLE IF NOT EXISTS faq (
-                    id VARCHAR(36) PRIMARY KEY,
-                    question VARCHAR(2000) NOT NULL,
-                    answer VARCHAR(4000) NOT NULL
-                )
-                """)
-            )
-
-            try:
-                await ensure_vector_column(session, "faq", "embedding", dim)
-                await session.execute(text("ALTER TABLE faq DROP COLUMN IF EXISTS image"))
-                await session.execute(text("ALTER TABLE faq DROP COLUMN IF EXISTS images"))
-                await session.execute(
-                    text("ALTER TABLE faq ADD COLUMN IF NOT EXISTS keywords VARCHAR(2000)")
-                )
-            except Exception as e:
-                logger.warning("FAQ column alteration warning: %s", e)
-
-            try:
-                await session.execute(
-                    text("""
-                    CREATE INDEX IF NOT EXISTS faq_embedding_idx
-                    ON faq USING hnsw (embedding vector_cosine_ops)
-                    """)
-                )
-                await session.execute(
-                    text("""
-                    CREATE INDEX IF NOT EXISTS faq_fts_idx
-                    ON faq USING gin (to_tsvector('russian', question || ' ' || COALESCE(keywords, '') || ' ' || answer))
-                    """)
-                )
-            except Exception as e:
-                logger.warning("Could not create FAQ search indices: %s", e)
-
-            await session.execute(
-                text("""
-                CREATE TABLE IF NOT EXISTS faq_metadata (
-                    key VARCHAR(50) PRIMARY KEY,
-                    val VARCHAR(256) NOT NULL
-                )
-                """)
-            )
-
+            await ensure_faq_search_schema(session, self.embedding_provider.get_dimension())
         logger.info("FAQ database schema initialized successfully")
 
     async def get_faq_hash(self) -> str | None:
@@ -224,11 +223,50 @@ class FaqEmbeddingService:
         if not vec or len(vec) != self.embedding_provider.get_dimension():
             return []
 
-        self.embedding_cache[text_input] = vec
-        if len(self.embedding_cache) > EMBEDDING_CACHE_SIZE:
-            self.embedding_cache.popitem(last=False)
-
+        self._cache(text_input, vec)
         return vec
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        """Embed several texts in one provider call, serving what the cache holds.
+
+        Returns one vector per input, in order; an entry the provider could not
+        embed comes back as an empty list.
+        """
+        if not texts:
+            return []
+
+        dimension = self.embedding_provider.get_dimension()
+        results: list[list[float]] = [[] for _ in texts]
+        pending: list[tuple[int, str]] = []
+
+        for position, item in enumerate(texts):
+            if not item or not item.strip():
+                continue
+            cached = self.embedding_cache.get(item)
+            if cached is not None:
+                self.embedding_cache.move_to_end(item)
+                results[position] = cached
+            else:
+                pending.append((position, item))
+
+        if not pending:
+            return results
+
+        vectors = await self.embedding_provider.embed_batch([item for _, item in pending])
+        for (position, item), vector in zip(pending, vectors, strict=False):
+            if not vector or len(vector) != dimension:
+                continue
+            results[position] = vector
+            self._cache(item, vector)
+
+        return results
+
+    def _cache(self, key: str, vector: list[float]) -> None:
+        """Store a vector, evicting the least recently used entry when full."""
+        self.embedding_cache[key] = vector
+        self.embedding_cache.move_to_end(key)
+        while len(self.embedding_cache) > EMBEDDING_CACHE_SIZE:
+            self.embedding_cache.popitem(last=False)
 
     async def embed_query(self, text_input: str) -> list[float] | None:
         """Embed query and return list or None on failure."""
@@ -243,29 +281,75 @@ class FaqEmbeddingService:
     async def index_faq(self, question: str, answer: str, keywords: str | None) -> None:
         """Embed and insert a single FAQ item into PostgreSQL."""
         searchable = self.with_global_aliases(keywords)
-        embed_text = f"{question} {searchable}\n{answer}"
-        embedding = await self.embed(embed_text)
+        embedding = await self.embed(self.embed_text(question, answer, searchable))
 
         if not embedding or len(embedding) != self.embedding_provider.get_dimension():
             logger.warning("Failed to embed FAQ: %s", question)
             return
 
-        vector_str = self.vector_to_string(embedding)
         async with self.db_manager.session() as session:
             await session.execute(
-                text("""
-                INSERT INTO faq (id, question, answer, embedding, keywords)
-                VALUES (:id, :question, :answer, CAST(:vector_str AS vector), :keywords)
-                """),
-                {
-                    "id": str(uuid.uuid4()),
-                    "question": question,
-                    "answer": answer,
-                    "vector_str": vector_str,
-                    "keywords": searchable,
-                },
+                INSERT_FAQ_SQL,
+                self._faq_row(question, answer, searchable, embedding),
             )
         logger.debug("Indexed FAQ: %s with keywords: %s", question, searchable)
+
+    async def index_faq_batch(self, entries: Sequence[FaqEntry]) -> int:
+        """Embed and insert every entry, and return how many were indexed.
+
+        Startup used to walk the file one entry at a time: an HTTP round trip to
+        the embedding provider and a transaction of its own per question, with
+        the bot not yet answering anyone. The requests now go out in batches and
+        the rows land in a single INSERT.
+        """
+        if not entries:
+            return 0
+
+        dimension = self.embedding_provider.get_dimension()
+        rows: list[dict[str, object]] = []
+
+        for start in range(0, len(entries), EMBED_BATCH_SIZE):
+            chunk = list(entries[start : start + EMBED_BATCH_SIZE])
+            searchables = [self.with_global_aliases(entry.keywords) for entry in chunk]
+            vectors = await self.embed_many(
+                [
+                    self.embed_text(entry.question, entry.answer, searchable)
+                    for entry, searchable in zip(chunk, searchables, strict=True)
+                ]
+            )
+
+            for entry, searchable, vector in zip(chunk, searchables, vectors, strict=True):
+                if not vector or len(vector) != dimension:
+                    logger.warning("Failed to embed FAQ: %s", entry.question)
+                    continue
+                rows.append(self._faq_row(entry.question, entry.answer, searchable, vector))
+
+        if not rows:
+            logger.error("No FAQ entry could be embedded — search will find nothing")
+            return 0
+
+        async with self.db_manager.session() as session:
+            await session.execute(INSERT_FAQ_SQL, rows)
+
+        logger.info("Indexed %d of %d FAQ entries", len(rows), len(entries))
+        return len(rows)
+
+    @staticmethod
+    def embed_text(question: str, answer: str, searchable_keywords: str) -> str:
+        """Build the document handed to the embedding provider for one entry."""
+        return f"{question} {searchable_keywords}\n{answer}"
+
+    def _faq_row(
+        self, question: str, answer: str, keywords: str, embedding: list[float]
+    ) -> dict[str, object]:
+        """Build the parameter set for one INSERT_FAQ_SQL row."""
+        return {
+            "id": str(uuid.uuid4()),
+            "question": question,
+            "answer": answer,
+            "vector_str": self.vector_to_string(embedding),
+            "keywords": keywords,
+        }
 
     async def search(self, query: str, exclude: set[str] | None = None) -> list[FaqResult]:
         """Perform hybrid search combining vector cosine distance and Russian FTS with RRF.
@@ -295,6 +379,7 @@ class FaqEmbeddingService:
                         "min_vector_sim": MIN_VECTOR_SIMILARITY,
                         "min_fts_rank": MIN_FTS_RANK,
                         "limit": SEARCH_LIMIT,
+                        "candidates": CANDIDATE_LIMIT,
                         "excluded": sorted(exclude) if exclude else [],
                     },
                 )
@@ -347,16 +432,23 @@ class FaqEmbeddingService:
     async def search_with_fallback(
         self, query: str, exclude: set[str] | None = None
     ) -> list[FaqResult]:
-        """Perform search with connection and referral fallback queries and deduplication."""
-        results = list(await self.search(query, exclude))
+        """Search, widening with topic fallbacks, and merge the results.
 
+        The fallback lookups do not depend on the primary one, so all of them go
+        to the database at once rather than adding a round trip each to the
+        answer the user is waiting for.
+        """
+        searches = [self.search(query, exclude)]
         if self._looks_like_connection_issue(query):
-            conn_results = await self.search(CONNECTION_FAQ_QUERY, exclude)
-            self._merge_deduped(results, conn_results)
-
+            searches.append(self.search(CONNECTION_FAQ_QUERY, exclude))
         if self._looks_like_referral_query(query):
-            ref_results = await self.search(REFERRAL_FAQ_QUERY, exclude)
-            self._merge_deduped(results, ref_results)
+            searches.append(self.search(REFERRAL_FAQ_QUERY, exclude))
+
+        primary, *fallbacks = await asyncio.gather(*searches)
+
+        results = list(primary)
+        for fallback in fallbacks:
+            self._merge_deduped(results, fallback)
 
         results.sort(key=lambda r: r.rrf_score, reverse=True)
         return results[:MAX_RESULTS]

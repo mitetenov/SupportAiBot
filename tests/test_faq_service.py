@@ -12,6 +12,7 @@ from app.rag.service import (
     FaqEmbeddingService,
     FaqResult,
 )
+from app.rag.types import FaqEntry
 
 
 class DummyEmbeddingProvider:
@@ -22,6 +23,7 @@ class DummyEmbeddingProvider:
         self.default_val = default_val
         self.embed_mock = AsyncMock(side_effect=self._mock_embed)
         self.call_count = 0
+        self.batch_calls: list[list[str]] = []
 
     def get_dimension(self) -> int:
         return self.dimension
@@ -34,6 +36,10 @@ class DummyEmbeddingProvider:
         if not text or not text.strip():
             return []
         return [self.default_val] * self.dimension
+
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        self.batch_calls.append(list(texts))
+        return [await self.embed(item) for item in texts]
 
 
 class TestFaqDataStructures:
@@ -355,3 +361,157 @@ class TestExclusionHappensInTheQuery:
         assert len(captured) >= 2, "connection fallback did not run"
         for params in captured:
             assert params["excluded"] == ["Показанный вопрос"]
+
+
+class TestBatchIndexing:
+    """Startup indexing must not cost one round trip per FAQ entry."""
+
+    @staticmethod
+    def _service() -> tuple[FaqEmbeddingService, DummyEmbeddingProvider, AsyncMock]:
+        provider = DummyEmbeddingProvider(dimension=4)
+        db_manager = MagicMock()
+        session = MagicMock()
+        session.execute = AsyncMock(return_value=MagicMock())
+        db_manager.session.return_value.__aenter__.return_value = session
+        service = FaqEmbeddingService(db_manager=db_manager, embedding_provider=provider)
+        return service, provider, session.execute
+
+    @pytest.mark.asyncio
+    async def test_one_embedding_call_and_one_insert_for_the_whole_file(self) -> None:
+        service, provider, execute = self._service()
+        entries = [FaqEntry(f"Q{i}", f"A{i}", f"k{i}") for i in range(5)]
+
+        indexed = await service.index_faq_batch(entries)
+
+        assert indexed == 5
+        assert len(provider.batch_calls) == 1, "entries were embedded one at a time"
+        assert len(provider.batch_calls[0]) == 5
+        assert execute.await_count == 1, "rows were inserted in separate transactions"
+        rows = execute.await_args.args[1]
+        assert len(rows) == 5
+        assert [row["question"] for row in rows] == ["Q0", "Q1", "Q2", "Q3", "Q4"]
+
+    @pytest.mark.asyncio
+    async def test_splits_into_chunks_beyond_the_batch_size(self, monkeypatch) -> None:
+        monkeypatch.setattr("app.rag.service.EMBED_BATCH_SIZE", 2)
+        service, provider, execute = self._service()
+
+        indexed = await service.index_faq_batch([FaqEntry(f"Q{i}", f"A{i}") for i in range(5)])
+
+        assert indexed == 5
+        assert [len(call) for call in provider.batch_calls] == [2, 2, 1]
+        assert execute.await_count == 1, "one INSERT should still cover every chunk"
+
+    @pytest.mark.asyncio
+    async def test_skips_entries_the_provider_could_not_embed(self) -> None:
+        service, provider, execute = self._service()
+
+        async def embed_batch(texts: list[str]) -> list[list[float]]:
+            return [[] if "Q1" in item else [0.5] * 4 for item in texts]
+
+        provider.embed_batch = embed_batch  # type: ignore[method-assign]
+
+        indexed = await service.index_faq_batch(
+            [FaqEntry("Q0", "A0"), FaqEntry("Q1", "A1"), FaqEntry("Q2", "A2")]
+        )
+
+        assert indexed == 2
+        assert [row["question"] for row in execute.await_args.args[1]] == ["Q0", "Q2"]
+
+    @pytest.mark.asyncio
+    async def test_writes_nothing_when_the_provider_is_down(self) -> None:
+        service, provider, execute = self._service()
+
+        async def embed_batch(texts: list[str]) -> list[list[float]]:
+            return [[] for _ in texts]
+
+        provider.embed_batch = embed_batch  # type: ignore[method-assign]
+
+        assert await service.index_faq_batch([FaqEntry("Q0", "A0")]) == 0
+        execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_input_touches_nothing(self) -> None:
+        service, provider, execute = self._service()
+
+        assert await service.index_faq_batch([]) == 0
+        assert provider.batch_calls == []
+        execute.assert_not_called()
+
+
+class TestEmbedMany:
+    """Batch embedding has to respect the cache the single-text path fills."""
+
+    @staticmethod
+    def _service() -> tuple[FaqEmbeddingService, DummyEmbeddingProvider]:
+        provider = DummyEmbeddingProvider(dimension=4)
+        service = FaqEmbeddingService(db_manager=MagicMock(), embedding_provider=provider)
+        return service, provider
+
+    @pytest.mark.asyncio
+    async def test_asks_the_provider_only_for_uncached_texts(self) -> None:
+        service, provider = self._service()
+        await service.embed("уже в кэше")
+
+        vectors = await service.embed_many(["уже в кэше", "новый"])
+
+        assert provider.batch_calls == [["новый"]]
+        assert vectors[0] == [0.5] * 4
+        assert vectors[1] == [0.5] * 4
+
+    @pytest.mark.asyncio
+    async def test_keeps_the_result_aligned_with_the_input(self) -> None:
+        service, provider = self._service()
+
+        vectors = await service.embed_many(["первый", "   ", "третий"])
+
+        assert len(vectors) == 3
+        assert vectors[1] == [], "a blank input must not consume a provider slot"
+        assert provider.batch_calls == [["первый", "третий"]]
+
+    @pytest.mark.asyncio
+    async def test_caches_what_it_fetched(self) -> None:
+        service, provider = self._service()
+
+        await service.embed_many(["первый"])
+        await service.embed_many(["первый"])
+
+        assert provider.batch_calls == [["первый"]]
+
+    @pytest.mark.asyncio
+    async def test_stays_within_the_cache_bound(self) -> None:
+        service, _ = self._service()
+
+        await service.embed_many([f"текст {i}" for i in range(EMBEDDING_CACHE_SIZE + 10)])
+
+        assert len(service.embedding_cache) == EMBEDDING_CACHE_SIZE
+
+
+class TestFallbacksRunConcurrently:
+    """The fallback lookups are independent, so they must not queue up."""
+
+    @pytest.mark.asyncio
+    async def test_fallback_search_is_not_awaited_one_after_another(self) -> None:
+        import asyncio
+
+        provider = DummyEmbeddingProvider(dimension=4)
+        service = FaqEmbeddingService(db_manager=MagicMock(), embedding_provider=provider)
+        service.mark_ready()
+
+        in_flight = 0
+        peak = 0
+
+        async def slow_search(query: str, exclude=None):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0)
+            in_flight -= 1
+            return []
+
+        service.search = slow_search  # type: ignore[method-assign]
+
+        # Trips both the connection and the referral fallback.
+        await service.search_with_fallback("впн не работает, где реферальная ссылка")
+
+        assert peak == 3, f"searches ran with only {peak} in flight at once"
