@@ -475,3 +475,23 @@ class TestIllustrations:
 
         forwarder.forward_to_support.assert_awaited_once()
         assert forwarder.forward_to_support.await_args.kwargs["illustration_message_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_does_not_send_the_same_picture_twice_in_one_conversation(self) -> None:
+        llm_client, sender, forwarder, gaps = _parts("happ-buttons.png")
+        pipeline = _pipeline(llm_client, sender, forwarder, gaps)
+
+        await pipeline.handle(make_batch("где кнопка обновить?"))
+        await pipeline.handle(make_batch("всё равно не работает"))
+
+        sender.send_photo.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_second_conversation_gets_the_picture_again(self) -> None:
+        llm_client, sender, forwarder, gaps = _parts("happ-buttons.png")
+        pipeline = _pipeline(llm_client, sender, forwarder, gaps)
+
+        await pipeline.handle(make_batch("где кнопка обновить?", user_id=100))
+        await pipeline.handle(make_batch("где кнопка обновить?", user_id=200))
+
+        assert sender.send_photo.await_count == 2

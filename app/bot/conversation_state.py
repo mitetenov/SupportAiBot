@@ -59,6 +59,11 @@ class ConversationState:
         # between reading one of these maps and writing it back.
         self._last_queries: dict[int, LastQuery] = {}
         self._last_operator_reply_at: dict[int, float] = {}
+        # Illustrations already sent, per user, with the time of the last one.
+        # Every connection answer opens with "press the two buttons", so several
+        # FAQ entries name the same picture; without this the user is sent it
+        # again on every follow-up.
+        self._illustrations_sent: dict[int, tuple[set[str], float]] = {}
 
     def record_query(
         self,
@@ -87,6 +92,29 @@ class ConversationState:
             return None
         return last
 
+    def record_illustration_sent(self, user_id: int, name: str) -> None:
+        """Note that this user has been sent this picture in the current conversation."""
+        if not name:
+            return
+        seen, _ = self._illustrations_sent.get(user_id, (set(), 0.0))
+        seen.add(name)
+        self._illustrations_sent[user_id] = (seen, self._time_func())
+
+    def was_illustration_sent(self, user_id: int, name: str) -> bool:
+        """True while this user has already been sent this picture.
+
+        Shares the last-query TTL: once a conversation has gone cold, sending
+        the picture again is helpful rather than repetitive.
+        """
+        entry = self._illustrations_sent.get(user_id)
+        if entry is None:
+            return False
+        seen, at = entry
+        if (self._time_func() - at) >= self.last_query_ttl:
+            del self._illustrations_sent[user_id]
+            return False
+        return name in seen
+
     def record_operator_reply(self, user_id: int) -> None:
         """Record that a human operator replied to the user, setting the suppression timestamp."""
         now = self._time_func()
@@ -107,6 +135,7 @@ class ConversationState:
         """Drop all transient state for a user."""
         self._last_queries.pop(user_id, None)
         self._last_operator_reply_at.pop(user_id, None)
+        self._illustrations_sent.pop(user_id, None)
 
     def evict_expired(self) -> int:
         """Prune all stale queries and suppression records beyond their respective TTLs."""
@@ -128,6 +157,15 @@ class ConversationState:
         ]
         for uid in stale_replies:
             del self._last_operator_reply_at[uid]
+            removed += 1
+
+        stale_illustrations = [
+            uid
+            for uid, (_, at) in self._illustrations_sent.items()
+            if (now - at) >= self.last_query_ttl
+        ]
+        for uid in stale_illustrations:
+            del self._illustrations_sent[uid]
             removed += 1
 
         if removed > 0:
