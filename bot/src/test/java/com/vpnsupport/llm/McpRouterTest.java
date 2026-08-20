@@ -260,9 +260,10 @@ class McpRouterTest {
     }
 
     /**
-     * mcp-remnawave declares telegramId as a string. Pinning a raw long made the
-     * server reject every call with
-     * {@code -32602 Invalid input: expected string, received number}.
+     * mcp-remnawave declared telegramId as a string before 3.2.0 and declares it
+     * as a number since. Both shapes stay covered: the router reads the type off
+     * the schema, and pinning the wrong one makes the server reject every call
+     * with {@code -32602 Invalid input: expected string, received number}.
      */
     @Test
     void shouldSendTheIdAsAStringWhenTheSchemaDeclaresOne() {

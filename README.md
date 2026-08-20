@@ -13,7 +13,7 @@ Telegram-бот техподдержки VPN-сервиса. Принимает 
 ```
 
 - **LLM**: DeepSeek, Gemini или OpenAI (переключается через `LLM_PROVIDER`, список моделей — ниже)
-- **MCP**: [mcp-remnawave](https://github.com/TrackLine/mcp-remnawave) по HTTP-транспорту. Модели доступны только 5 allow-list инструментов: `users_get_by_telegram_id`, `nodes_list`, `nodes_get`, `hwid_devices_list` и — при `REMNAWAVE_READONLY=false` — `hwid_device_delete`. Остальные инструменты сервера боту не видны и не вызываемы.
+- **MCP**: [mcp-remnawave](https://github.com/mitetenov/mcp-remnawave) 3.2.x по HTTP-транспорту, панель Remnawave 3.3.x. Сервер поднят в режиме support (`REMNAWAVE_IS_SUPPORT=true`): он отдаёт 16 пользовательских инструментов и вырезает VPN-креды из каждого ответа панели. Поверх этого бот сужает список до 5 allow-list инструментов: `users_get_by_telegram_id`, `nodes_list`, `nodes_get`, `hwid_devices_list` и — при `REMNAWAVE_MCP_READONLY=false` — `hwid_device_delete`. Остальные инструменты сервера боту не видны и не вызываемы.
 - **RAG**: гибридный поиск по FAQ-базе — векторные эмбеддинги (Gemini/OpenAI) и полнотекстовый поиск PostgreSQL `tsvector` по русскому словарю объединяются через Reciprocal Rank Fusion
 - **Форвардинг**: каждому пользователю — отдельный топик в форум-группе
 
@@ -56,13 +56,16 @@ docker compose exec support-bot wget -qO- http://localhost:8080/actuator/health
 | `OPENAI_EMBEDDING_MODEL` | при embedding=openai | `text-embedding-3-small` | Модель эмбеддингов OpenAI |
 | `REMNAWAVE_BASE_URL` | да | — | URL панели Remnawave |
 | `REMNAWAVE_API_TOKEN` | да | — | JWT API-токен Remnawave |
-| `REMNAWAVE_READONLY` | — | `false` | `true` — скрыть от модели все write-операции (удаление HWID-устройств станет недоступно) |
+| `REMNAWAVE_MCP_READONLY` | — | `false` | Гейт бота: `true` — скрыть от модели все write-операции (удаление HWID-устройств станет недоступно) |
+| `REMNAWAVE_IS_SUPPORT` | — | `true` | Гейт MCP-сервера: режим support. Полный доступ ко всем 179 инструментам открывает только точная строка `false` |
+| `REMNAWAVE_TIMEOUT_MS` | — | `30000` | Таймаут запросов MCP к панели |
 | `PGVECTOR_HOST` | — | `pgvector` | Хост pgvector |
 | `PGVECTOR_PORT` | — | `5432` | Порт pgvector |
 | `PGVECTOR_USER` | — | `bot` | Пользователь pgvector |
 | `PGVECTOR_PASSWORD` | да | — | Пароль pgvector |
 | `PGVECTOR_DB` | — | `vpnsupport` | Название БД |
 | `BOT_TAG` | — | `latest` | Тег образа mitetenov/supportbot |
+| `MCP_TAG` | — | `v3.2.0` | Тег образа mitetenov/remnawave-mcp. Закреплён намеренно: набор инструментов MCP зависит от версии |
 
 При запуске валидируются только переменные выбранного провайдера (ключа и модели). Переменные неактивного провайдера можно не заполнять.
 

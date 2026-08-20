@@ -99,9 +99,11 @@ public class McpRouter {
 
     /**
      * Locates the Telegram ID property and the JSON type the server declares for
-     * it. The type matters: {@code mcp-remnawave} declares {@code telegramId} as
-     * a string, and sending a number is rejected outright with
-     * {@code -32602 Input validation error}.
+     * it. The type matters because the server validates it: {@code mcp-remnawave}
+     * declared {@code telegramId} as a string before 3.2.0 and as a number since,
+     * and the wrong shape is rejected outright with
+     * {@code -32602 Input validation error}. Reading the type off the schema
+     * means a future flip needs no change here.
      */
     @SuppressWarnings("unchecked")
     private static Optional<TelegramIdParam> telegramIdProperty(Map<String, Object> inputSchema) {

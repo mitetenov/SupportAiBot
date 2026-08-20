@@ -160,7 +160,7 @@ class GeminiThoughtSignatureTest {
     @Test
     void shouldIncludeThoughtSignatureInFunctionResponse() {
         LlmResponse.ToolCall toolCall = new LlmResponse.ToolCall(
-                "hwid_devices_list", "", Map.of("uuid", "abc-123"), "sig_response_test");
+                "hwid_devices_list", "", Map.of("userId", 42), "sig_response_test");
 
         List<Map<String, Object>> conversation = new ArrayList<>();
         client.addToolResultToConversation(conversation, toolCall, "{\"devices\": []}");
