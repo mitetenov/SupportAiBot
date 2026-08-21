@@ -52,8 +52,9 @@ push → mcp-remnawave (main)
 иначе шаг `uv lock --check` в job `test` упадёт на рассинхроне.
 
 `.github/workflows/deploy.yml` — отдельный ручной workflow (`workflow_dispatch`,
-на вход тег). Ходит по SSH на сервер, выставляет `BOT_TAG` и делает
-`docker compose pull && docker compose up -d`. Автоматически после сборки не
+на вход тег). Ходит по SSH на сервер, выставляет `BOT_TAG`, скачивает и перезапускает
+только контейнер бота: `docker compose pull support-bot && docker compose up -d --wait support-bot`.
+Контейнеры MCP и PostgreSQL при этом не пересоздаются. Автоматически после сборки не
 запускается.
 
 ## mcp-remnawave
@@ -78,6 +79,24 @@ push → mcp-remnawave (main)
 `mcp-release.zip` остаётся артефактом релиза, но в сборке бота не участвует:
 Dockerfile SupportAiBot его не скачивает, MCP запускается отдельным сервисом
 `mcp-remnawave` из compose.
+
+### Обновление MCP 3.2.0 → 3.2.1
+
+Порядок миграции на сервере:
+
+```bash
+cd /root/supportBot
+cp .env .env.pre-mcp-3.2.1
+sed -i 's/^MCP_TAG=.*/MCP_TAG=v3.2.1/' .env
+docker compose pull mcp-remnawave
+docker compose up -d --wait mcp-remnawave
+docker compose pull support-bot
+docker compose up -d --wait support-bot
+```
+
+- Однократное обновление MCP очищает старую singleton-сессию.
+- После деплоя обеих версий перезапуск бота `docker compose restart support-bot` безопасен и не перезапускает MCP.
+- При работе на v3.2.0 аварийным восстановлением остаётся `docker compose up -d --force-recreate mcp-remnawave support-bot`, но для штатного деплоя оно больше не требуется.
 
 ## Docker-образы
 

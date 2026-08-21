@@ -18,7 +18,7 @@ from app.bot.conversation_state import ConversationState
 from app.bot.pipeline import UserMessagePipeline
 from app.bot.rate_limiter import UserRateLimiter
 from app.bot.sender import TelegramMessageSender
-from app.llm.mcp_client import HttpMcpClient
+from app.llm.mcp_client import HttpMcpClient, McpTool
 
 MCP_URL = "http://mcp-remnawave:3100"
 
@@ -26,13 +26,19 @@ MCP_URL = "http://mcp-remnawave:3100"
 def mcp_transport(seen: list[httpx.Request]) -> httpx.MockTransport:
     def handle(request: httpx.Request) -> httpx.Response:
         seen.append(request)
+        if request.method == "DELETE":
+            return httpx.Response(200)
         body = json.loads(request.content)
         method = body.get("method")
         if method == "initialize":
             return httpx.Response(
                 200,
                 headers={"Mcp-Session-Id": "sess-1"},
-                json={"jsonrpc": "2.0", "id": body["id"], "result": {"ok": True}},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"ok": True, "protocolVersion": "2025-11-25"},
+                },
             )
         if method == "tools/list":
             return httpx.Response(
@@ -100,6 +106,7 @@ class TestMcpWiringMatchesProduction:
         follow_ups = seen[1:]
         assert follow_ups
         assert all(r.headers.get("mcp-session-id") == "sess-1" for r in follow_ups)
+        assert all(r.headers.get("mcp-protocol-version") == "2025-11-25" for r in follow_ups)
 
 
 class TestAdminNotificationIsAwaited:
@@ -240,6 +247,7 @@ def _stub_process_boundaries(monkeypatch: pytest.MonkeyPatch) -> dict[str, Magic
     bot = MagicMock()
     bot.session = None
     bot.set_my_commands = AsyncMock()
+    bot.send_message = AsyncMock()
     monkeypatch.setattr(main_module, "Bot", lambda **_: bot)
 
     db_manager = MagicMock()
@@ -262,7 +270,9 @@ def _stub_process_boundaries(monkeypatch: pytest.MonkeyPatch) -> dict[str, Magic
     mcp_client = MagicMock()
     mcp_client.init = AsyncMock(return_value=True)
     mcp_client.close = AsyncMock()
-    mcp_client.list_tools = MagicMock(return_value=[])
+    mcp_client.list_tools = MagicMock(
+        return_value=[McpTool(name="nodes_list", description="List nodes")]
+    )
     monkeypatch.setattr(main_module, "HttpMcpClient", lambda **_: mcp_client)
 
     health_runner = MagicMock()
@@ -320,6 +330,40 @@ class TestCompositionRoot:
         # ...and it tore everything back down.
         parts["mcp_client"].close.assert_awaited_once()
         parts["db_manager"].close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_reports_a_handshake_failure_without_claiming_the_session_is_occupied(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import app.main as main_module
+
+        parts = _stub_process_boundaries(monkeypatch)
+        parts["mcp_client"].init.return_value = False
+        parts["mcp_client"].list_tools.return_value = []
+
+        await main_module.main()
+
+        text = parts["bot"].send_message.await_args.kwargs["text"]
+        assert "не удалось инициализировать MCP" in text
+        assert "занятую сессию" not in text
+        assert MCP_URL in text
+
+    @pytest.mark.asyncio
+    async def test_reports_an_empty_allowed_tool_set_separately(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import app.main as main_module
+
+        parts = _stub_process_boundaries(monkeypatch)
+        parts["mcp_client"].init.return_value = True
+        parts["mcp_client"].list_tools.return_value = []
+
+        await main_module.main()
+
+        text = parts["bot"].send_message.await_args.kwargs["text"]
+        assert "MCP вернул 0 разрешённых инструментов" in text
+        assert "MCP_TAG" in text
+        assert "REMNAWAVE_IS_SUPPORT" in text
 
 
 class TestShutdownOrder:

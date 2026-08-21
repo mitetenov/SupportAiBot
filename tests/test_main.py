@@ -7,6 +7,7 @@ import pytest
 from aiohttp.test_utils import make_mocked_request
 
 from app.config import Settings
+from app.llm.mcp_client import McpTool
 from app.main import (
     create_health_app,
     create_llm_client,
@@ -143,7 +144,9 @@ async def test_main_lifecycle(mock_settings: Settings) -> None:
         mock_mcp = MagicMock()
         mock_mcp.init = AsyncMock(return_value=True)
         mock_mcp.close = AsyncMock()
-        mock_mcp.list_tools = MagicMock(return_value=[])
+        mock_mcp.list_tools = MagicMock(
+            return_value=[McpTool(name="nodes_list", description="List nodes")]
+        )
         mock_mcp_client_cls.return_value = mock_mcp
 
         mock_faq_init = MagicMock()

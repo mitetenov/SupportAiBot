@@ -120,7 +120,7 @@ class TestHttpMcpClient:
                         "jsonrpc": "2.0",
                         "id": body["id"],
                         "result": {
-                            "protocolVersion": "2024-11-05",
+                            "protocolVersion": "2025-11-25",
                             "capabilities": {"tools": {}},
                             "serverInfo": {"name": "mcp-remnawave", "version": "1.0.0"},
                         },
@@ -152,6 +152,7 @@ class TestHttpMcpClient:
             assert success is True
             assert client.initialized is True
             assert client.session_id == "sess-12345"
+            assert client.protocol_version == "2025-11-25"
 
             tools = client.list_tools()
             assert len(tools) == 1
@@ -167,6 +168,175 @@ class TestHttpMcpClient:
             assert client.initialized is False
             assert client.session_id is None
             admin_notifier.notify_error.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_follow_up_requests_carry_the_negotiated_protocol_version(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            body = json.loads(request.content)
+            if body.get("method") == "initialize":
+                return httpx.Response(
+                    200,
+                    headers={"Mcp-Session-Id": "sess-version"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {"protocolVersion": "2025-11-25"},
+                    },
+                )
+            if body.get("method") == "tools/list":
+                return httpx.Response(
+                    200,
+                    json={"jsonrpc": "2.0", "id": body["id"], "result": {"tools": []}},
+                )
+            return httpx.Response(202)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
+            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            assert await client.init() is True
+
+        assert client.protocol_version == "2025-11-25"
+        assert all(
+            request.headers.get("mcp-protocol-version") == "2025-11-25" for request in seen[1:]
+        )
+
+    @pytest.mark.asyncio
+    async def test_close_terminates_the_session_with_delete(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.method == "DELETE":
+                return httpx.Response(200)
+            body = json.loads(request.content)
+            if body.get("method") == "initialize":
+                return httpx.Response(
+                    200,
+                    headers={"Mcp-Session-Id": "sess-close"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {"protocolVersion": "2025-11-25"},
+                    },
+                )
+            if body.get("method") == "tools/list":
+                return httpx.Response(
+                    200,
+                    json={"jsonrpc": "2.0", "id": body["id"], "result": {"tools": []}},
+                )
+            return httpx.Response(202)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
+            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            await client.init()
+            await client.close()
+
+        deletes = [request for request in seen if request.method == "DELETE"]
+        assert len(deletes) == 1
+        assert deletes[0].headers["mcp-session-id"] == "sess-close"
+        assert deletes[0].headers["mcp-protocol-version"] == "2025-11-25"
+        posted_methods = [
+            json.loads(request.content).get("method")
+            for request in seen
+            if request.method == "POST"
+        ]
+        assert "notifications/cancelled" not in posted_methods
+        assert client.session_id is None
+        assert client.protocol_version is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("delete_status", [404, 405])
+    async def test_close_tolerates_an_absent_or_non_terminable_session(
+        self, delete_status: int
+    ) -> None:
+        def handle(request: httpx.Request) -> httpx.Response:
+            if request.method == "DELETE":
+                return httpx.Response(delete_status)
+            body = json.loads(request.content)
+            if body.get("method") == "initialize":
+                return httpx.Response(
+                    200,
+                    headers={"Mcp-Session-Id": "sess-old-server"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {"protocolVersion": "2025-11-25"},
+                    },
+                )
+            if body.get("method") == "tools/list":
+                return httpx.Response(
+                    200,
+                    json={"jsonrpc": "2.0", "id": body["id"], "result": {"tools": []}},
+                )
+            return httpx.Response(202)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
+            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            await client.init()
+            await client.close()
+
+        assert client.initialized is False
+
+    @pytest.mark.asyncio
+    async def test_close_terminates_session_when_init_failed_during_tool_loading(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            if request.method == "DELETE":
+                return httpx.Response(200)
+            body = json.loads(request.content)
+            if body.get("method") == "initialize":
+                return httpx.Response(
+                    200,
+                    headers={"Mcp-Session-Id": "sess-partial-init"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {"protocolVersion": "2025-11-25"},
+                    },
+                )
+            if body.get("method") == "tools/list":
+                return httpx.Response(500, text="Internal Server Error")
+            return httpx.Response(202)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
+            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            assert await client.init() is False
+            assert client.initialized is False
+            assert client.session_id == "sess-partial-init"
+
+            await client.close()
+
+        deletes = [request for request in seen if request.method == "DELETE"]
+        assert len(deletes) == 1
+        assert deletes[0].headers["mcp-session-id"] == "sess-partial-init"
+        assert deletes[0].headers["mcp-protocol-version"] == "2025-11-25"
+        assert client.session_id is None
+
+    @pytest.mark.asyncio
+    async def test_already_initialized_without_session_id_is_not_retried_blindly(self) -> None:
+        initialize_calls = 0
+
+        def handle(_request: httpx.Request) -> httpx.Response:
+            nonlocal initialize_calls
+            initialize_calls += 1
+            return httpx.Response(
+                400,
+                json={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32000, "message": "Server already initialized"},
+                    "id": None,
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
+            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            assert await client.init() is False
+
+        assert initialize_calls == 1
 
     @pytest.mark.asyncio
     async def test_handle_already_initialized_with_session_id(
@@ -268,7 +438,11 @@ class TestHttpMcpClient:
                 return httpx.Response(
                     200,
                     headers={"Mcp-Session-Id": "sess-call-test"},
-                    json={"jsonrpc": "2.0", "id": body["id"], "result": {}},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {"protocolVersion": "2025-11-25"},
+                    },
                 )
             if method == "notifications/initialized":
                 return httpx.Response(200, json={})
@@ -348,7 +522,11 @@ class TestSessionRecovery:
                 return httpx.Response(
                     200,
                     headers={"Mcp-Session-Id": f"sess-{state['sessions']}"},
-                    json={"jsonrpc": "2.0", "id": body["id"], "result": {}},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {"protocolVersion": "2025-11-25"},
+                    },
                 )
             if method == "notifications/initialized":
                 return httpx.Response(200, json={})
@@ -437,7 +615,11 @@ class TestSessionRecovery:
                 return httpx.Response(
                     200,
                     headers={"Mcp-Session-Id": "sess-1"},
-                    json={"jsonrpc": "2.0", "id": body["id"], "result": {}},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": body["id"],
+                        "result": {"protocolVersion": "2025-11-25"},
+                    },
                 )
             if body.get("method") == "tools/list":
                 return httpx.Response(

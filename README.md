@@ -105,7 +105,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `PGVECTOR_HOST` | `pgvector` | Адрес базы данных |
 | `PGVECTOR_PORT` | `5432` | Порт базы данных |
 | `BOT_TAG` | `latest` | Тег образа бота |
-| `MCP_TAG` | `v3.2.0` | Тег образа интеграции с Remnawave |
+| `MCP_TAG` | `v3.2.1` | Тег образа интеграции с Remnawave |
 
 ## Использование в Telegram
 
@@ -154,7 +154,7 @@ FAQ находится в `faq/faq.json`. Запись может содержа
 
 ```bash
 docker build -t mitetenov/supportbot:latest .
-docker compose up -d --force-recreate support-bot
+docker compose up -d --wait support-bot
 ```
 
 ## Тикеты Bedolaga
@@ -290,3 +290,21 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy app
 ```
+
+## Обновление MCP 3.2.0 → 3.2.1
+
+Порядок миграции на сервере:
+
+```bash
+cd /root/supportBot
+cp .env .env.pre-mcp-3.2.1
+sed -i 's/^MCP_TAG=.*/MCP_TAG=v3.2.1/' .env
+docker compose pull mcp-remnawave
+docker compose up -d --wait mcp-remnawave
+docker compose pull support-bot
+docker compose up -d --wait support-bot
+```
+
+- Однократное обновление MCP очищает старую singleton-сессию.
+- После деплоя обеих версий перезапуск бота `docker compose restart support-bot` безопасен и не перезапускает MCP.
+- При работе на v3.2.0 аварийным восстановлением остаётся `docker compose up -d --force-recreate mcp-remnawave support-bot`, но для штатного деплоя оно больше не требуется.

@@ -24,10 +24,6 @@ jobs:
             echo "🚀 Deploying supportbot:${{ inputs.tag }}..."
             cd /root/supportBot
             export BOT_TAG=${{ inputs.tag }}
-            docker compose pull
-            # --force-recreate covers mcp-remnawave too: it keeps a single
-            # global session with no teardown, so a bot restarted beside a
-            # still-running MCP gets "already initialized" and comes up with no
-            # Remnawave tools. --wait fails the deploy if anything stays unhealthy.
-            docker compose up -d --force-recreate --wait
+            docker compose pull support-bot
+            docker compose up -d --wait support-bot
             echo "✅ supportbot:${{ inputs.tag }} deployed"
