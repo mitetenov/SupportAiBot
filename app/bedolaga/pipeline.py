@@ -2,11 +2,12 @@
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 
 from app.bedolaga.client import BedolagaClient
-from app.bedolaga.state import TicketStateStore
-from app.bedolaga.types import ImageAttachment, Ticket
+from app.bedolaga.state import TicketProgress, TicketStateStore
+from app.bedolaga.types import ImageAttachment, Ticket, TicketMessage
 from app.bot.admin_notifier import AdminNotifier
 from app.bot.conversation_state import ConversationState
 from app.bot.forwarder import SupportGroupForwarder
@@ -18,6 +19,31 @@ from app.llm.escalation import EscalationPolicy
 from app.rag.knowledge_gaps import KnowledgeGapService
 
 logger = logging.getLogger(__name__)
+
+#: How long a ticket waits before its reply is attempted again, after the first
+#: failure. Doubles per consecutive failure up to the ceiling below.
+REPLY_BACKOFF_BASE_SECONDS: float = 60.0
+
+#: The longest a ticket is left alone after repeated reply failures. Half an
+#: hour is short enough that a fixed API key resumes work on its own, and long
+#: enough that a permanently broken one costs one model call per ticket per
+#: half hour instead of one per ticket per minute.
+REPLY_BACKOFF_MAX_SECONDS: float = 1800.0
+
+#: Doubling past this many failures is already at the ceiling; not counting
+#: higher keeps the shift from growing an unbounded integer.
+_MAX_COUNTED_FAILURES: int = 16
+
+#: How many tickets one bot answers at a time when nobody configured it.
+DEFAULT_MAX_CONCURRENT_TICKETS: int = 5
+
+
+@dataclass
+class _ReplyBackoff:
+    """A ticket whose reply keeps failing, and when to try it again."""
+
+    failures: int
+    retry_at: float
 
 
 @dataclass(frozen=True)
@@ -47,6 +73,7 @@ class TicketAnswerer:
         forwarder: SupportGroupForwarder,
         knowledge_gap_service: KnowledgeGapService,
         conversation_state: ConversationState,
+        max_concurrent: int = DEFAULT_MAX_CONCURRENT_TICKETS,
     ) -> None:
         self.client = client
         self.llm_client = llm_client
@@ -66,6 +93,17 @@ class TicketAnswerer:
         # this the operator's topic fills with the same notice dozens of times.
         # In memory on purpose: a restart costs at most one duplicate notice.
         self._suppressed: dict[int, int] = {}
+        # ticket id -> when its reply may be tried again. A reply that cannot
+        # land (a key without write scope, a `/reply` endpoint answering 500)
+        # leaves the ticket open, so the next sweep pays for a whole model turn
+        # to hit the same wall — every minute, for every affected ticket,
+        # forever. In memory like the above: a restart is a free retry.
+        self._reply_backoff: dict[int, _ReplyBackoff] = {}
+        # One sweep can bring back a hundred tickets, and each turn holds a
+        # connection from the pool the LLM and embedding providers share. Left
+        # uncapped, a backlog starves plain Telegram messages of connections
+        # and walks straight into the provider's rate limit.
+        self._slots = asyncio.Semaphore(max(1, max_concurrent))
 
     def schedule(self, ticket_id: int) -> None:
         """Answer this ticket in the background.
@@ -98,10 +136,20 @@ class TicketAnswerer:
     async def _answer(self, ticket_id: int) -> None:
         ticket = await self.client.get_ticket(ticket_id)
         if ticket is None or not ticket.awaits_answer:
+            self._reply_backoff.pop(ticket_id, None)
             return
 
         last = ticket.last_message
-        if last is None or await self.state.already_answered(ticket.id, last.id):
+        progress = await self.state.progress(ticket.id)
+        if last is None or progress.already_answered(last.id):
+            self._reply_backoff.pop(ticket_id, None)
+            return
+
+        if self.backing_off(ticket.id):
+            # Everything below this line costs money or noise, and the last
+            # attempt proved the answer has nowhere to go. No admin alert
+            # either: the retry when the window ends will raise one if it
+            # fails again, and one alert per half hour is the point.
             return
 
         user_key = await self.user_key(ticket)
@@ -121,10 +169,10 @@ class TicketAnswerer:
 
         question = ticket.question
 
-        if self.conversation_state.is_operator_recently_active(user_key):
-            # The operator is holding this conversation in Telegram; a bot
-            # answer in the ticket would talk over them. Nothing is marked
-            # answered — the bot must pick this ticket up once the window ends.
+        if self.a_human_is_on_it(ticket, progress, user_key):
+            # Somebody is already holding this conversation; a bot answer in
+            # the ticket would talk over them. Nothing is marked answered — the
+            # bot must pick this ticket up once they are done with it.
             if self._suppressed.get(ticket.id) != last.id:
                 self._suppressed[ticket.id] = last.id
                 await self.mirror(
@@ -141,6 +189,21 @@ class TicketAnswerer:
             logger.info("Bedolaga ticket %d is rate limited for user %d", ticket.id, user_key)
             return
 
+        # Everything above is a cheap decision not to work, and a burst of
+        # tickets that are all going to be skipped must not queue up for a
+        # semaphore slot to find that out. Everything below reaches the panel
+        # or the model, so it is what the cap is for.
+        async with self._slots:
+            await self.answer_now(ticket, last, user_key, question)
+
+    async def answer_now(
+        self, ticket: Ticket, last: TicketMessage, user_key: int, question: str
+    ) -> None:
+        """Ask the model about this ticket and write the answer back.
+
+        Split out of `_answer` so the concurrency cap wraps exactly the part
+        that costs a connection and a model call, and nothing that does not.
+        """
         attachment = await self.attachment_for(ticket)
         if not question.strip() and attachment is None:
             # There is genuinely nothing to ask about: no text anywhere in the
@@ -158,14 +221,13 @@ class TicketAnswerer:
         ) or EscalationPolicy.user_requests_human(question)
 
         posted = answer + get_message("bedolaga.escalation.note") if escalate else answer
-        if not await self.client.reply(ticket.id, posted):
-            await self.admin_notifier.notify_error(
-                get_message("bedolaga.reply.failed", ticket.id),
-                user_id=user_key,
-            )
+        reply_message_id = await self.client.reply(ticket.id, posted)
+        if reply_message_id is None:
+            await self.reply_failed(ticket.id, user_key)
             return
 
-        await self.state.mark_answered(ticket.id, last.id)
+        self._reply_backoff.pop(ticket.id, None)
+        await self.state.record_reply(ticket.id, reply_message_id, answered_message_id=last.id)
         self._suppressed.pop(ticket.id, None)
         self.conversation_state.record_query(user_key, question, reply.faq_context)
 
@@ -186,6 +248,62 @@ class TicketAnswerer:
                 reply.text,
                 reply.faq_context,
             )
+
+    def a_human_is_on_it(self, ticket: Ticket, progress: TicketProgress, user_key: int) -> bool:
+        """True when somebody other than this bot is answering this person.
+
+        Two ways to find that out, one meaning. The operator may be replying in
+        Telegram, which the bot is told about directly; or they may be typing
+        into Bedolaga's own admin UI, which nothing tells the bot about at all
+        — there the only evidence is an admin message in the ticket that the
+        bot did not write. Every reply in a ticket is an admin message, its own
+        included, which is why the id of its own last reply is recorded: it is
+        the only way to tell its handwriting from a human's.
+        """
+        if self.conversation_state.is_operator_recently_active(user_key):
+            return True
+        return any(
+            message.is_from_admin and progress.someone_else_wrote(message.id)
+            for message in ticket.messages
+        )
+
+    def backing_off(self, ticket_id: int) -> bool:
+        """True while this ticket is waiting out a run of failed replies."""
+        entry = self._reply_backoff.get(ticket_id)
+        if entry is None or time.monotonic() >= entry.retry_at:
+            return False
+        logger.info(
+            "Bedolaga ticket %d is backing off after %d failed repl(ies), %.0fs to go",
+            ticket_id,
+            entry.failures,
+            entry.retry_at - time.monotonic(),
+        )
+        return True
+
+    async def reply_failed(self, ticket_id: int, user_key: int) -> None:
+        """Hold this ticket back for a while, and say so once.
+
+        The answer is already paid for and thrown away. Without this the ticket
+        stays open, the next sweep buys another one, and the whole thing repeats
+        every minute for as long as the panel keeps refusing.
+        """
+        entry = self._reply_backoff.get(ticket_id)
+        failures = min(entry.failures + 1 if entry is not None else 1, _MAX_COUNTED_FAILURES)
+        delay = min(REPLY_BACKOFF_BASE_SECONDS * 2 ** (failures - 1), REPLY_BACKOFF_MAX_SECONDS)
+        self._reply_backoff[ticket_id] = _ReplyBackoff(
+            failures=failures,
+            retry_at=time.monotonic() + delay,
+        )
+        logger.warning(
+            "Bedolaga ticket %d: reply failed %d time(s), next attempt in %.0fs",
+            ticket_id,
+            failures,
+            delay,
+        )
+        await self.admin_notifier.notify_error(
+            get_message("bedolaga.reply.failed", ticket_id),
+            user_id=user_key,
+        )
 
     async def attachment_for(self, ticket: Ticket) -> ImageAttachment | None:
         """The screenshot this turn can show the model, when there is one.
@@ -236,12 +354,20 @@ class TicketAnswerer:
         empty prompt. The mirror escalates so an operator, who can open the
         attachment the bot cannot, sees the ticket in the topic.
         """
-        if not await self.client.reply(ticket.id, get_message("bedolaga.nothing.to.answer")):
-            await self.admin_notifier.notify_error(
-                get_message("bedolaga.reply.failed", ticket.id),
-                user_id=user_key,
-            )
+        reply_message_id = await self.client.reply(
+            ticket.id, get_message("bedolaga.nothing.to.answer")
+        )
+        if reply_message_id is None:
+            # Cheaper to fail than the path above — no model call — but it
+            # loops the same way, so it waits out the same backoff.
+            await self.reply_failed(ticket.id, user_key)
             return
+
+        self._reply_backoff.pop(ticket.id, None)
+        # Still not marked answered: the user's message is the bot's to take
+        # once they add words to it. The bot's own message is recorded all the
+        # same, or the next turn would read it as an operator stepping in.
+        await self.state.record_reply(ticket.id, reply_message_id)
 
         await self.mirror(
             ticket,

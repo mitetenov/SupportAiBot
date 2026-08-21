@@ -27,28 +27,78 @@ class TestAlreadyAnswered:
 
     async def test_false_when_the_ticket_is_unknown(self) -> None:
         db = _FakeDbManager(row=None)
-        assert await TicketStateStore(db).already_answered(17, 100) is False
+        progress = await TicketStateStore(db).progress(17)
+        assert progress.already_answered(100) is False
 
     async def test_true_when_that_message_was_answered(self) -> None:
         db = _FakeDbManager(row=BedolagaTicketState(ticket_id=17, last_answered_message_id=100))
-        assert await TicketStateStore(db).already_answered(17, 100) is True
+        progress = await TicketStateStore(db).progress(17)
+        assert progress.already_answered(100) is True
 
     async def test_true_when_a_later_message_was_answered(self) -> None:
         db = _FakeDbManager(row=BedolagaTicketState(ticket_id=17, last_answered_message_id=120))
-        assert await TicketStateStore(db).already_answered(17, 100) is True
+        progress = await TicketStateStore(db).progress(17)
+        assert progress.already_answered(100) is True
 
     async def test_false_for_a_message_newer_than_the_last_answer(self) -> None:
         db = _FakeDbManager(row=BedolagaTicketState(ticket_id=17, last_answered_message_id=100))
-        assert await TicketStateStore(db).already_answered(17, 101) is False
+        progress = await TicketStateStore(db).progress(17)
+        assert progress.already_answered(101) is False
 
 
-class TestMarkAnswered:
+class TestTheBotsOwnReply:
+    """Every reply in a ticket is an admin message — including a human's."""
+
+    async def test_a_ticket_the_bot_never_replied_on_accuses_nobody(self) -> None:
+        """No reply of its own means nothing to compare an admin message to."""
+        db = _FakeDbManager(row=None)
+        progress = await TicketStateStore(db).progress(17)
+        assert progress.last_bot_reply_message_id == 0
+        assert progress.someone_else_wrote(105) is False
+
+    async def test_an_admin_message_newer_than_the_bots_own_is_a_humans(self) -> None:
+        db = _FakeDbManager(
+            row=BedolagaTicketState(
+                ticket_id=17,
+                last_answered_message_id=100,
+                last_bot_reply_message_id=101,
+            )
+        )
+        progress = await TicketStateStore(db).progress(17)
+        assert progress.someone_else_wrote(105) is True
+        assert progress.someone_else_wrote(101) is False
+        assert progress.someone_else_wrote(99) is False
+
+
+class TestRecordReply:
     """Recording an answer upserts a single row per ticket."""
 
-    async def test_merges_the_row(self) -> None:
+    async def test_merges_both_ids(self) -> None:
         db = _FakeDbManager()
-        await TicketStateStore(db).mark_answered(17, 101)
+        await TicketStateStore(db).record_reply(17, 101, answered_message_id=100)
         merged = db.session_obj.merge.await_args.args[0]
         assert isinstance(merged, BedolagaTicketState)
         assert merged.ticket_id == 17
-        assert merged.last_answered_message_id == 101
+        assert merged.last_answered_message_id == 100
+        assert merged.last_bot_reply_message_id == 101
+
+    async def test_a_reply_that_answers_nothing_keeps_the_answered_watermark(self) -> None:
+        """A hand-over line is the bot's message, but it answers no question."""
+        db = _FakeDbManager(
+            row=BedolagaTicketState(
+                ticket_id=17,
+                last_answered_message_id=100,
+                last_bot_reply_message_id=101,
+            )
+        )
+        await TicketStateStore(db).record_reply(17, 103)
+        merged = db.session_obj.merge.await_args.args[0]
+        assert merged.last_answered_message_id == 100
+        assert merged.last_bot_reply_message_id == 103
+
+    async def test_a_reply_that_answers_nothing_on_a_fresh_ticket(self) -> None:
+        db = _FakeDbManager(row=None)
+        await TicketStateStore(db).record_reply(17, 103)
+        merged = db.session_obj.merge.await_args.args[0]
+        assert merged.last_answered_message_id == 0
+        assert merged.last_bot_reply_message_id == 103

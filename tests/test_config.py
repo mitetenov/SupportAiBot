@@ -346,6 +346,7 @@ class TestBedolagaSettings:
         assert settings.bedolaga_enabled is False
         assert settings.bedolaga_webhook_path == "/bedolaga/webhook"
         assert settings.bedolaga_poll_interval_seconds == 60
+        assert settings.bedolaga_max_concurrent_tickets == 5
 
     def test_enabled_requires_api_url(self, valid_settings_dict: dict[str, object]) -> None:
         with pytest.raises(ValidationError, match="BEDOLAGA_API_URL"):
@@ -386,3 +387,30 @@ class TestBedolagaSettings:
         assert settings.bedolaga_enabled is True
         assert reveal(settings.bedolaga_api_key) == "secret-token"
         assert reveal(settings.bedolaga_webhook_secret) == "shhh"
+
+    def test_enabled_rejects_a_concurrency_cap_below_one(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        """Zero would park every ticket on a semaphore that never opens."""
+        with pytest.raises(ValidationError, match="BEDOLAGA_MAX_CONCURRENT_TICKETS"):
+            Settings(
+                **valid_settings_dict,
+                bedolaga_enabled=True,
+                bedolaga_api_url="http://bedolaga:8080",
+                bedolaga_api_key="key",
+                bedolaga_webhook_secret="shhh",
+                bedolaga_max_concurrent_tickets=0,
+            )
+
+    def test_enabled_accepts_a_custom_concurrency_cap(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        settings = Settings(
+            **valid_settings_dict,
+            bedolaga_enabled=True,
+            bedolaga_api_url="http://bedolaga:8080",
+            bedolaga_api_key="key",
+            bedolaga_webhook_secret="shhh",
+            bedolaga_max_concurrent_tickets=12,
+        )
+        assert settings.bedolaga_max_concurrent_tickets == 12

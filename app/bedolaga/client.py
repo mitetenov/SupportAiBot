@@ -100,12 +100,21 @@ class BedolagaClient:
                     ids.append(int(ticket_id))
         return ids
 
-    async def reply(self, ticket_id: int, text: str) -> bool:
-        """Post an answer into the ticket. True when Bedolaga accepted it.
+    async def reply(self, ticket_id: int, text: str) -> int | None:
+        """Post an answer into the ticket. The new message's id, or None.
 
         The panel takes it from here: the message is stored as an admin reply,
         the ticket flips to `answered`, and the user gets a Telegram
         notification plus a live update in the cabinet.
+
+        The id matters beyond "did it work". Every reply in a ticket is an
+        admin message, the bot's own included, so without knowing which admin
+        message ids are its own the bot cannot tell an operator working in the
+        panel from itself — and would answer over a human holding the
+        conversation. None is every outcome that leaves nothing to record: a
+        transport error, a rejection, and a success whose body does not carry
+        an id (logged, never raised — a write that landed must not blow up the
+        caller over a parsing surprise).
 
         Sent exactly once, never through `post_with_retry`: all three of those
         happen on the panel's side before the response comes back, so a read
@@ -123,7 +132,7 @@ class BedolagaClient:
             )
         except httpx.HTTPError as e:
             logger.error("Bedolaga: replying to ticket %d failed: %s", ticket_id, e)
-            return False
+            return None
 
         if response.status_code not in (200, 201):
             logger.error(
@@ -132,8 +141,17 @@ class BedolagaClient:
                 response.status_code,
                 response.text[:200],
             )
-            return False
-        return True
+            return None
+
+        try:
+            return int((response.json() or {})["message"]["id"])
+        except (ValueError, KeyError, TypeError) as e:
+            logger.warning(
+                "Bedolaga: the reply to ticket %d landed but came back without a message id: %s",
+                ticket_id,
+                e,
+            )
+            return None
 
     async def set_priority(self, ticket_id: int, priority: str) -> bool:
         """Raise or lower a ticket's priority. Best effort: never raises."""

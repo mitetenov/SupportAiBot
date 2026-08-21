@@ -112,6 +112,7 @@ MESSAGES: dict[str, str] = {
     "bedolaga.reply.failed": "Не удалось отправить ответ в тикет Bedolaga #{0}",
     # Admin notifications
     "admin.error.prefix": "[ОШИБКА БОТА]",
+    "admin.error.suppressed": "(повторов подавлено с прошлого раза: {0})",
     "admin.error.details": "Детали ошибки:",
     "admin.response.prefix": "Ответ бота для",
     "admin.response.truncated": "(сообщение обрезано)",

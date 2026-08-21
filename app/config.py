@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     conversation_last_query_ttl_hours: int = 6
 
     # Providers
-    llm_provider: str = "deepseek"
+    llm_provider: str = "openai"
     embedding_provider: str = "gemini"
 
     # Telegram
@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     bedolaga_webhook_secret: SecretStr = SecretStr("")
     bedolaga_webhook_path: str = "/bedolaga/webhook"
     bedolaga_poll_interval_seconds: int = 60
+    bedolaga_max_concurrent_tickets: int = 5
 
     # Server / Healthcheck
     healthcheck_port: int = 8080
@@ -298,6 +299,17 @@ class Settings(BaseSettings):
                 "Придумайте случайную строку, укажите её при регистрации вебхуков "
                 "в Bedolaga и добавьте в .env: BEDOLAGA_WEBHOOK_SECRET=...",
             )
+            # Zero would let the semaphore block every ticket forever; a
+            # negative value is a typo. Nothing here is a security boundary —
+            # the cap only protects the shared connection pool and the LLM
+            # provider's rate limit from a large backlog.
+            if self.bedolaga_max_concurrent_tickets < 1:
+                raise ValueError(
+                    f"BEDOLAGA_MAX_CONCURRENT_TICKETS должен быть не меньше 1. "
+                    f"Сейчас задано: {self.bedolaga_max_concurrent_tickets}. "
+                    f"Это ограничение числа тикетов, обрабатываемых одновременно; "
+                    f"значение по умолчанию: BEDOLAGA_MAX_CONCURRENT_TICKETS=5"
+                )
 
         return self
 

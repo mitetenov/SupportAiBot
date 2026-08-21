@@ -78,11 +78,13 @@ def create_ticket_support(
         forwarder=forwarder,
         knowledge_gap_service=knowledge_gap_service,
         conversation_state=conversation_state,
+        max_concurrent=settings.bedolaga_max_concurrent_tickets,
     )
     logger.info(
-        "Bedolaga ticket integration enabled: %s, sweeping every %ds",
+        "Bedolaga ticket integration enabled: %s, sweeping every %ds, %d ticket(s) at a time",
         settings.bedolaga_api_url,
         settings.bedolaga_poll_interval_seconds,
+        settings.bedolaga_max_concurrent_tickets,
     )
     return TicketSupport(
         answerer=answerer,

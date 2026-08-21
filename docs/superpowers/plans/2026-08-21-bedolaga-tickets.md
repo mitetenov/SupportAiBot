@@ -26,6 +26,7 @@
 |---|---|---|
 | Аутентификация Web API | заголовок `X-API-Key: <token>`, базовый URL — корень их FastAPI (порт 8080) | `app/webapi/dependencies.py: require_api_token` |
 | Чтение тикета | `GET /tickets/{id}` → тикет **с сообщениями**, отсортированными по `created_at` | `app/webapi/routes/tickets.py: get_ticket` |
+| Поля сообщения тикета | каждый элемент `messages` в ответе `GET /tickets/{id}` сериализуется схемой `TicketMessageResponse`: `id, user_id, message_text, is_from_admin, has_media, media_type, media_file_id, media_caption, created_at`. То есть `has_media` и `media_type` есть **не только в payload'ах вебхуков**, но и на самих сообщениях тикета — на этом держится весь vision-путь (`has_media` + `media_type == "photo"`) | `app/webapi/schemas/tickets.py: TicketMessageResponse`, отдаётся из `app/webapi/routes/tickets.py: get_ticket` и `list_tickets` |
 | Список тикетов | `GET /tickets?status=open&limit=50` → массив тикетов **без сообщений** (`include_messages=False`) — годится только для получения id | `app/webapi/routes/tickets.py: list_tickets` |
 | Ответ в тикет | `POST /tickets/{id}/reply`, тело `{"message_text": "..."}`, `message_text` ≤ 4000 символов, ответ 201 | `app/webapi/routes/tickets.py: reply_to_ticket` |
 | Что делает ответ | пишет сообщение с `is_from_admin=true`, переводит тикет в статус `answered`, **шлёт пользователю уведомление в Telegram** и пушит сообщение в кабинет по WebSocket | `TicketMessageCRUD.add_message`, `notify_user_about_ticket_reply` |

@@ -19,7 +19,7 @@ import httpx
 
 from app.bedolaga.client import BedolagaClient
 from app.bedolaga.pipeline import TicketAnswerer
-from app.bedolaga.state import TicketStateStore
+from app.bedolaga.state import TicketProgress, TicketStateStore
 from app.bedolaga.types import TelegramIdLookup, Ticket, TicketMessage
 from app.bedolaga.webhook import BedolagaWebhookEndpoint
 from app.bot.conversation_state import ConversationState
@@ -33,6 +33,8 @@ SECRET = "webhook-secret"
 TICKET_ID = 17
 PANEL_USER_ID = 55
 TELEGRAM_ID = 42
+#: The id the panel gives the bot's own reply.
+BOT_REPLY_ID = 101
 ANSWER = "Проверьте подписку в личном кабинете."
 
 TICKET_BODY: dict[str, Any] = {
@@ -82,7 +84,9 @@ def _panel(recorded: list[httpx.Request]) -> httpx.MockTransport:
         if request.method == "GET" and path == f"/users/{PANEL_USER_ID}":
             return httpx.Response(200, json={"telegram_id": TELEGRAM_ID})
         if request.method == "POST" and path == f"/tickets/{TICKET_ID}/reply":
-            return httpx.Response(201, json={"status": "ok"})
+            return httpx.Response(
+                201, json={"message": {"id": BOT_REPLY_ID, "is_from_admin": True}}
+            )
         return httpx.Response(404, json={})
 
     return httpx.MockTransport(handler)
@@ -180,12 +184,23 @@ class _InMemoryState:
 
     def __init__(self) -> None:
         self.answered: dict[int, int] = {}
+        self.bot_replies: dict[int, int] = {}
 
-    async def already_answered(self, ticket_id: int, message_id: int) -> bool:
-        return self.answered.get(ticket_id, -1) >= message_id
+    async def progress(self, ticket_id: int) -> TicketProgress:
+        return TicketProgress(
+            last_answered_message_id=self.answered.get(ticket_id, 0),
+            last_bot_reply_message_id=self.bot_replies.get(ticket_id, 0),
+        )
 
-    async def mark_answered(self, ticket_id: int, message_id: int) -> None:
-        self.answered[ticket_id] = message_id
+    async def record_reply(
+        self,
+        ticket_id: int,
+        bot_reply_message_id: int,
+        answered_message_id: int | None = None,
+    ) -> None:
+        self.bot_replies[ticket_id] = bot_reply_message_id
+        if answered_message_id is not None:
+            self.answered[ticket_id] = answered_message_id
 
 
 class TestConcurrentTurns:
@@ -217,7 +232,7 @@ class TestConcurrentTurns:
         client.resolve_telegram_id = AsyncMock(
             return_value=TelegramIdLookup(known=True, telegram_id=TELEGRAM_ID)
         )
-        client.reply = AsyncMock(return_value=True)
+        client.reply = AsyncMock(return_value=BOT_REPLY_ID)
         client.set_priority = AsyncMock(return_value=True)
 
         llm_client = MagicMock()

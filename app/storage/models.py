@@ -181,17 +181,30 @@ class FaqMetadata(Base):
 
 
 class BedolagaTicketState(Base):
-    """The last Bedolaga ticket message this bot has answered.
+    """What this bot has already done on one Bedolaga ticket.
 
     Both the webhook and the reconciling poll can bring the same ticket in, and
     a delivery may arrive twice — this row is what makes answering a ticket
     idempotent instead of posting the same reply again.
+
+    Two message ids, and they are not the same thing. `last_answered_message_id`
+    is the *user's* message the bot has answered up through, which is what
+    idempotency turns on. `last_bot_reply_message_id` is the *bot's own* reply,
+    which is how the bot recognises its own handwriting: every reply in a
+    ticket is an admin message, so without it an operator answering inside
+    Bedolaga's own panel is indistinguishable from the bot itself, and the bot
+    talks over a human holding the conversation.
     """
 
     __tablename__ = "bedolaga_ticket_state"
 
     ticket_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     last_answered_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    #: 0 when the bot has never replied on this ticket — there is then no admin
+    #: message it can claim, so every admin message present is somebody else's.
+    last_bot_reply_message_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
@@ -202,5 +215,6 @@ class BedolagaTicketState(Base):
     def __repr__(self) -> str:
         return (
             f"<BedolagaTicketState ticket_id={self.ticket_id} "
-            f"last_answered_message_id={self.last_answered_message_id}>"
+            f"last_answered_message_id={self.last_answered_message_id} "
+            f"last_bot_reply_message_id={self.last_bot_reply_message_id}>"
         )

@@ -73,6 +73,19 @@ class TestCreateTicketSupport:
         routes = [(r.method, r.resource.canonical) for r in app.router.routes()]
         assert ("POST", "/hooks/tickets") in routes
 
+    def test_hands_the_answerer_the_configured_concurrency_cap(self) -> None:
+        support = _create(
+            _settings(
+                bedolaga_enabled=True,
+                bedolaga_api_url="http://bedolaga:8080",
+                bedolaga_api_key="token",
+                bedolaga_webhook_secret="shhh",
+                bedolaga_max_concurrent_tickets=2,
+            )
+        )
+        assert support is not None
+        assert support.answerer._slots._value == 2
+
     def test_builds_a_maintenance_job_on_the_configured_interval(self) -> None:
         support = _create(
             _settings(

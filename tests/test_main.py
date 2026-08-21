@@ -131,6 +131,7 @@ async def test_main_lifecycle(mock_settings: Settings) -> None:
         patch("app.main.KnowledgeGapService") as mock_gap_service_cls,
         patch("app.main.Dispatcher") as mock_dispatcher_cls,
         patch("app.main.Bot") as mock_bot_cls,
+        patch("app.main.sync_legacy_schema", new_callable=AsyncMock) as mock_sync_schema,
         patch("app.main.start_health_server", new_callable=AsyncMock) as mock_start_health,
         patch("app.main.stop_health_server", new_callable=AsyncMock) as mock_stop_health,
     ):
@@ -169,6 +170,7 @@ async def test_main_lifecycle(mock_settings: Settings) -> None:
         await main()
 
         mock_db.init_models.assert_called_once()
+        mock_sync_schema.assert_awaited_once_with(mock_db.engine)
         mock_mcp.init.assert_called_once()
         mock_faq_init.run.assert_called_once()
         mock_gap_service.init_schema.assert_called_once()

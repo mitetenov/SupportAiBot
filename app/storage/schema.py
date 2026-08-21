@@ -68,6 +68,14 @@ UTC_TIMESTAMP_COLUMNS: tuple[tuple[str, str], ...] = (
     ("knowledge_gaps", "last_seen"),
 )
 
+# `create_all` creates the Bedolaga state table on a fresh install, but it does
+# not add columns to an existing one. The first version of the integration only
+# stored the user-message watermark; the bot now also records its own reply id
+# so an admin message written in Bedolaga's panel can be recognised as human.
+BEDOLAGA_STATE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("bedolaga_ticket_state", "last_bot_reply_message_id"),
+)
+
 NAIVE_TIMESTAMP = "timestamp without time zone"
 
 
@@ -202,6 +210,28 @@ async def sync_legacy_schema(engine: AsyncEngine) -> list[str]:
     applied: list[str] = []
 
     async with engine.begin() as conn:
+        for table_name, column_name in BEDOLAGA_STATE_COLUMNS:
+            exists = await conn.execute(_TABLE_EXISTS_SQL, {"table_name": table_name})
+            if exists.fetchone() is None:
+                continue
+
+            result = await conn.execute(
+                _COLUMN_TYPE_SQL, {"table_name": table_name, "column_name": column_name}
+            )
+            if result.fetchone() is not None:
+                continue
+
+            try:
+                await conn.execute(
+                    text(
+                        f"ALTER TABLE {table_name} ADD COLUMN {column_name} "
+                        "BIGINT NOT NULL DEFAULT 0"
+                    )
+                )
+                applied.append(f"{table_name}.{column_name}: added")
+            except Exception as e:
+                logger.warning("Could not reconcile %s.%s: %s", table_name, column_name, e)
+
         for table_name, column_name in UTC_TIMESTAMP_COLUMNS:
             exists = await conn.execute(_TABLE_EXISTS_SQL, {"table_name": table_name})
             if exists.fetchone() is None:

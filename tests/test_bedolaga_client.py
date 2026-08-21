@@ -21,6 +21,12 @@ TICKET_BODY: dict[str, Any] = {
     "messages": [{"id": 100, "message_text": "Помогите", "is_from_admin": False}],
 }
 
+#: What `POST /tickets/{id}/reply` answers with — a `TicketReplyResponse`
+#: carrying the message the reply just became.
+REPLY_BODY: dict[str, Any] = {
+    "message": {"id": 101, "user_id": 55, "message_text": "текст", "is_from_admin": True}
+}
+
 
 def _response(status_code: int, json_body: Any = None) -> MagicMock:
     response = MagicMock(spec=httpx.Response)
@@ -37,7 +43,7 @@ def _client(
 ) -> tuple[BedolagaClient, MagicMock]:
     http_client = MagicMock(spec=httpx.AsyncClient)
     http_client.get = get or AsyncMock(return_value=_response(200, TICKET_BODY))
-    http_client.post = post or AsyncMock(return_value=_response(201, {}))
+    http_client.post = post or AsyncMock(return_value=_response(201, REPLY_BODY))
     return BedolagaClient(BASE_URL, API_KEY, http_client), http_client
 
 
@@ -106,9 +112,15 @@ class TestListAwaitingTicketIds:
 class TestReply:
     """Posting the answer back into the ticket."""
 
-    async def test_posts_the_text_and_reports_success(self) -> None:
+    async def test_posts_the_text_and_returns_the_new_message_id(self) -> None:
+        """The id is what lets the bot recognise its own reply later.
+
+        Every message in a ticket written by support is `is_from_admin`, the
+        bot's own included — so without this id an operator answering in the
+        panel is indistinguishable from the bot itself.
+        """
         client, http_client = _client()
-        assert await client.reply(17, "Проверьте подписку") is True
+        assert await client.reply(17, "Проверьте подписку") == 101
         url = http_client.post.await_args.args[0]
         assert url == "http://bedolaga:8080/tickets/17/reply"
         assert http_client.post.await_args.kwargs["json"] == {"message_text": "Проверьте подписку"}
@@ -121,11 +133,26 @@ class TestReply:
 
     async def test_reports_failure_on_an_error_status(self) -> None:
         client, _ = _client(post=AsyncMock(return_value=_response(400, {})))
-        assert await client.reply(17, "текст") is False
+        assert await client.reply(17, "текст") is None
 
     async def test_reports_failure_when_the_panel_is_unreachable(self) -> None:
         client, _ = _client(post=AsyncMock(side_effect=httpx.ConnectError("refused")))
-        assert await client.reply(17, "текст") is False
+        assert await client.reply(17, "текст") is None
+
+    async def test_a_body_without_a_message_id_does_not_raise(self) -> None:
+        """A write that landed must never blow up over a parsing surprise.
+
+        None here costs one admin alert and one backed-off retry; an exception
+        would take out the whole turn, and the reply is already published.
+        """
+        client, _ = _client(post=AsyncMock(return_value=_response(201, {"status": "ok"})))
+        assert await client.reply(17, "текст") is None
+
+    async def test_a_body_that_is_not_json_does_not_raise(self) -> None:
+        post = AsyncMock(return_value=_response(201, None))
+        post.return_value.json = MagicMock(side_effect=ValueError("not json"))
+        client, _ = _client(post=post)
+        assert await client.reply(17, "текст") is None
 
     async def test_never_resends_a_gateway_error(self) -> None:
         """Posting a reply is not idempotent, so it must not go through a retry.
@@ -138,14 +165,14 @@ class TestReply:
         post = AsyncMock(return_value=_response(500, {}))
         client, _ = _client(post=post)
 
-        assert await client.reply(17, "текст") is False
+        assert await client.reply(17, "текст") is None
         assert post.await_count == 1
 
     async def test_never_resends_after_a_timeout(self) -> None:
         post = AsyncMock(side_effect=httpx.ReadTimeout("too slow"))
         client, _ = _client(post=post)
 
-        assert await client.reply(17, "текст") is False
+        assert await client.reply(17, "текст") is None
         assert post.await_count == 1
 
 
