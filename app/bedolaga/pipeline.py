@@ -13,7 +13,7 @@ from app.bot.forwarder import SupportGroupForwarder
 from app.bot.keyed_lock import KeyedLock
 from app.bot.rate_limiter import UserRateLimiter
 from app.constants import get_message
-from app.llm.base import LlmClient
+from app.llm.base import LlmClient, LlmReply
 from app.llm.escalation import EscalationPolicy
 from app.rag.knowledge_gaps import KnowledgeGapService
 
@@ -118,7 +118,7 @@ class TicketAnswerer:
             logger.info("Bedolaga ticket %d is rate limited for user %d", ticket.id, user_key)
             return
 
-        reply = await self.llm_client.chat(question, user_key)
+        reply = await self.ask_model(ticket, question, user_key)
         answer = EscalationPolicy.strip_marker(reply.text) or get_message("bedolaga.llm.empty")
         escalate = EscalationPolicy.model_requested_escalation(
             reply.text
@@ -152,6 +152,32 @@ class TicketAnswerer:
                 reply.text,
                 reply.faq_context,
             )
+
+    async def ask_model(self, ticket: Ticket, question: str, user_key: int) -> LlmReply:
+        """Ask the model about this ticket, with the screenshot when there is one."""
+        last = ticket.last_message
+        wants_vision = (
+            last is not None
+            and last.has_media
+            and (last.media_type or "") == "photo"
+            and self.llm_client.supports_images()
+        )
+        if not wants_vision or last is None:
+            return await self.llm_client.chat(question, user_key)
+
+        attachment = await self.client.download_media(ticket.id, last.id)
+        if attachment is None:
+            # Better a text-only answer than none: the panel may simply have
+            # lost the file.
+            return await self.llm_client.chat(question, user_key)
+
+        prompt = question.strip() or get_message("bot.photo.default.prompt")
+        return await self.llm_client.chat_with_image(
+            prompt,
+            user_key,
+            attachment.base64_image,
+            attachment.mime_type,
+        )
 
     async def mirror(self, ticket: Ticket, user_key: int, text: str, escalate: bool) -> None:
         """Put this ticket turn into the user's forum topic.

@@ -300,3 +300,79 @@ class TestKnowledgeGaps:
         assert "Помогите" in query
         assert user_id == TELEGRAM_ID
         assert raw_response == "Проверьте подписку"
+
+
+class TestScreenshots:
+    """A ticket is often a screenshot with two words under it."""
+
+    def _photo_ticket(self) -> Ticket:
+        return _ticket(
+            TicketMessage(
+                id=100,
+                text="",
+                is_from_admin=False,
+                has_media=True,
+                media_type="photo",
+            )
+        )
+
+    async def test_sends_the_screenshot_to_the_model(self) -> None:
+        from app.bedolaga.types import ImageAttachment
+
+        answerer, parts = _answerer(ticket=self._photo_ticket())
+        parts["client"].download_media = AsyncMock(
+            return_value=ImageAttachment(base64_image="Zm9v", mime_type="image/png")
+        )
+        parts["llm_client"].supports_images = MagicMock(return_value=True)
+        parts["llm_client"].chat_with_image = AsyncMock(return_value=LlmReply(text="Видно ошибку"))
+        answerer.client = parts["client"]
+        answerer.llm_client = parts["llm_client"]
+
+        await answerer.handle(TICKET_ID)
+
+        args = parts["llm_client"].chat_with_image.await_args.args
+        assert args[1] == TELEGRAM_ID
+        assert args[2] == "Zm9v"
+        assert args[3] == "image/png"
+        parts["client"].reply.assert_awaited_once_with(TICKET_ID, "Видно ошибку")
+
+    async def test_asks_about_the_picture_when_there_is_no_text(self) -> None:
+        from app.bedolaga.types import ImageAttachment
+
+        answerer, parts = _answerer(ticket=self._photo_ticket())
+        parts["client"].download_media = AsyncMock(
+            return_value=ImageAttachment(base64_image="Zm9v", mime_type="image/png")
+        )
+        parts["llm_client"].supports_images = MagicMock(return_value=True)
+        parts["llm_client"].chat_with_image = AsyncMock(return_value=LlmReply(text="Видно ошибку"))
+        answerer.client = parts["client"]
+        answerer.llm_client = parts["llm_client"]
+
+        await answerer.handle(TICKET_ID)
+
+        assert parts["llm_client"].chat_with_image.await_args.args[0].strip() != ""
+
+    async def test_falls_back_to_text_when_the_download_fails(self) -> None:
+        answerer, parts = _answerer(ticket=self._photo_ticket())
+        parts["client"].download_media = AsyncMock(return_value=None)
+        parts["llm_client"].supports_images = MagicMock(return_value=True)
+        parts["llm_client"].chat_with_image = AsyncMock()
+        answerer.client = parts["client"]
+        answerer.llm_client = parts["llm_client"]
+
+        await answerer.handle(TICKET_ID)
+
+        parts["llm_client"].chat_with_image.assert_not_awaited()
+        parts["llm_client"].chat.assert_awaited_once()
+
+    async def test_ignores_media_a_text_only_model_cannot_read(self) -> None:
+        answerer, parts = _answerer(ticket=self._photo_ticket())
+        parts["client"].download_media = AsyncMock()
+        parts["llm_client"].supports_images = MagicMock(return_value=False)
+        answerer.client = parts["client"]
+        answerer.llm_client = parts["llm_client"]
+
+        await answerer.handle(TICKET_ID)
+
+        parts["client"].download_media.assert_not_awaited()
+        parts["llm_client"].chat.assert_awaited_once()

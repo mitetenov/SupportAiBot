@@ -155,3 +155,40 @@ class TestResolveTelegramId:
         client, _ = _client(get=get)
         assert await client.resolve_telegram_id(55) is None
         assert await client.resolve_telegram_id(55) == 42
+
+
+class TestDownloadMedia:
+    """A ticket screenshot lives behind the panel's own API key."""
+
+    async def test_returns_the_encoded_image(self) -> None:
+        media_response = _response(200, {"media_type": "photo", "media_url": "http://bedolaga:8080/media/abc"})
+        file_response = MagicMock(spec=httpx.Response)
+        file_response.status_code = 200
+        file_response.content = b"binary-bytes"
+        file_response.headers = {"content-type": "image/png"}
+        client, _ = _client(get=AsyncMock(side_effect=[media_response, file_response]))
+
+        attachment = await client.download_media(17, 100)
+        assert attachment is not None
+        assert attachment.mime_type == "image/png"
+        assert attachment.base64_image == "YmluYXJ5LWJ5dGVz"
+
+    async def test_defaults_the_mime_type_when_the_server_omits_it(self) -> None:
+        media_response = _response(200, {"media_url": "http://bedolaga:8080/media/abc"})
+        file_response = MagicMock(spec=httpx.Response)
+        file_response.status_code = 200
+        file_response.content = b"x"
+        file_response.headers = {}
+        client, _ = _client(get=AsyncMock(side_effect=[media_response, file_response]))
+        attachment = await client.download_media(17, 100)
+        assert attachment is not None
+        assert attachment.mime_type == "image/jpeg"
+
+    async def test_returns_none_without_a_media_url(self) -> None:
+        client, _ = _client(get=AsyncMock(return_value=_response(200, {"media_url": None})))
+        assert await client.download_media(17, 100) is None
+
+    async def test_returns_none_when_the_download_fails(self) -> None:
+        media_response = _response(200, {"media_url": "http://bedolaga:8080/media/abc"})
+        client, _ = _client(get=AsyncMock(side_effect=[media_response, httpx.ConnectError("no")]))
+        assert await client.download_media(17, 100) is None

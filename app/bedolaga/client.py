@@ -1,10 +1,11 @@
 """The only code in this bot that talks to the Bedolaga Web API."""
 
+import base64
 import logging
 
 import httpx
 
-from app.bedolaga.types import OPEN_STATUSES, Ticket, ticket_from_payload
+from app.bedolaga.types import OPEN_STATUSES, ImageAttachment, Ticket, ticket_from_payload
 from app.retry import post_with_retry
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,9 @@ MAX_REPLY_LENGTH: int = 4000
 
 #: How many tickets one status query brings back per sweep.
 DEFAULT_LIST_LIMIT: int = 50
+
+#: What the vision APIs assume when the panel does not say.
+DEFAULT_MEDIA_MIME_TYPE: str = "image/jpeg"
 
 
 class BedolagaClient:
@@ -162,3 +166,42 @@ class BedolagaClient:
         resolved = int(telegram_id)
         self._telegram_ids[user_id] = resolved
         return resolved
+
+    async def download_media(self, ticket_id: int, message_id: int) -> ImageAttachment | None:
+        """Fetch a ticket screenshot, base64-encoded for the vision APIs.
+
+        The `media_file_id` on the message is a Telegram file id belonging to
+        the Bedolaga bot, which this bot's token cannot resolve — the bytes
+        have to come back through their API, under the same service key.
+        """
+        try:
+            described = await self.http_client.get(
+                f"{self.base_url}/tickets/{ticket_id}/messages/{message_id}/media",
+                headers=self.headers,
+            )
+        except httpx.HTTPError as e:
+            logger.warning("Bedolaga: could not describe media of message %d: %s", message_id, e)
+            return None
+
+        if described.status_code != 200:
+            return None
+
+        media_url = (described.json() or {}).get("media_url")
+        if not media_url:
+            logger.info("Bedolaga: message %d has media the panel cannot serve", message_id)
+            return None
+
+        try:
+            downloaded = await self.http_client.get(media_url, headers=self.headers)
+        except httpx.HTTPError as e:
+            logger.warning("Bedolaga: could not download media of message %d: %s", message_id, e)
+            return None
+
+        if downloaded.status_code != 200 or not downloaded.content:
+            return None
+
+        mime_type = downloaded.headers.get("content-type") or DEFAULT_MEDIA_MIME_TYPE
+        return ImageAttachment(
+            base64_image=base64.b64encode(downloaded.content).decode("ascii"),
+            mime_type=mime_type.split(";")[0].strip(),
+        )
