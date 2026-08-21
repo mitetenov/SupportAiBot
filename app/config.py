@@ -299,6 +299,17 @@ class Settings(BaseSettings):
                 "Придумайте случайную строку, укажите её при регистрации вебхуков "
                 "в Bedolaga и добавьте в .env: BEDOLAGA_WEBHOOK_SECRET=...",
             )
+            if not self.bedolaga_webhook_path.startswith("/"):
+                raise ValueError(
+                    f"BEDOLAGA_WEBHOOK_PATH должен начинаться со слэша '/'. "
+                    f"Сейчас задано: '{self.bedolaga_webhook_path}'"
+                )
+            if self.bedolaga_poll_interval_seconds < 1:
+                raise ValueError(
+                    f"BEDOLAGA_POLL_INTERVAL_SECONDS должен быть не меньше 1. "
+                    f"Сейчас задано: {self.bedolaga_poll_interval_seconds}. "
+                    f"Значение по умолчанию: BEDOLAGA_POLL_INTERVAL_SECONDS=60"
+                )
             # Zero would let the semaphore block every ticket forever; a
             # negative value is a typo. Nothing here is a security boundary —
             # the cap only protects the shared connection pool and the LLM

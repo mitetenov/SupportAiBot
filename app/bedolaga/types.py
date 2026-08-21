@@ -65,6 +65,13 @@ class Ticket:
         return self.messages[-1] if self.messages else None
 
     @property
+    def last_user_message(self) -> TicketMessage | None:
+        """The newest message written by the user, even if a bot reply follows it."""
+        return next(
+            (message for message in reversed(self.messages) if not message.is_from_admin), None
+        )
+
+    @property
     def awaits_answer(self) -> bool:
         """True when the last word is the user's and the ticket is still open."""
         last = self.last_message
@@ -85,8 +92,11 @@ class Ticket:
         only thing left that names the problem, so it stands in whatever the
         length of the thread, rather than leaving nothing to ask about.
         """
-        last = self.last_message
-        text = last.text.strip() if last else ""
+        return self.question_for(self.last_message)
+
+    def question_for(self, message: TicketMessage | None) -> str:
+        """Build the model question around a particular user message."""
+        text = message.text.strip() if message else ""
         title = self.title.strip()
         if not text:
             return title

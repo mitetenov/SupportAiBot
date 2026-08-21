@@ -70,10 +70,20 @@ UTC_TIMESTAMP_COLUMNS: tuple[tuple[str, str], ...] = (
 
 # `create_all` creates the Bedolaga state table on a fresh install, but it does
 # not add columns to an existing one. The first version of the integration only
-# stored the user-message watermark; the bot now also records its own reply id
-# so an admin message written in Bedolaga's panel can be recognised as human.
+# stored only the user-message watermark. The bot now also records its own reply
+# id and the latest human reply id, so an admin message written in Bedolaga's
+# panel can be recognised and can refresh a finite ownership window.
 BEDOLAGA_STATE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("bedolaga_ticket_state", "last_bot_reply_message_id"),
+    ("bedolaga_ticket_state", "last_human_reply_message_id"),
+)
+
+# Unlike the legacy timestamp columns above, this field means "no human reply"
+# when it is NULL. Giving old rows DEFAULT now() would manufacture operator
+# activity, and NOT NULL would reject every ordinary bot reply that persists
+# None. It therefore has a deliberately separate reconciliation path.
+NULLABLE_UTC_TIMESTAMP_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("bedolaga_ticket_state", "last_human_reply_at"),
 )
 
 NAIVE_TIMESTAMP = "timestamp without time zone"
@@ -249,6 +259,34 @@ async def sync_legacy_schema(engine: AsyncEngine) -> list[str]:
                             f"ALTER TABLE {table_name} "
                             f"ADD COLUMN {column_name} TIMESTAMPTZ NOT NULL DEFAULT now()"
                         )
+                    )
+                    applied.append(f"{table_name}.{column_name}: added")
+                elif row[0] == NAIVE_TIMESTAMP:
+                    await conn.execute(
+                        text(
+                            f"ALTER TABLE {table_name} "
+                            f"ALTER COLUMN {column_name} TYPE TIMESTAMPTZ "
+                            f"USING {column_name} AT TIME ZONE 'UTC'"
+                        )
+                    )
+                    applied.append(f"{table_name}.{column_name}: timestamp -> timestamptz")
+            except Exception as e:
+                logger.warning("Could not reconcile %s.%s: %s", table_name, column_name, e)
+
+        for table_name, column_name in NULLABLE_UTC_TIMESTAMP_COLUMNS:
+            exists = await conn.execute(_TABLE_EXISTS_SQL, {"table_name": table_name})
+            if exists.fetchone() is None:
+                continue
+
+            result = await conn.execute(
+                _COLUMN_TYPE_SQL, {"table_name": table_name, "column_name": column_name}
+            )
+            row = result.fetchone()
+
+            try:
+                if row is None:
+                    await conn.execute(
+                        text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} TIMESTAMPTZ NULL")
                     )
                     applied.append(f"{table_name}.{column_name}: added")
                 elif row[0] == NAIVE_TIMESTAMP:

@@ -5,9 +5,9 @@ import logging
 import time
 from dataclasses import dataclass
 
-from app.bedolaga.client import BedolagaClient
+from app.bedolaga.client import MAX_REPLY_LENGTH, BedolagaClient
 from app.bedolaga.state import TicketProgress, TicketStateStore
-from app.bedolaga.types import ImageAttachment, Ticket, TicketMessage
+from app.bedolaga.types import OPEN_STATUSES, ImageAttachment, Ticket, TicketMessage
 from app.bot.admin_notifier import AdminNotifier
 from app.bot.conversation_state import ConversationState
 from app.bot.forwarder import SupportGroupForwarder
@@ -87,6 +87,9 @@ class TicketAnswerer:
         # same ticket a millisecond apart.
         self._tickets = KeyedLock()
         self._in_flight: set[asyncio.Task[None]] = set()
+        self._active_tickets: set[int] = set()
+        self._pending_tickets: set[int] = set()
+        self._pending_rerun: set[int] = set()
         # ticket id -> the message id whose suppression notice already went to
         # the topic. A suppressed ticket stays open with the user's message
         # last, so every sweep for the next half hour reads it again; without
@@ -99,22 +102,41 @@ class TicketAnswerer:
         # to hit the same wall — every minute, for every affected ticket,
         # forever. In memory like the above: a restart is a free retry.
         self._reply_backoff: dict[int, _ReplyBackoff] = {}
-        # One sweep can bring back a hundred tickets, and each turn holds a
-        # connection from the pool the LLM and embedding providers share. Left
-        # uncapped, a backlog starves plain Telegram messages of connections
-        # and walks straight into the provider's rate limit.
+        # Bounded concurrency over the entire ticket turn (including panel GETs
+        # and model calls). Left uncapped, a backlog starves plain Telegram
+        # messages of connections and walks straight into provider rate limits.
         self._slots = asyncio.Semaphore(max(1, max_concurrent))
 
     def schedule(self, ticket_id: int) -> None:
         """Answer this ticket in the background.
 
-        A webhook delivery has ten seconds before Bedolaga gives up on it, and
-        a model turn takes longer than that — so the HTTP handler schedules and
-        answers 200 immediately.
+        Deduplicates in-flight and queued tasks: multiple schedule calls for the
+        same ticket create at most 1 active execution and 1 pending rerun, not
+        an unbounded set of tasks.
         """
-        task = asyncio.create_task(self.handle(ticket_id), name=f"bedolaga-ticket-{ticket_id}")
+        if ticket_id in self._active_tickets or ticket_id in self._pending_tickets:
+            self._pending_rerun.add(ticket_id)
+            return
+
+        self._pending_tickets.add(ticket_id)
+        task = asyncio.create_task(
+            self._process_ticket(ticket_id), name=f"bedolaga-ticket-{ticket_id}"
+        )
         self._in_flight.add(task)
         task.add_done_callback(self._in_flight.discard)
+
+    async def _process_ticket(self, ticket_id: int) -> None:
+        """Process a ticket, repeating if rerun was requested while in flight."""
+        self._pending_tickets.discard(ticket_id)
+        self._active_tickets.add(ticket_id)
+        try:
+            while True:
+                self._pending_rerun.discard(ticket_id)
+                await self.handle(ticket_id)
+                if ticket_id not in self._pending_rerun:
+                    break
+        finally:
+            self._active_tickets.discard(ticket_id)
 
     async def drain(self) -> None:
         """Wait for the turns already in flight — used on shutdown."""
@@ -123,7 +145,7 @@ class TicketAnswerer:
 
     async def handle(self, ticket_id: int) -> None:
         """Answer one ticket, one turn at a time, never raising to the caller."""
-        async with self._tickets.hold(ticket_id):
+        async with self._slots, self._tickets.hold(ticket_id):
             try:
                 await self._answer(ticket_id)
             except Exception as e:
@@ -135,14 +157,16 @@ class TicketAnswerer:
 
     async def _answer(self, ticket_id: int) -> None:
         ticket = await self.client.get_ticket(ticket_id)
-        if ticket is None or not ticket.awaits_answer:
+        if ticket is None:
             self._reply_backoff.pop(ticket_id, None)
+            self._suppressed.pop(ticket_id, None)
             return
 
-        last = ticket.last_message
         progress = await self.state.progress(ticket.id)
-        if last is None or progress.already_answered(last.id):
+        last = self.unanswered_user_message(ticket, progress)
+        if last is None:
             self._reply_backoff.pop(ticket_id, None)
+            self._suppressed.pop(ticket_id, None)
             return
 
         if self.backing_off(ticket.id):
@@ -167,9 +191,9 @@ class TicketAnswerer:
             )
             return
 
-        question = ticket.question
+        question = ticket.question_for(last)
 
-        if self.a_human_is_on_it(ticket, progress, user_key):
+        if await self.a_human_is_on_it(ticket, progress, user_key):
             # Somebody is already holding this conversation; a bot answer in
             # the ticket would talk over them. Nothing is marked answered — the
             # bot must pick this ticket up once they are done with it.
@@ -189,29 +213,25 @@ class TicketAnswerer:
             logger.info("Bedolaga ticket %d is rate limited for user %d", ticket.id, user_key)
             return
 
-        # Everything above is a cheap decision not to work, and a burst of
-        # tickets that are all going to be skipped must not queue up for a
-        # semaphore slot to find that out. Everything below reaches the panel
-        # or the model, so it is what the cap is for.
-        async with self._slots:
-            await self.answer_now(ticket, last, user_key, question)
+        await self.answer_now(ticket, last, user_key, question)
 
     async def answer_now(
         self, ticket: Ticket, last: TicketMessage, user_key: int, question: str
     ) -> None:
         """Ask the model about this ticket and write the answer back.
 
-        Split out of `_answer` so the concurrency cap wraps exactly the part
-        that costs a connection and a model call, and nothing that does not.
+        Re-reads the ticket immediately before posting reply to prevent stale
+        writes when user sends a new message or operator intervenes during LLM generation.
         """
-        attachment = await self.attachment_for(ticket)
+        attachment = await self.attachment_for(ticket, last)
         if not question.strip() and attachment is None:
             # There is genuinely nothing to ask about: no text anywhere in the
             # ticket and no picture the model can read. Sending an empty prompt
             # gets a plausible invention back, and `client.reply` would publish
-            # it to the user as support's answer. Nothing is marked answered,
-            # so the user's next message is still the bot's to take.
-            await self.hand_over(ticket, user_key)
+            # it to the user as support's answer. The fixed hand-over line is
+            # recorded against this empty turn; a later message has a larger
+            # id and is still the bot's to take.
+            await self.hand_over(ticket, last, user_key)
             return
 
         reply = await self.ask_model(question, user_key, attachment)
@@ -220,24 +240,80 @@ class TicketAnswerer:
             reply.text
         ) or EscalationPolicy.user_requests_human(question)
 
-        posted = answer + get_message("bedolaga.escalation.note") if escalate else answer
-        reply_message_id = await self.client.reply(ticket.id, posted)
-        if reply_message_id is None:
+        escalation_note = get_message("bedolaga.escalation.note") if escalate else ""
+        max_answer_len = MAX_REPLY_LENGTH - len(escalation_note)
+        truncated_answer = answer[:max_answer_len]
+        posted = truncated_answer + escalation_note
+
+        # Stale-check before posting reply:
+        # Re-fetch ticket to ensure no operator replied, ticket was not closed,
+        # and no new user messages arrived during the LLM call.
+        fresh_ticket = await self.client.get_ticket(ticket.id)
+        if fresh_ticket is None:
+            logger.info(
+                "Bedolaga ticket %d: could not verify state before reply, dropping stale answer",
+                ticket.id,
+            )
+            return
+
+        snapshot_last_id = ticket.last_message.id if ticket.last_message is not None else last.id
+        new_messages = [
+            message for message in fresh_ticket.messages if message.id > snapshot_last_id
+        ]
+        status_is_compatible = fresh_ticket.status == ticket.status or (
+            fresh_ticket.status in OPEN_STATUSES and ticket.status in OPEN_STATUSES
+        )
+        if not status_is_compatible:
+            logger.info(
+                "Bedolaga ticket %d: status changed from %s to %s, dropping stale answer",
+                ticket.id,
+                ticket.status,
+                fresh_ticket.status,
+            )
+            self._reply_backoff.pop(ticket.id, None)
+            self._suppressed.pop(ticket.id, None)
+            return
+
+        if new_messages:
+            if any(message.is_from_admin for message in new_messages):
+                logger.info(
+                    "Bedolaga ticket %d: operator replied during LLM call, dropping stale answer",
+                    ticket.id,
+                )
+                self._reply_backoff.pop(ticket.id, None)
+                return
+            # User sent new message(s) during model generation. Drop stale answer and schedule rerun.
+            logger.info(
+                "Bedolaga ticket %d: new user message %r arrived during LLM call, scheduling rerun",
+                ticket.id,
+                fresh_ticket.last_user_message.id if fresh_ticket.last_user_message else None,
+            )
+            self._pending_rerun.add(ticket.id)
+            return
+
+        posted_reply = await self.client.reply(ticket.id, posted)
+        if posted_reply is None:
             await self.reply_failed(ticket.id, user_key)
             return
 
         self._reply_backoff.pop(ticket.id, None)
-        await self.state.record_reply(ticket.id, reply_message_id, answered_message_id=last.id)
+        await self.state.record_reply(
+            ticket.id, posted_reply.message_id, answered_message_id=last.id
+        )
         self._suppressed.pop(ticket.id, None)
         self.conversation_state.record_query(user_key, question, reply.faq_context)
 
+        await self.schedule_newer_user_message(ticket.id, last.id)
+
         if escalate:
-            await self.client.set_priority(ticket.id, "high")
+            success = await self.client.set_priority(ticket.id, "high")
+            if not success:
+                logger.warning("Bedolaga ticket %d: set_priority to high failed", ticket.id)
 
         await self.mirror(
             ticket,
             user_key,
-            get_message("bedolaga.mirror", ticket.id, ticket.title, question, answer),
+            get_message("bedolaga.mirror", ticket.id, ticket.title, question, truncated_answer),
             escalate=escalate,
         )
 
@@ -249,23 +325,71 @@ class TicketAnswerer:
                 reply.faq_context,
             )
 
-    def a_human_is_on_it(self, ticket: Ticket, progress: TicketProgress, user_key: int) -> bool:
+    async def a_human_is_on_it(
+        self, ticket: Ticket, progress: TicketProgress, user_key: int
+    ) -> bool:
         """True when somebody other than this bot is answering this person.
 
-        Two ways to find that out, one meaning. The operator may be replying in
-        Telegram, which the bot is told about directly; or they may be typing
-        into Bedolaga's own admin UI, which nothing tells the bot about at all
-        — there the only evidence is an admin message in the ticket that the
-        bot did not write. Every reply in a ticket is an admin message, its own
-        included, which is why the id of its own last reply is recorded: it is
-        the only way to tell its handwriting from a human's.
+        Two sources of human activity:
+        1. Telegram support topic activity via ConversationState.
+        2. Bedolaga panel admin replies with id > last_bot_reply_message_id.
+
+        When a human reply is detected in the panel, it is recorded in the DB with a timestamp
+        (for persistence across restarts) and ConversationState. Suppression lasts for
+        operator_suppression_window (30 minutes). After 30 minutes of inactivity, the bot
+        resumes answering new user messages in this ticket.
         """
+        human_messages = [
+            message
+            for message in ticket.messages
+            if message.is_from_admin and progress.someone_else_wrote(message.id)
+        ]
+        if not human_messages:
+            return self.conversation_state.is_operator_recently_active(user_key)
+
+        latest_human_message_id = max(message.id for message in human_messages)
+        if progress.human_reply_is_new(latest_human_message_id):
+            await self.state.record_human_reply(ticket.id, latest_human_message_id)
+            self.conversation_state.record_operator_reply(user_key)
+            return True
+
         if self.conversation_state.is_operator_recently_active(user_key):
             return True
-        return any(
-            message.is_from_admin and progress.someone_else_wrote(message.id)
-            for message in ticket.messages
-        )
+
+        window = self.conversation_state.operator_suppression_window
+        return progress.is_human_recently_active(window)
+
+    @staticmethod
+    def unanswered_user_message(ticket: Ticket, progress: TicketProgress) -> TicketMessage | None:
+        """The user turn still owed an answer, including one hidden by our reply.
+
+        A user can write after the pre-POST check but before the POST lands. The
+        bot reply then becomes the last admin message and flips the ticket to
+        `answered`; the stored watermark is what proves the intervening user
+        message was not part of that model turn.
+        """
+        candidate = ticket.last_user_message
+        if candidate is None or progress.already_answered(candidate.id):
+            return None
+        if ticket.awaits_answer:
+            return candidate
+        if ticket.status == "answered" and progress.last_bot_reply_message_id > candidate.id:
+            return candidate
+        return None
+
+    async def schedule_newer_user_message(self, ticket_id: int, answered_message_id: int) -> None:
+        """Reconcile the narrow race between the final GET and the reply POST."""
+        fresh_ticket = await self.client.get_ticket(ticket_id)
+        if fresh_ticket is None:
+            return
+        latest_user = fresh_ticket.last_user_message
+        if latest_user is not None and latest_user.id > answered_message_id:
+            logger.info(
+                "Bedolaga ticket %d: user message %d arrived while the reply was landing; rerunning",
+                ticket_id,
+                latest_user.id,
+            )
+            self._pending_rerun.add(ticket_id)
 
     def backing_off(self, ticket_id: int) -> bool:
         """True while this ticket is waiting out a run of failed replies."""
@@ -305,7 +429,9 @@ class TicketAnswerer:
             user_id=user_key,
         )
 
-    async def attachment_for(self, ticket: Ticket) -> ImageAttachment | None:
+    async def attachment_for(
+        self, ticket: Ticket, message: TicketMessage
+    ) -> ImageAttachment | None:
         """The screenshot this turn can show the model, when there is one.
 
         None is every reason the model will see no picture, answered in one
@@ -315,20 +441,19 @@ class TicketAnswerer:
         decide whether an empty question leaves anything to ask about, and once
         to pick which model call to make.
         """
-        last = ticket.last_message
-        if last is None or not last.has_media:
+        if not message.has_media:
             return None
-        if (last.media_type or "") != "photo":
+        if (message.media_type or "") != "photo":
             logger.info(
                 "Bedolaga ticket %d: message %d carries %s, which the bot does not read",
                 ticket.id,
-                last.id,
-                last.media_type or "an attachment of unknown type",
+                message.id,
+                message.media_type or "an attachment of unknown type",
             )
             return None
         if not self.llm_client.supports_images():
             return None
-        return await self.client.download_media(ticket.id, last.id)
+        return await self.client.download_media(ticket.id, message.id)
 
     async def ask_model(
         self, question: str, user_key: int, attachment: ImageAttachment | None
@@ -345,29 +470,31 @@ class TicketAnswerer:
             attachment.mime_type,
         )
 
-    async def hand_over(self, ticket: Ticket, user_key: int) -> None:
+    async def hand_over(self, ticket: Ticket, last: TicketMessage, user_key: int) -> None:
         """Answer a ticket with nothing in it by asking for words, and call a human.
 
-        Deliberately not routed through the model and deliberately not marked
-        answered: the bot has been given nothing to work with, and the honest
-        reply is a fixed line rather than whatever a model invents from an
-        empty prompt. The mirror escalates so an operator, who can open the
-        attachment the bot cannot, sees the ticket in the topic.
+        Deliberately not routed through the model: the bot has been given
+        nothing to work with, and the honest reply is a fixed line rather than
+        whatever a model invents from an empty prompt. The empty turn is marked
+        answered so every sweep does not send the same hand-over again; a later
+        user message remains eligible. The mirror escalates so an operator, who
+        can open the attachment the bot cannot, sees the ticket in the topic.
         """
-        reply_message_id = await self.client.reply(
-            ticket.id, get_message("bedolaga.nothing.to.answer")
-        )
-        if reply_message_id is None:
+        posted_reply = await self.client.reply(ticket.id, get_message("bedolaga.nothing.to.answer"))
+        if posted_reply is None:
             # Cheaper to fail than the path above — no model call — but it
             # loops the same way, so it waits out the same backoff.
             await self.reply_failed(ticket.id, user_key)
             return
 
         self._reply_backoff.pop(ticket.id, None)
-        # Still not marked answered: the user's message is the bot's to take
-        # once they add words to it. The bot's own message is recorded all the
-        # same, or the next turn would read it as an operator stepping in.
-        await self.state.record_reply(ticket.id, reply_message_id)
+        # The fixed line is the answer to this empty turn. Marking its watermark
+        # prevents it from being handed over repeatedly; a later user message
+        # has a larger id and remains eligible as usual.
+        await self.state.record_reply(
+            ticket.id, posted_reply.message_id, answered_message_id=last.id
+        )
+        await self.schedule_newer_user_message(ticket.id, last.id)
 
         await self.mirror(
             ticket,

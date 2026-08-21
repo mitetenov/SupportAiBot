@@ -2,7 +2,9 @@
 
 import base64
 import logging
-from urllib.parse import urljoin, urlsplit
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -26,6 +28,16 @@ DEFAULT_LIST_LIMIT: int = 50
 
 #: What the vision APIs assume when the panel does not say.
 DEFAULT_MEDIA_MIME_TYPE: str = "image/jpeg"
+
+#: The maximum media file size we allow downloading (10 MB).
+MAX_MEDIA_BYTES: int = 10 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class PostedTicketReply:
+    """A reply the panel accepted, with its message id when the contract supplied it."""
+
+    message_id: int | None
 
 
 class BedolagaClient:
@@ -94,14 +106,38 @@ class BedolagaClient:
                 )
                 continue
 
-            for item in response.json() or []:
+            try:
+                raw = response.json()
+            except Exception as e:
+                logger.warning("Bedolaga: listing %s tickets returned invalid JSON: %s", status, e)
+                continue
+
+            items: list[Any] = []
+            if isinstance(raw, list):
+                items = raw
+            elif isinstance(raw, dict) and isinstance(raw.get("items"), list):
+                items = raw["items"]
+            else:
+                logger.warning(
+                    "Bedolaga: listing %s tickets returned unexpected payload format", status
+                )
+                continue
+
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
                 ticket_id = item.get("id")
                 if ticket_id is not None:
-                    ids.append(int(ticket_id))
+                    try:
+                        ids.append(int(ticket_id))
+                    except TypeError, ValueError:
+                        logger.warning(
+                            "Bedolaga: unparseable ticket id %r in %s list", ticket_id, status
+                        )
         return ids
 
-    async def reply(self, ticket_id: int, text: str) -> int | None:
-        """Post an answer into the ticket. The new message's id, or None.
+    async def reply(self, ticket_id: int, text: str) -> PostedTicketReply | None:
+        """Post an answer. None means rejected; an accepted body may omit its id.
 
         The panel takes it from here: the message is stored as an admin reply,
         the ticket flips to `answered`, and the user gets a Telegram
@@ -111,10 +147,10 @@ class BedolagaClient:
         admin message, the bot's own included, so without knowing which admin
         message ids are its own the bot cannot tell an operator working in the
         panel from itself — and would answer over a human holding the
-        conversation. None is every outcome that leaves nothing to record: a
-        transport error, a rejection, and a success whose body does not carry
-        an id (logged, never raised — a write that landed must not blow up the
-        caller over a parsing surprise).
+        conversation. ``None`` means that the write failed or was rejected.
+        A success whose body omits the id is still represented as an accepted
+        reply, with ``message_id=None``: a write that landed must not be retried
+        merely because its response body was incomplete.
 
         Sent exactly once, never through `post_with_retry`: all three of those
         happen on the panel's side before the response comes back, so a read
@@ -144,14 +180,17 @@ class BedolagaClient:
             return None
 
         try:
-            return int((response.json() or {})["message"]["id"])
+            return PostedTicketReply(message_id=int((response.json() or {})["message"]["id"]))
         except (ValueError, KeyError, TypeError) as e:
             logger.warning(
                 "Bedolaga: the reply to ticket %d landed but came back without a message id: %s",
                 ticket_id,
                 e,
             )
-            return None
+            # The write landed, so it must not enter retry/backoff. Keeping the
+            # missing id explicit also prevents callers from overwriting a real
+            # bot-reply watermark with a fabricated sentinel such as zero.
+            return PostedTicketReply(message_id=None)
 
     async def set_priority(self, ticket_id: int, priority: str) -> bool:
         """Raise or lower a ticket's priority. Best effort: never raises."""
@@ -207,16 +246,61 @@ class BedolagaClient:
         """Turn the panel's `media_url` into an absolute URL we may send the key to.
 
         This is the one URL in the bot that a remote response decides, and the
-        request that follows carries `X-API-Key`. Relative (`/media/abc`) is
-        what the panel's own route returns and httpx cannot request it as a
-        full URL, so it is joined onto the configured base; anything pointing
-        somewhere else is dropped rather than handing the service token to a
-        host the operator never configured.
+        request that follows carries `X-API-Key`. Relative (`/media/abc` or `media/abc`)
+        is joined onto the configured base preserving any base path prefix;
+        anything pointing somewhere else (different host, different effective port,
+        or HTTPS -> HTTP downgrade) is dropped rather than handing the service token
+        to an unverified origin.
         """
-        absolute = urljoin(f"{self.base_url}/", media_url)
-        if urlsplit(absolute).netloc != urlsplit(self.base_url).netloc:
-            logger.warning("Bedolaga: refusing to fetch media from a foreign host: %s", absolute)
+        base_parts = urlsplit(self.base_url)
+        target_parts = urlsplit(media_url)
+
+        if not target_parts.scheme and not target_parts.netloc:
+            # Relative URL: join onto base_url preserving path prefix
+            base_path = base_parts.path.rstrip("/")
+            rel_path = target_parts.path.lstrip("/")
+            combined_path = f"{base_path}/{rel_path}" if base_path else f"/{rel_path}"
+            if target_parts.query:
+                combined_path = f"{combined_path}?{target_parts.query}"
+            absolute = f"{base_parts.scheme}://{base_parts.netloc}{combined_path}"
+        else:
+            absolute = media_url
+
+        parsed = urlsplit(absolute)
+
+        # Forbid downgrade from HTTPS to HTTP
+        if base_parts.scheme == "https" and parsed.scheme != "https":
+            logger.warning("Bedolaga: refusing HTTPS -> HTTP downgrade for media: %s", absolute)
             return None
+
+        if parsed.scheme != base_parts.scheme:
+            logger.warning("Bedolaga: refusing scheme mismatch for media: %s", absolute)
+            return None
+
+        # Check hostname (case-insensitive)
+        if (parsed.hostname or "").lower() != (base_parts.hostname or "").lower():
+            logger.warning(
+                "Bedolaga: refusing to fetch media from a foreign host: %s (base %s)",
+                parsed.hostname,
+                base_parts.hostname,
+            )
+            return None
+
+        # Check effective port
+        parsed_port = parsed.port or (
+            443 if parsed.scheme == "https" else 80 if parsed.scheme == "http" else None
+        )
+        base_port = base_parts.port or (
+            443 if base_parts.scheme == "https" else 80 if base_parts.scheme == "http" else None
+        )
+        if parsed_port != base_port:
+            logger.warning(
+                "Bedolaga: refusing media with different port %s (base %s)",
+                parsed_port,
+                base_port,
+            )
+            return None
+
         return absolute
 
     async def download_media(self, ticket_id: int, message_id: int) -> ImageAttachment | None:
@@ -248,16 +332,47 @@ class BedolagaClient:
             return None
 
         try:
-            downloaded = await self.http_client.get(resolved, headers=self.headers)
+            async with self.http_client.stream("GET", resolved, headers=self.headers) as downloaded:
+                if downloaded.status_code != 200:
+                    return None
+
+                declared_length = downloaded.headers.get("content-length")
+                if declared_length is not None:
+                    try:
+                        if int(declared_length) > MAX_MEDIA_BYTES:
+                            logger.warning(
+                                "Bedolaga: media of message %d declares an oversized body (%s bytes)",
+                                message_id,
+                                declared_length,
+                            )
+                            return None
+                    except ValueError:
+                        logger.warning(
+                            "Bedolaga: media of message %d returned invalid Content-Length %r",
+                            message_id,
+                            declared_length,
+                        )
+
+                content = bytearray()
+                async for chunk in downloaded.aiter_bytes():
+                    if len(content) + len(chunk) > MAX_MEDIA_BYTES:
+                        logger.warning(
+                            "Bedolaga: media of message %d exceeded %d bytes while streaming",
+                            message_id,
+                            MAX_MEDIA_BYTES,
+                        )
+                        return None
+                    content.extend(chunk)
+
+                if not content:
+                    return None
+
+                mime_type = downloaded.headers.get("content-type") or DEFAULT_MEDIA_MIME_TYPE
         except httpx.HTTPError as e:
             logger.warning("Bedolaga: could not download media of message %d: %s", message_id, e)
             return None
 
-        if downloaded.status_code != 200 or not downloaded.content:
-            return None
-
-        mime_type = downloaded.headers.get("content-type") or DEFAULT_MEDIA_MIME_TYPE
         return ImageAttachment(
-            base64_image=base64.b64encode(downloaded.content).decode("ascii"),
+            base64_image=base64.b64encode(content).decode("ascii"),
             mime_type=mime_type.split(";")[0].strip(),
         )

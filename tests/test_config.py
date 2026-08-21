@@ -414,3 +414,29 @@ class TestBedolagaSettings:
             bedolaga_max_concurrent_tickets=12,
         )
         assert settings.bedolaga_max_concurrent_tickets == 12
+
+    def test_enabled_rejects_poll_interval_below_one(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        with pytest.raises(ValidationError, match="BEDOLAGA_POLL_INTERVAL_SECONDS"):
+            Settings(
+                **valid_settings_dict,
+                bedolaga_enabled=True,
+                bedolaga_api_url="http://bedolaga:8080",
+                bedolaga_api_key="key",
+                bedolaga_webhook_secret="shhh",
+                bedolaga_poll_interval_seconds=0,
+            )
+
+    def test_enabled_rejects_webhook_path_without_leading_slash(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        with pytest.raises(ValidationError, match="BEDOLAGA_WEBHOOK_PATH"):
+            Settings(
+                **valid_settings_dict,
+                bedolaga_enabled=True,
+                bedolaga_api_url="http://bedolaga:8080",
+                bedolaga_api_key="key",
+                bedolaga_webhook_secret="shhh",
+                bedolaga_webhook_path="bedolaga/webhook",
+            )

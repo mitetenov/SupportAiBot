@@ -53,7 +53,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `GEMINI_API_KEY` | при gemini | — | API-ключ Google Gemini |
 | `GEMINI_MODEL` | при gemini | — | Модель Gemini |
 | `OPENAI_API_KEY` | при openai | — | API-ключ OpenAI |
-| `OPENAI_MODEL` | при openai | — | Модель OpenAI (напр. `gpt-5.6-luna`) |
+| `OPENAI_MODEL` | при openai | `gpt-5.6-luna` | Модель OpenAI |
 | `OPENAI_EMBEDDING_MODEL` | при embedding=openai | `text-embedding-3-small` | Модель эмбеддингов OpenAI |
 | `REMNAWAVE_BASE_URL` | да | — | URL панели Remnawave |
 | `REMNAWAVE_API_TOKEN` | да | — | JWT API-токен Remnawave |
@@ -153,8 +153,10 @@ Telegram и обновляет кабинет. Каждый обработанн
   работает в обе стороны: и когда оператор отвечает в зеркальном топике
   Telegram, и когда он отвечает прямо в админке Bedolaga **после уже
   записанного ответа бота**. Во втором случае бот узнаёт человека по
-  сообщению админа, которое новее его собственного: id каждого своего ответа
-  он запоминает в `bedolaga_ticket_state`. До первого ответа бота старые
+  сообщению админа, которое новее его собственного (id каждого своего ответа
+  он запоминает в `bedolaga_ticket_state`), и отступает на 30 минут с момента
+  ответа оператора. По истечении окна (если оператор закончил диалог) бот снова
+  подхватывает новые вопросы пользователя. До первого ответа бота старые
   сообщения админа неотличимы от истории, существовавшей до подключения.
 - **Кабинетные аккаунты без Telegram ID** (регистрация по email или OAuth)
   получают ответ по FAQ: история такого диалога ведётся под синтетическим

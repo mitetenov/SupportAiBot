@@ -1,9 +1,11 @@
 """Unit tests for answering a Bedolaga ticket."""
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+from app.bedolaga.client import MAX_REPLY_LENGTH, PostedTicketReply
 from app.bedolaga.pipeline import TicketAnswerer
 from app.bedolaga.state import TicketProgress
 from app.bedolaga.types import TELEGRAM_ID_UNKNOWN, TelegramIdLookup, Ticket, TicketMessage
@@ -42,6 +44,9 @@ def _answerer(
     conversation_state: ConversationState | None = None,
     lookup: TelegramIdLookup | None = None,
     last_bot_reply_message_id: int = 0,
+    last_human_reply_message_id: int = 0,
+    last_human_reply_at: Any = None,
+    reply_message_id: int | None = BOT_REPLY_ID,
     max_concurrent: int = 5,
     rate_limiter: UserRateLimiter | None = None,
 ) -> tuple[TicketAnswerer, dict[str, Any]]:
@@ -52,7 +57,9 @@ def _answerer(
         if lookup is not None
         else TelegramIdLookup(known=True, telegram_id=telegram_id)
     )
-    client.reply = AsyncMock(return_value=BOT_REPLY_ID if reply_ok else None)
+    client.reply = AsyncMock(
+        return_value=PostedTicketReply(message_id=reply_message_id) if reply_ok else None
+    )
     client.set_priority = AsyncMock(return_value=True)
 
     llm_client = MagicMock()
@@ -65,9 +72,12 @@ def _answerer(
         return_value=TicketProgress(
             last_answered_message_id=10**9 if already_answered else 0,
             last_bot_reply_message_id=last_bot_reply_message_id,
+            last_human_reply_message_id=last_human_reply_message_id,
+            last_human_reply_at=last_human_reply_at,
         )
     )
     state.record_reply = AsyncMock()
+    state.record_human_reply = AsyncMock()
 
     forwarder = MagicMock()
     forwarder.forward_to_support = AsyncMock()
@@ -466,20 +476,16 @@ class TestNothingToAnswer:
         parts["llm_client"].chat.assert_not_awaited()
         parts["llm_client"].chat_with_image.assert_not_awaited()
 
-    async def test_does_not_burn_the_message(self) -> None:
-        """Unmarked on purpose: the user's next message is still ours to answer.
-
-        The hand-over line is still the bot's own message and is recorded as
-        such — otherwise the sweep after it reads it as an operator stepping
-        into the ticket and the bot never speaks again.
-        """
+    async def test_marks_the_empty_turn_so_the_handover_is_not_repeated(self) -> None:
+        """A later user message has a larger id and remains eligible normally."""
         answerer, parts = _answerer(ticket=self._screenshot_thread())
         self._blind(answerer, parts)
 
         await answerer.handle(TICKET_ID)
 
-        parts["state"].record_reply.assert_awaited_once_with(TICKET_ID, BOT_REPLY_ID)
-        assert "answered_message_id" not in parts["state"].record_reply.await_args.kwargs
+        parts["state"].record_reply.assert_awaited_once_with(
+            TICKET_ID, BOT_REPLY_ID, answered_message_id=102
+        )
 
     async def test_asks_the_user_for_words_in_the_ticket(self) -> None:
         answerer, parts = _answerer(ticket=self._screenshot_thread())
@@ -659,7 +665,7 @@ class TestReplyBackoff:
 
         await answerer.handle(TICKET_ID)
         answerer._reply_backoff[TICKET_ID].retry_at = 0.0
-        parts["client"].reply = AsyncMock(return_value=BOT_REPLY_ID)
+        parts["client"].reply = AsyncMock(return_value=PostedTicketReply(message_id=BOT_REPLY_ID))
         answerer.client = parts["client"]
         await answerer.handle(TICKET_ID)
 
@@ -762,6 +768,70 @@ class TestConcurrencyCap:
 
         assert max(peaks) == 2
 
+    async def test_limits_concurrent_panel_get_tickets(self) -> None:
+        """Concurrency cap must bound panel GETs, not only model calls."""
+        in_flight_get = 0
+        peak_gets: list[int] = []
+
+        async def slow_get_ticket(ticket_id: int) -> Ticket:
+            nonlocal in_flight_get
+            in_flight_get += 1
+            peak_gets.append(in_flight_get)
+            for _ in range(4):
+                await asyncio.sleep(0)
+            in_flight_get -= 1
+            return _ticket(status="open")
+
+        answerer, parts = _answerer(
+            max_concurrent=1,
+            rate_limiter=UserRateLimiter(min_interval=0.0),
+        )
+        parts["client"].get_ticket = AsyncMock(side_effect=slow_get_ticket)
+        answerer.client = parts["client"]
+
+        await asyncio.gather(answerer.handle(17), answerer.handle(18))
+        assert max(peak_gets) == 1
+
+    async def test_schedule_deduplicates_tasks_for_same_ticket(self) -> None:
+        """100 identical schedule(17) calls create 1 active task, not 100."""
+        answerer, parts = _answerer()
+        for _ in range(100):
+            answerer.schedule(17)
+        assert len(answerer._in_flight) == 1
+        await answerer.drain()
+        assert len(answerer._in_flight) == 0
+
+    async def test_schedule_during_active_execution_triggers_pending_rerun(self) -> None:
+        """A new webhook arriving while turn is active must trigger a re-check."""
+        turn = 0
+        ticket1 = _ticket(TicketMessage(id=100, text="Первый вопрос", is_from_admin=False))
+        ticket2 = _ticket(
+            TicketMessage(id=100, text="Первый вопрос", is_from_admin=False),
+            TicketMessage(id=101, text="Второй вопрос", is_from_admin=False),
+        )
+
+        async def dynamic_get(tid: int) -> Ticket:
+            return ticket1 if turn == 0 else ticket2
+
+        async def chat(_q: str, _u: int) -> LlmReply:
+            nonlocal turn
+            turn += 1
+            if turn == 1:
+                # While first turn is active, a new event arrives for same ticket
+                answerer.schedule(TICKET_ID)
+            return LlmReply(text=f"Ответ {turn}")
+
+        answerer, parts = _answerer(rate_limiter=UserRateLimiter(min_interval=0.0))
+        parts["client"].get_ticket = AsyncMock(side_effect=dynamic_get)
+        parts["llm_client"].chat = AsyncMock(side_effect=chat)
+        answerer.client = parts["client"]
+        answerer.llm_client = parts["llm_client"]
+
+        answerer.schedule(TICKET_ID)
+        await answerer.drain()
+
+        assert parts["llm_client"].chat.await_count == 2
+
 
 class TestOperatorInThePanel:
     """`KeyedLock` and the Telegram flag do not cover the admin UI.
@@ -842,3 +912,194 @@ class TestOperatorInThePanel:
 
         parts["llm_client"].chat.assert_awaited_once()
         parts["client"].reply.assert_awaited_once()
+
+    async def test_records_human_reply_timestamp_in_state_and_conversation(self) -> None:
+        answerer, parts = _answerer(
+            ticket=self._thread_with_a_human(), last_bot_reply_message_id=101
+        )
+        await answerer.handle(TICKET_ID)
+        parts["state"].record_human_reply.assert_awaited_once_with(TICKET_ID, 105)
+
+    async def test_answers_after_suppression_window_expires(self) -> None:
+        """After 30 minutes of operator inactivity, bot answers new user message."""
+        past = datetime.now(UTC) - timedelta(minutes=35)
+        ticket = self._thread_with_a_human()  # has human msg 105, user msg 106
+        answerer, parts = _answerer(
+            ticket=ticket,
+            last_bot_reply_message_id=101,
+            last_human_reply_message_id=105,
+            last_human_reply_at=past,
+        )
+        await answerer.handle(TICKET_ID)
+        parts["llm_client"].chat.assert_awaited_once()
+        parts["client"].reply.assert_awaited_once()
+
+    async def test_restart_with_persisted_recent_human_reply_stays_suppressed(self) -> None:
+        """Process restart preserves human suppression if 30m window has not expired."""
+        recent = datetime.now(UTC) - timedelta(minutes=5)
+        ticket = self._thread_with_a_human()
+        answerer, parts = _answerer(
+            ticket=ticket,
+            last_bot_reply_message_id=101,
+            last_human_reply_message_id=105,
+            last_human_reply_at=recent,
+        )
+        await answerer.handle(TICKET_ID)
+        parts["llm_client"].chat.assert_not_awaited()
+        parts["client"].reply.assert_not_awaited()
+
+    async def test_restart_with_persisted_expired_human_reply_resumes_answering(self) -> None:
+        """Process restart does not permanently lock ticket if 30m window has expired."""
+        expired = datetime.now(UTC) - timedelta(minutes=35)
+        ticket = self._thread_with_a_human()
+        answerer, parts = _answerer(
+            ticket=ticket,
+            last_bot_reply_message_id=101,
+            last_human_reply_message_id=105,
+            last_human_reply_at=expired,
+        )
+        await answerer.handle(TICKET_ID)
+        parts["llm_client"].chat.assert_awaited_once()
+        parts["client"].reply.assert_awaited_once()
+
+    async def test_a_new_human_reply_refreshes_an_expired_suppression(self) -> None:
+        expired = datetime.now(UTC) - timedelta(minutes=35)
+        ticket = _ticket(
+            TicketMessage(id=100, text="Первый вопрос", is_from_admin=False),
+            TicketMessage(id=107, text="Ответ бота", is_from_admin=True),
+            TicketMessage(id=108, text="Новый ответ оператора", is_from_admin=True),
+            TicketMessage(id=109, text="Уточнение пользователя", is_from_admin=False),
+        )
+        answerer, parts = _answerer(
+            ticket=ticket,
+            last_bot_reply_message_id=107,
+            last_human_reply_message_id=105,
+            last_human_reply_at=expired,
+        )
+
+        await answerer.handle(TICKET_ID)
+
+        parts["state"].record_human_reply.assert_awaited_once_with(TICKET_ID, 108)
+        parts["llm_client"].chat.assert_not_awaited()
+        parts["client"].reply.assert_not_awaited()
+
+
+class TestStalePrevention:
+    """Pre-reply verification must prevent stale-write race conditions."""
+
+    async def test_drops_stale_answer_if_user_sends_new_message_during_llm_call_and_reruns(
+        self,
+    ) -> None:
+        """User sends message 101 while LLM is generating for message 100."""
+        initial_ticket = _ticket(TicketMessage(id=100, text="Первый вопрос", is_from_admin=False))
+        updated_ticket = _ticket(
+            TicketMessage(id=100, text="Первый вопрос", is_from_admin=False),
+            TicketMessage(id=101, text="Второй вопрос", is_from_admin=False),
+        )
+
+        get_count = 0
+
+        async def dynamic_get_ticket(ticket_id: int) -> Ticket:
+            nonlocal get_count
+            get_count += 1
+            if get_count == 1:
+                return initial_ticket
+            return updated_ticket
+
+        answerer, parts = _answerer(rate_limiter=UserRateLimiter(min_interval=0.0))
+        parts["client"].get_ticket = AsyncMock(side_effect=dynamic_get_ticket)
+        answerer.client = parts["client"]
+
+        # Run schedule so rerun loop triggers
+        answerer.schedule(TICKET_ID)
+        await answerer.drain()
+
+        # First turn was aborted (stale), rerun picked up message 101 and replied
+        assert parts["client"].reply.await_count == 1
+        parts["state"].record_reply.assert_awaited_once_with(
+            TICKET_ID, BOT_REPLY_ID, answered_message_id=101
+        )
+
+    async def test_drops_stale_answer_if_operator_replies_during_llm_call(self) -> None:
+        """Operator intervenes while LLM is generating."""
+        initial_ticket = _ticket(
+            TicketMessage(id=100, text="Первый вопрос", is_from_admin=False),
+        )
+        operator_intervened_ticket = _ticket(
+            TicketMessage(id=100, text="Первый вопрос", is_from_admin=False),
+            TicketMessage(id=105, text="Оператор уже тут", is_from_admin=True),
+        )
+
+        get_count = 0
+
+        async def dynamic_get_ticket(ticket_id: int) -> Ticket:
+            nonlocal get_count
+            get_count += 1
+            if get_count == 1:
+                return initial_ticket
+            return operator_intervened_ticket
+
+        answerer, parts = _answerer(last_bot_reply_message_id=50)
+        parts["client"].get_ticket = AsyncMock(side_effect=dynamic_get_ticket)
+        answerer.client = parts["client"]
+
+        await answerer.handle(TICKET_ID)
+
+        # Bot did not publish stale reply over operator
+        parts["client"].reply.assert_not_awaited()
+
+    async def test_drops_stale_answer_if_ticket_closed_during_llm_call(self) -> None:
+        """Ticket is closed while LLM is generating."""
+        initial_ticket = _ticket(status="open")
+        closed_ticket = _ticket(status="closed")
+
+        get_count = 0
+
+        async def dynamic_get_ticket(ticket_id: int) -> Ticket:
+            nonlocal get_count
+            get_count += 1
+            if get_count == 1:
+                return initial_ticket
+            return closed_ticket
+
+        answerer, parts = _answerer()
+        parts["client"].get_ticket = AsyncMock(side_effect=dynamic_get_ticket)
+        answerer.client = parts["client"]
+
+        await answerer.handle(TICKET_ID)
+
+        # Bot did not reply to closed ticket
+        parts["client"].reply.assert_not_awaited()
+
+
+class TestEscalationAndFormatting:
+    """Escalation formatting and edge cases."""
+
+    async def test_escalation_note_never_truncated_by_max_length(self) -> None:
+        """Long LLM response must leave room for the escalation footer."""
+        long_text = "А" * 4000
+        answerer, parts = _answerer(
+            reply=LlmReply(text=long_text),
+            ticket=_ticket(TicketMessage(id=100, text="позовите человека", is_from_admin=False)),
+        )
+        await answerer.handle(TICKET_ID)
+
+        posted = parts["client"].reply.await_args.args[1]
+        assert len(posted) <= MAX_REPLY_LENGTH
+        assert posted.endswith(get_message("bedolaga.escalation.note"))
+
+    async def test_logs_warning_if_set_priority_fails(self) -> None:
+        answerer, parts = _answerer(
+            ticket=_ticket(TicketMessage(id=100, text="позовите человека", is_from_admin=False)),
+        )
+        parts["client"].set_priority = AsyncMock(return_value=False)
+        answerer.client = parts["client"]
+        await answerer.handle(TICKET_ID)
+        # Should finish successfully without raising
+        parts["client"].reply.assert_awaited_once()
+
+    async def test_suppressed_cleaned_up_on_closed_ticket(self) -> None:
+        answerer, parts = _answerer(ticket=_ticket(status="closed"))
+        answerer._suppressed[TICKET_ID] = 100
+        await answerer.handle(TICKET_ID)
+        assert TICKET_ID not in answerer._suppressed

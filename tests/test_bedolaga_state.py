@@ -102,3 +102,56 @@ class TestRecordReply:
         merged = db.session_obj.merge.await_args.args[0]
         assert merged.last_answered_message_id == 0
         assert merged.last_bot_reply_message_id == 103
+
+    async def test_an_accepted_reply_without_an_id_preserves_the_previous_bot_id(self) -> None:
+        db = _FakeDbManager(
+            row=BedolagaTicketState(
+                ticket_id=17,
+                last_answered_message_id=100,
+                last_bot_reply_message_id=101,
+            )
+        )
+        await TicketStateStore(db).record_reply(17, None, answered_message_id=102)
+        merged = db.session_obj.merge.await_args.args[0]
+        assert merged.last_answered_message_id == 102
+        assert merged.last_bot_reply_message_id == 101
+
+
+class TestRecordHumanReply:
+    """Recording a human operator's reply in Bedolaga panel."""
+
+    async def test_record_human_reply_on_fresh_ticket(self) -> None:
+        db = _FakeDbManager(row=None)
+        await TicketStateStore(db).record_human_reply(17, 105)
+        merged = db.session_obj.merge.await_args.args[0]
+        assert isinstance(merged, BedolagaTicketState)
+        assert merged.ticket_id == 17
+        assert merged.last_human_reply_message_id == 105
+        assert merged.last_human_reply_at is not None
+
+    async def test_record_human_reply_on_existing_ticket(self) -> None:
+        existing = BedolagaTicketState(
+            ticket_id=17,
+            last_answered_message_id=100,
+            last_bot_reply_message_id=101,
+        )
+        db = _FakeDbManager(row=existing)
+        await TicketStateStore(db).record_human_reply(17, 105)
+        merged = db.session_obj.merge.await_args.args[0]
+        assert merged.last_answered_message_id == 100
+        assert merged.last_bot_reply_message_id == 101
+        assert merged.last_human_reply_message_id == 105
+        assert merged.last_human_reply_at is not None
+
+    async def test_a_later_human_reply_advances_its_id_and_refreshes_the_timestamp(self) -> None:
+        existing = BedolagaTicketState(
+            ticket_id=17,
+            last_answered_message_id=100,
+            last_bot_reply_message_id=101,
+            last_human_reply_message_id=105,
+        )
+        db = _FakeDbManager(row=existing)
+        await TicketStateStore(db).record_human_reply(17, 108)
+        merged = db.session_obj.merge.await_args.args[0]
+        assert merged.last_human_reply_message_id == 108
+        assert merged.last_human_reply_at is not None

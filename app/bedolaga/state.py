@@ -14,16 +14,20 @@ logger = logging.getLogger(__name__)
 class TicketProgress:
     """One ticket's row, as the pipeline reads it.
 
-    Both ids come off the same row, and a turn needs both: one to know whether
-    the newest user message is already answered, one to recognise the bot's own
-    reply among the ticket's admin messages. Fetching them together keeps a
-    turn to a single read.
+    All watermarks come off the same row: one says which user turn was
+    answered, one recognises the bot's own admin messages, and one makes a new
+    human reply refresh the persisted suppression window exactly once.
+    Fetching them together keeps a turn to a single read.
     """
 
     #: The user's message the bot has answered up through.
     last_answered_message_id: int = 0
     #: The bot's own most recent reply. 0 means it has never replied here.
     last_bot_reply_message_id: int = 0
+    #: The newest admin message identified as a human's.
+    last_human_reply_message_id: int = 0
+    #: When a human operator last replied in Bedolaga panel, or None if never recorded.
+    last_human_reply_at: datetime | None = None
 
     def already_answered(self, message_id: int) -> bool:
         """True when this message, or a later one, has already been answered."""
@@ -42,6 +46,17 @@ class TicketProgress:
         return self.last_bot_reply_message_id > 0 and (
             admin_message_id > self.last_bot_reply_message_id
         )
+
+    def is_human_recently_active(self, window_seconds: float, now: datetime | None = None) -> bool:
+        """True when a human operator reply is within the suppression window."""
+        if self.last_human_reply_at is None:
+            return False
+        current_time = now if now is not None else datetime.now(UTC)
+        return (current_time - self.last_human_reply_at).total_seconds() < window_seconds
+
+    def human_reply_is_new(self, message_id: int) -> bool:
+        """True when this human reply has not refreshed the suppression TTL yet."""
+        return message_id > self.last_human_reply_message_id
 
 
 #: A ticket this bot has never touched.
@@ -71,31 +86,71 @@ class TicketStateStore:
             # `or 0` because the column was added after the first rows could
             # have been written, and an unset value has to read as "never".
             last_bot_reply_message_id=row.last_bot_reply_message_id or 0,
+            last_human_reply_message_id=row.last_human_reply_message_id or 0,
+            last_human_reply_at=row.last_human_reply_at,
         )
+
+    async def record_human_reply(
+        self,
+        ticket_id: int,
+        message_id: int,
+        reply_at: datetime | None = None,
+    ) -> None:
+        """Record a human operator reply and refresh its suppression window."""
+        now = reply_at or datetime.now(UTC)
+        async with self.db_manager.session() as session:
+            row = await session.get(BedolagaTicketState, ticket_id)
+            if row is None:
+                await session.merge(
+                    BedolagaTicketState(
+                        ticket_id=ticket_id,
+                        last_answered_message_id=0,
+                        last_bot_reply_message_id=0,
+                        last_human_reply_message_id=message_id,
+                        last_human_reply_at=now,
+                        updated_at=now,
+                    )
+                )
+            else:
+                row.last_human_reply_message_id = max(
+                    row.last_human_reply_message_id or 0, message_id
+                )
+                row.last_human_reply_at = now
+                row.updated_at = now
+                await session.merge(row)
 
     async def record_reply(
         self,
         ticket_id: int,
-        bot_reply_message_id: int,
+        bot_reply_message_id: int | None,
         answered_message_id: int | None = None,
     ) -> None:
         """Record a reply the bot just posted into this ticket.
 
-        `answered_message_id` is the user's message that reply answers, when it
-        answers one. A hand-over line ("describe the problem in words") answers
-        nothing — that user message stays the bot's to take on the next turn —
-        but the reply itself must still be recorded, or the sweep after it
-        would read the bot's own message as an operator stepping in.
+        `answered_message_id` is the user's message that reply answers. Callers
+        may omit it only when recording a bot message that advances no user
+        watermark. A missing bot reply id preserves the prior known watermark:
+        the panel accepted the write, but its malformed response must not erase
+        information already stored.
         """
         async with self.db_manager.session() as session:
+            row = await session.get(BedolagaTicketState, ticket_id)
             if answered_message_id is None:
-                row = await session.get(BedolagaTicketState, ticket_id)
                 answered_message_id = row.last_answered_message_id if row is not None else 0
+            last_bot_reply_message_id = (
+                bot_reply_message_id
+                if bot_reply_message_id is not None
+                else (row.last_bot_reply_message_id if row is not None else 0)
+            )
+            last_human_message_id = row.last_human_reply_message_id or 0 if row is not None else 0
+            last_human_at = row.last_human_reply_at if row is not None else None
             await session.merge(
                 BedolagaTicketState(
                     ticket_id=ticket_id,
                     last_answered_message_id=answered_message_id,
-                    last_bot_reply_message_id=bot_reply_message_id,
+                    last_bot_reply_message_id=last_bot_reply_message_id,
+                    last_human_reply_message_id=last_human_message_id,
+                    last_human_reply_at=last_human_at,
                     updated_at=datetime.now(UTC),
                 )
             )

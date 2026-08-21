@@ -187,13 +187,11 @@ class BedolagaTicketState(Base):
     a delivery may arrive twice — this row is what makes answering a ticket
     idempotent instead of posting the same reply again.
 
-    Two message ids, and they are not the same thing. `last_answered_message_id`
-    is the *user's* message the bot has answered up through, which is what
-    idempotency turns on. `last_bot_reply_message_id` is the *bot's own* reply,
-    which is how the bot recognises its own handwriting: every reply in a
-    ticket is an admin message, so without it an operator answering inside
-    Bedolaga's own panel is indistinguishable from the bot itself, and the bot
-    talks over a human holding the conversation.
+    The message ids are different watermarks. `last_answered_message_id` is the
+    *user's* message the bot has answered through. `last_bot_reply_message_id`
+    recognises the bot's own handwriting among admin messages.
+    `last_human_reply_message_id` makes each genuinely newer operator reply
+    refresh the persisted ownership window once, including after a restart.
     """
 
     __tablename__ = "bedolaga_ticket_state"
@@ -204,6 +202,17 @@ class BedolagaTicketState(Base):
     #: message it can claim, so every admin message present is somebody else's.
     last_bot_reply_message_id: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default="0"
+    )
+    #: The newest admin message positively identified as a human's. Keeping the
+    #: id next to the timestamp lets a later human reply refresh the TTL instead
+    #: of being mistaken for the old reply whose window already expired.
+    last_human_reply_message_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    #: Timestamp of the most recent human operator reply in Bedolaga panel,
+    #: used for 30-minute suppression TTL across bot restarts.
+    last_human_reply_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -216,5 +225,7 @@ class BedolagaTicketState(Base):
         return (
             f"<BedolagaTicketState ticket_id={self.ticket_id} "
             f"last_answered_message_id={self.last_answered_message_id} "
-            f"last_bot_reply_message_id={self.last_bot_reply_message_id}>"
+            f"last_bot_reply_message_id={self.last_bot_reply_message_id} "
+            f"last_human_reply_message_id={self.last_human_reply_message_id} "
+            f"last_human_reply_at={self.last_human_reply_at}>"
         )

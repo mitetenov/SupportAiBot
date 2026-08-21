@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 
-from app.bedolaga.client import BedolagaClient
+from app.bedolaga.client import BedolagaClient, PostedTicketReply
 from app.bedolaga.pipeline import TicketAnswerer
 from app.bedolaga.state import TicketProgress, TicketStateStore
 from app.bedolaga.types import TelegramIdLookup, Ticket, TicketMessage
@@ -195,10 +195,11 @@ class _InMemoryState:
     async def record_reply(
         self,
         ticket_id: int,
-        bot_reply_message_id: int,
+        bot_reply_message_id: int | None,
         answered_message_id: int | None = None,
     ) -> None:
-        self.bot_replies[ticket_id] = bot_reply_message_id
+        if bot_reply_message_id is not None:
+            self.bot_replies[ticket_id] = bot_reply_message_id
         if answered_message_id is not None:
             self.answered[ticket_id] = answered_message_id
 
@@ -232,7 +233,7 @@ class TestConcurrentTurns:
         client.resolve_telegram_id = AsyncMock(
             return_value=TelegramIdLookup(known=True, telegram_id=TELEGRAM_ID)
         )
-        client.reply = AsyncMock(return_value=BOT_REPLY_ID)
+        client.reply = AsyncMock(return_value=PostedTicketReply(message_id=BOT_REPLY_ID))
         client.set_priority = AsyncMock(return_value=True)
 
         llm_client = MagicMock()
@@ -268,3 +269,90 @@ class TestConcurrentTurns:
         assert state.answered == {TICKET_ID: 100}
         assert llm_client.chat.await_count == 1
         assert answerer._tickets.active_keys() == 0
+
+
+class TestMessageArrivingDuringReply:
+    """A user message in the final GET-to-POST gap must survive the bot reply."""
+
+    async def test_the_hidden_user_message_is_answered_on_the_pending_rerun(self) -> None:
+        first = TicketMessage(id=100, text="Первый вопрос", is_from_admin=False)
+        second = TicketMessage(id=101, text="Важное уточнение", is_from_admin=False)
+        first_bot_reply = TicketMessage(id=500, text="Первый ответ", is_from_admin=True)
+        second_bot_reply = TicketMessage(id=501, text="Второй ответ", is_from_admin=True)
+        current = Ticket(
+            id=TICKET_ID,
+            user_id=PANEL_USER_ID,
+            title="Не подключается",
+            status="open",
+            messages=(first,),
+        )
+
+        async def read_ticket(_ticket_id: int) -> Ticket:
+            await asyncio.sleep(0)
+            return current
+
+        reply_count = 0
+
+        async def post_reply(_ticket_id: int, _text: str) -> PostedTicketReply:
+            nonlocal current, reply_count
+            await asyncio.sleep(0)
+            reply_count += 1
+            if reply_count == 1:
+                # This is the race: the final GET already passed, then the user
+                # writes 101, and only after that does our admin reply land.
+                current = Ticket(
+                    id=TICKET_ID,
+                    user_id=PANEL_USER_ID,
+                    title="Не подключается",
+                    status="answered",
+                    messages=(first, second, first_bot_reply),
+                )
+                return PostedTicketReply(message_id=first_bot_reply.id)
+
+            current = Ticket(
+                id=TICKET_ID,
+                user_id=PANEL_USER_ID,
+                title="Не подключается",
+                status="answered",
+                messages=(first, second, first_bot_reply, second_bot_reply),
+            )
+            return PostedTicketReply(message_id=second_bot_reply.id)
+
+        client = MagicMock()
+        client.get_ticket = AsyncMock(side_effect=read_ticket)
+        client.resolve_telegram_id = AsyncMock(
+            return_value=TelegramIdLookup(known=True, telegram_id=TELEGRAM_ID)
+        )
+        client.reply = AsyncMock(side_effect=post_reply)
+        client.set_priority = AsyncMock(return_value=True)
+
+        llm_client = MagicMock()
+        llm_client.supports_images = MagicMock(return_value=False)
+        llm_client.chat = AsyncMock(return_value=LlmReply(text=ANSWER))
+        forwarder = MagicMock()
+        forwarder.forward_to_support = AsyncMock()
+        knowledge_gap_service = MagicMock()
+        knowledge_gap_service.evaluate = AsyncMock()
+        admin_notifier = MagicMock()
+        admin_notifier.notify_error = AsyncMock()
+        state = _InMemoryState()
+
+        answerer = TicketAnswerer(
+            client=client,
+            llm_client=llm_client,
+            state=state,  # type: ignore[arg-type]
+            rate_limiter=UserRateLimiter(min_interval=0.0),
+            admin_notifier=admin_notifier,
+            forwarder=forwarder,
+            knowledge_gap_service=knowledge_gap_service,
+            conversation_state=ConversationState(),
+        )
+
+        answerer.schedule(TICKET_ID)
+        await answerer.drain()
+
+        assert client.reply.await_count == 2
+        assert llm_client.chat.await_count == 2
+        assert llm_client.chat.await_args_list[1].args[0] == "Важное уточнение"
+        assert state.answered == {TICKET_ID: second.id}
+        assert state.bot_replies == {TICKET_ID: second_bot_reply.id}

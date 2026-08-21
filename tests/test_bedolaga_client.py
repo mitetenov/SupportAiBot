@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from app.bedolaga.client import MAX_REPLY_LENGTH, BedolagaClient
+from app.bedolaga.client import (
+    MAX_MEDIA_BYTES,
+    MAX_REPLY_LENGTH,
+    BedolagaClient,
+    PostedTicketReply,
+)
 from app.bedolaga.types import TELEGRAM_ID_UNKNOWN, TelegramIdLookup
 
 BASE_URL = "http://bedolaga:8080"
@@ -37,13 +42,44 @@ def _response(status_code: int, json_body: Any = None) -> MagicMock:
     return response
 
 
+class _StreamContext:
+    def __init__(self, response: MagicMock) -> None:
+        self.response = response
+
+    async def __aenter__(self) -> MagicMock:
+        return self.response
+
+    async def __aexit__(self, *_args: object) -> None:
+        return None
+
+
+def _stream_response(
+    content: bytes = b"binary-bytes",
+    *,
+    headers: dict[str, str] | None = None,
+    chunks: list[bytes] | None = None,
+) -> MagicMock:
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 200
+    response.headers = headers if headers is not None else {"content-type": "image/png"}
+
+    async def iter_chunks():
+        for chunk in chunks if chunks is not None else [content]:
+            yield chunk
+
+    response.aiter_bytes = MagicMock(side_effect=iter_chunks)
+    return response
+
+
 def _client(
     get: Any = None,
     post: Any = None,
+    stream: Any = None,
 ) -> tuple[BedolagaClient, MagicMock]:
     http_client = MagicMock(spec=httpx.AsyncClient)
     http_client.get = get or AsyncMock(return_value=_response(200, TICKET_BODY))
     http_client.post = post or AsyncMock(return_value=_response(201, REPLY_BODY))
+    http_client.stream = stream or MagicMock(return_value=_StreamContext(_stream_response()))
     return BedolagaClient(BASE_URL, API_KEY, http_client), http_client
 
 
@@ -108,6 +144,33 @@ class TestListAwaitingTicketIds:
         client, _ = _client(get=get)
         assert await client.list_awaiting_ticket_ids() == [3]
 
+    async def test_survives_envelope_format_in_ticket_list(self) -> None:
+        get = AsyncMock(
+            side_effect=[
+                _response(200, {"items": [{"id": 10}, {"id": 11}]}),
+                _response(200, []),
+            ]
+        )
+        client, _ = _client(get=get)
+        assert sorted(await client.list_awaiting_ticket_ids()) == [10, 11]
+
+    async def test_survives_invalid_json_in_ticket_list(self) -> None:
+        bad_response = _response(200, None)
+        bad_response.json = MagicMock(side_effect=ValueError("HTML error page"))
+        get = AsyncMock(side_effect=[bad_response, _response(200, [{"id": 5}])])
+        client, _ = _client(get=get)
+        assert await client.list_awaiting_ticket_ids() == [5]
+
+    async def test_filters_out_malformed_items_in_ticket_list(self) -> None:
+        get = AsyncMock(
+            side_effect=[
+                _response(200, [{"id": 1}, "not-a-dict", {"id": "not-int"}, {"title": "no id"}]),
+                _response(200, []),
+            ]
+        )
+        client, _ = _client(get=get)
+        assert await client.list_awaiting_ticket_ids() == [1]
+
 
 class TestReply:
     """Posting the answer back into the ticket."""
@@ -120,7 +183,7 @@ class TestReply:
         panel is indistinguishable from the bot itself.
         """
         client, http_client = _client()
-        assert await client.reply(17, "Проверьте подписку") == 101
+        assert await client.reply(17, "Проверьте подписку") == PostedTicketReply(message_id=101)
         url = http_client.post.await_args.args[0]
         assert url == "http://bedolaga:8080/tickets/17/reply"
         assert http_client.post.await_args.kwargs["json"] == {"message_text": "Проверьте подписку"}
@@ -139,20 +202,15 @@ class TestReply:
         client, _ = _client(post=AsyncMock(side_effect=httpx.ConnectError("refused")))
         assert await client.reply(17, "текст") is None
 
-    async def test_a_body_without_a_message_id_does_not_raise(self) -> None:
-        """A write that landed must never blow up over a parsing surprise.
-
-        None here costs one admin alert and one backed-off retry; an exception
-        would take out the whole turn, and the reply is already published.
-        """
+    async def test_a_body_without_a_message_id_is_accepted_without_a_fake_id(self) -> None:
         client, _ = _client(post=AsyncMock(return_value=_response(201, {"status": "ok"})))
-        assert await client.reply(17, "текст") is None
+        assert await client.reply(17, "текст") == PostedTicketReply(message_id=None)
 
-    async def test_a_body_that_is_not_json_does_not_raise(self) -> None:
+    async def test_a_body_that_is_not_json_is_accepted_without_a_fake_id(self) -> None:
         post = AsyncMock(return_value=_response(201, None))
         post.return_value.json = MagicMock(side_effect=ValueError("not json"))
         client, _ = _client(post=post)
-        assert await client.reply(17, "текст") is None
+        assert await client.reply(17, "текст") == PostedTicketReply(message_id=None)
 
     async def test_never_resends_a_gateway_error(self) -> None:
         """Posting a reply is not idempotent, so it must not go through a retry.
@@ -250,11 +308,7 @@ class TestDownloadMedia:
         media_response = _response(
             200, {"media_type": "photo", "media_url": "http://bedolaga:8080/media/abc"}
         )
-        file_response = MagicMock(spec=httpx.Response)
-        file_response.status_code = 200
-        file_response.content = b"binary-bytes"
-        file_response.headers = {"content-type": "image/png"}
-        client, _ = _client(get=AsyncMock(side_effect=[media_response, file_response]))
+        client, _ = _client(get=AsyncMock(return_value=media_response))
 
         attachment = await client.download_media(17, 100)
         assert attachment is not None
@@ -263,11 +317,8 @@ class TestDownloadMedia:
 
     async def test_defaults_the_mime_type_when_the_server_omits_it(self) -> None:
         media_response = _response(200, {"media_url": "http://bedolaga:8080/media/abc"})
-        file_response = MagicMock(spec=httpx.Response)
-        file_response.status_code = 200
-        file_response.content = b"x"
-        file_response.headers = {}
-        client, _ = _client(get=AsyncMock(side_effect=[media_response, file_response]))
+        stream = MagicMock(return_value=_StreamContext(_stream_response(b"x", headers={})))
+        client, _ = _client(get=AsyncMock(return_value=media_response), stream=stream)
         attachment = await client.download_media(17, 100)
         assert attachment is not None
         assert attachment.mime_type == "image/jpeg"
@@ -278,7 +329,10 @@ class TestDownloadMedia:
 
     async def test_returns_none_when_the_download_fails(self) -> None:
         media_response = _response(200, {"media_url": "http://bedolaga:8080/media/abc"})
-        client, _ = _client(get=AsyncMock(side_effect=[media_response, httpx.ConnectError("no")]))
+        client, _ = _client(
+            get=AsyncMock(return_value=media_response),
+            stream=MagicMock(side_effect=httpx.ConnectError("no")),
+        )
         assert await client.download_media(17, 100) is None
 
     async def test_resolves_a_relative_media_url_against_the_base_url(self) -> None:
@@ -288,18 +342,15 @@ class TestDownloadMedia:
         swallowed — screenshots would have silently stopped reaching the model.
         """
         media_response = _response(200, {"media_url": "/media/abc"})
-        file_response = MagicMock(spec=httpx.Response)
-        file_response.status_code = 200
-        file_response.content = b"binary-bytes"
-        file_response.headers = {"content-type": "image/png"}
-        get = AsyncMock(side_effect=[media_response, file_response])
-        client, _ = _client(get=get)
+        get = AsyncMock(return_value=media_response)
+        stream = MagicMock(return_value=_StreamContext(_stream_response()))
+        client, _ = _client(get=get, stream=stream)
 
         attachment = await client.download_media(17, 100)
 
         assert attachment is not None
         assert attachment.base64_image == "YmluYXJ5LWJ5dGVz"
-        assert get.await_args_list[1].args[0] == "http://bedolaga:8080/media/abc"
+        assert stream.call_args.args[:2] == ("GET", "http://bedolaga:8080/media/abc")
 
     async def test_refuses_a_media_url_on_a_foreign_host(self) -> None:
         """The API key goes to the configured panel and nowhere else.
@@ -310,7 +361,69 @@ class TestDownloadMedia:
         """
         media_response = _response(200, {"media_url": "http://evil.example.com/steal"})
         get = AsyncMock(side_effect=[media_response])
-        client, _ = _client(get=get)
+        client, http_client = _client(get=get)
 
         assert await client.download_media(17, 100) is None
         assert get.await_count == 1
+        http_client.stream.assert_not_called()
+
+    async def test_refuses_https_to_http_downgrade(self) -> None:
+        """Never send the API key over unencrypted HTTP when base_url is HTTPS."""
+        media_response = _response(200, {"media_url": "http://bedolaga/file"})
+        get = AsyncMock(side_effect=[media_response])
+        http_client = MagicMock(spec=httpx.AsyncClient)
+        http_client.get = get
+        client = BedolagaClient("https://bedolaga", API_KEY, http_client)
+
+        assert await client.download_media(17, 100) is None
+        # Must refuse without making the second GET to download the file
+        assert get.await_count == 1
+
+    async def test_refuses_different_effective_port(self) -> None:
+        """Refuse media pointing to a different port on the same host."""
+        media_response = _response(200, {"media_url": "https://bedolaga:9000/file"})
+        get = AsyncMock(side_effect=[media_response])
+        http_client = MagicMock(spec=httpx.AsyncClient)
+        http_client.get = get
+        client = BedolagaClient("https://bedolaga:8443", API_KEY, http_client)
+
+        assert await client.download_media(17, 100) is None
+        assert get.await_count == 1
+
+    async def test_preserves_base_url_path_prefix_for_relative_media(self) -> None:
+        """Relative media paths must remain under base_url path prefix (e.g. /api)."""
+        media_response = _response(200, {"media_url": "/media/abc"})
+        get = AsyncMock(return_value=media_response)
+        stream = MagicMock(return_value=_StreamContext(_stream_response()))
+        http_client = MagicMock(spec=httpx.AsyncClient)
+        http_client.get = get
+        http_client.stream = stream
+        client = BedolagaClient("https://bedolaga/api", API_KEY, http_client)
+
+        attachment = await client.download_media(17, 100)
+        assert attachment is not None
+        assert stream.call_args.args[:2] == ("GET", "https://bedolaga/api/media/abc")
+
+    async def test_refuses_media_exceeding_max_size(self) -> None:
+        """Never download/load into memory media exceeding MAX_MEDIA_BYTES."""
+        media_response = _response(200, {"media_url": "/media/large.png"})
+        oversized = _stream_response(
+            chunks=[b"x" * (MAX_MEDIA_BYTES // 2), b"y" * (MAX_MEDIA_BYTES // 2 + 1)]
+        )
+        client, _ = _client(
+            get=AsyncMock(return_value=media_response),
+            stream=MagicMock(return_value=_StreamContext(oversized)),
+        )
+
+        assert await client.download_media(17, 100) is None
+
+    async def test_rejects_declared_oversize_before_reading_a_chunk(self) -> None:
+        media_response = _response(200, {"media_url": "/media/large.png"})
+        streamed = _stream_response(headers={"content-length": str(MAX_MEDIA_BYTES + 1)})
+        client, _ = _client(
+            get=AsyncMock(return_value=media_response),
+            stream=MagicMock(return_value=_StreamContext(streamed)),
+        )
+
+        assert await client.download_media(17, 100) is None
+        streamed.aiter_bytes.assert_not_called()
