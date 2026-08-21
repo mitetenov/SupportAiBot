@@ -11,6 +11,7 @@ services:
         condition: service_healthy
     networks:
       - internal
+      - bedolaga
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
@@ -50,6 +51,11 @@ services:
 networks:
   internal:
     driver: bridge
+  # Сеть стека Bedolaga: бот ходит в её Web API, она — в вебхук бота.
+  # Создаётся один раз: docker network create bedolaga-net
+  bedolaga:
+    external: true
+    name: bedolaga-net
 
 volumes:
   pgvector-data:
