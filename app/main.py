@@ -9,6 +9,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 from aiohttp import web
 
+from app.bedolaga import TicketSupport, create_ticket_support
 from app.bot.admin_notifier import AdminNotifier
 from app.bot.buffer import UserMessageBuffer
 from app.bot.command_handler import SupportCommandHandler
@@ -119,6 +120,7 @@ async def main() -> None:
     pipeline: UserMessagePipeline | None = None
     typing_indicator: TypingIndicator | None = None
     maintenance: MaintenanceScheduler | None = None
+    ticket_support: TicketSupport | None = None
 
     try:
         # 1. Initialize DB models, then reconcile anything an earlier version left behind
@@ -236,6 +238,17 @@ async def main() -> None:
             window_ms=settings.telegram_buffer_window_ms,
             max_messages=settings.telegram_buffer_max_messages,
         )
+        ticket_support = create_ticket_support(
+            settings=settings,
+            http_client=http_client,
+            llm_client=llm_client,
+            db_manager=db_manager,
+            forwarder=forwarder,
+            admin_notifier=admin_notifier,
+            rate_limiter=rate_limiter,
+            knowledge_gap_service=knowledge_gap_service,
+            conversation_state=conversation_state,
+        )
 
         router = setup_router(
             sender=sender,
@@ -261,13 +274,16 @@ async def main() -> None:
         await knowledge_gap_service.init_schema()
 
         # 7. Start recurring cleanups (chat history TTL, rate limiter, conversation state)
-        maintenance = MaintenanceScheduler(
-            build_default_jobs(chat_history_service, rate_limiter, conversation_state)
-        )
+        jobs = build_default_jobs(chat_history_service, rate_limiter, conversation_state)
+        if ticket_support is not None:
+            jobs.append(ticket_support.maintenance_job())
+        maintenance = MaintenanceScheduler(jobs)
         maintenance.start()
 
         # 8. Start Healthcheck server
         health_app = create_health_app()
+        if ticket_support is not None:
+            ticket_support.register_routes(health_app)
         health_runner = await start_health_server(
             health_app,
             port=settings.healthcheck_port,
@@ -286,6 +302,10 @@ async def main() -> None:
         logger.info("Shutting down VPN Support Bot...")
         if maintenance is not None:
             await maintenance.stop()
+        if ticket_support is not None:
+            # A ticket half-answered on shutdown is a user waiting forever:
+            # the model call already cost tokens, and nothing would retry it.
+            await ticket_support.answerer.drain()
         if message_buffer is not None:
             # Anything still buffered or being answered gets its turn first;
             # only then do the clients it needs get closed underneath it.
