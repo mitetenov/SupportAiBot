@@ -67,6 +67,10 @@ class BedolagaWebhookEndpoint:
             logger.warning("Bedolaga webhook: body was not JSON")
             return web.json_response({"status": "bad request"}, status=400)
 
+        if not isinstance(payload, dict):
+            logger.warning("Bedolaga webhook: body was not a JSON object")
+            return web.json_response({"status": "bad request"}, status=400)
+
         if payload.get("is_from_admin"):
             # Our own reply is stored as an admin message and comes straight
             # back as an event. Answering it would answer ourselves, forever.
@@ -77,5 +81,11 @@ class BedolagaWebhookEndpoint:
             logger.warning("Bedolaga webhook: %s carried no ticket_id", event)
             return web.json_response({"status": "bad request"}, status=400)
 
-        self.answerer.schedule(int(ticket_id))
+        try:
+            numeric_ticket_id = int(ticket_id)
+        except (TypeError, ValueError):
+            logger.warning("Bedolaga webhook: ticket_id is not convertible to int")
+            return web.json_response({"status": "bad request"}, status=400)
+
+        self.answerer.schedule(numeric_ticket_id)
         return web.json_response({"status": "accepted"})

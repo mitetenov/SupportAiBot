@@ -105,6 +105,18 @@ class TestHandle:
         assert response.status == 400
         answerer.schedule.assert_not_called()
 
+    async def test_rejects_a_json_body_that_is_not_a_dict(self) -> None:
+        endpoint, answerer = _endpoint(secret="")
+        response = await endpoint.handle(_request(b"[1,2,3]", "ticket.created"))
+        assert response.status == 400
+        answerer.schedule.assert_not_called()
+
+    async def test_rejects_a_non_numeric_ticket_id(self) -> None:
+        endpoint, answerer = _endpoint(secret="")
+        response = await endpoint.handle(_request(_body({"ticket_id": "abc", "user_id": 55}), "ticket.created"))
+        assert response.status == 400
+        answerer.schedule.assert_not_called()
+
 
 class TestRegister:
     """The endpoint hangs off the healthcheck server the bot already runs."""
