@@ -1,17 +1,14 @@
-# Оверлей для интеграции с Bedolaga: подключает бота к сети чужого стека.
-# Сеть создаётся один раз: docker network create bedolaga-net
+# Оверлей для интеграции с Bedolaga: открывает webhook-порт бота на хосте.
+# По умолчанию порт доступен только локальному reverse proxy. Если Bedolaga
+# ходит напрямую по приватной сети, задайте BEDOLAGA_WEBHOOK_BIND равным
+# приватному IP сервера поддержки.
 #
 # Запуск с интеграцией:
 #   docker compose -f docker-compose.yml -f docker-compose.bedolaga.yml up -d
 #
-# Без этого файла обычный `docker compose up -d` работает как раньше и про
-# Bedolaga ничего не знает.
+# Не публикуйте порт в интернет без firewall/reverse proxy. Webhook защищён
+# обязательным секретом, но HTTPS всё равно рекомендуется.
 services:
   support-bot:
-    networks:
-      - bedolaga
-
-networks:
-  bedolaga:
-    external: true
-    name: bedolaga-net
+    ports:
+      - "${BEDOLAGA_WEBHOOK_BIND:-127.0.0.1}:8080:8080"
