@@ -26,13 +26,19 @@ MCP_URL = "http://mcp-remnawave:3100"
 def mcp_transport(seen: list[httpx.Request]) -> httpx.MockTransport:
     def handle(request: httpx.Request) -> httpx.Response:
         seen.append(request)
+        if request.method == "DELETE":
+            return httpx.Response(200)
         body = json.loads(request.content)
         method = body.get("method")
         if method == "initialize":
             return httpx.Response(
                 200,
                 headers={"Mcp-Session-Id": "sess-1"},
-                json={"jsonrpc": "2.0", "id": body["id"], "result": {"ok": True}},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"ok": True, "protocolVersion": "2025-11-25"},
+                },
             )
         if method == "tools/list":
             return httpx.Response(
@@ -100,6 +106,7 @@ class TestMcpWiringMatchesProduction:
         follow_ups = seen[1:]
         assert follow_ups
         assert all(r.headers.get("mcp-session-id") == "sess-1" for r in follow_ups)
+        assert all(r.headers.get("mcp-protocol-version") == "2025-11-25" for r in follow_ups)
 
 
 class TestAdminNotificationIsAwaited:
