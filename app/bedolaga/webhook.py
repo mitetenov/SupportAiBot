@@ -63,7 +63,7 @@ class BedolagaWebhookEndpoint:
 
         try:
             payload = json.loads(body or b"{}")
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except json.JSONDecodeError, UnicodeDecodeError:
             logger.warning("Bedolaga webhook: body was not JSON")
             return web.json_response({"status": "bad request"}, status=400)
 
@@ -83,7 +83,7 @@ class BedolagaWebhookEndpoint:
 
         try:
             numeric_ticket_id = int(ticket_id)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             logger.warning("Bedolaga webhook: ticket_id is not convertible to int")
             return web.json_response({"status": "bad request"}, status=400)
 

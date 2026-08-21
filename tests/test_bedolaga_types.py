@@ -76,7 +76,9 @@ class TestAwaitsAnswer:
         assert ticket.awaits_answer is True
 
     def test_true_for_a_pending_ticket_from_the_cabinet(self) -> None:
-        ticket = self._ticket("pending", TicketMessage(id=1, text="Ещё вопрос", is_from_admin=False))
+        ticket = self._ticket(
+            "pending", TicketMessage(id=1, text="Ещё вопрос", is_from_admin=False)
+        )
         assert ticket.awaits_answer is True
 
     def test_false_when_support_answered_last(self) -> None:
@@ -111,7 +113,9 @@ class TestQuestion:
             user_id=2,
             title="Карта не проходит",
             status="open",
-            messages=(TicketMessage(id=1, text="Карта не проходит, помогите", is_from_admin=False),),
+            messages=(
+                TicketMessage(id=1, text="Карта не проходит, помогите", is_from_admin=False),
+            ),
         )
         assert ticket.question == "Карта не проходит, помогите"
 

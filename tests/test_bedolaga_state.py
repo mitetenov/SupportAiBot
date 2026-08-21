@@ -30,21 +30,15 @@ class TestAlreadyAnswered:
         assert await TicketStateStore(db).already_answered(17, 100) is False
 
     async def test_true_when_that_message_was_answered(self) -> None:
-        db = _FakeDbManager(
-            row=BedolagaTicketState(ticket_id=17, last_answered_message_id=100)
-        )
+        db = _FakeDbManager(row=BedolagaTicketState(ticket_id=17, last_answered_message_id=100))
         assert await TicketStateStore(db).already_answered(17, 100) is True
 
     async def test_true_when_a_later_message_was_answered(self) -> None:
-        db = _FakeDbManager(
-            row=BedolagaTicketState(ticket_id=17, last_answered_message_id=120)
-        )
+        db = _FakeDbManager(row=BedolagaTicketState(ticket_id=17, last_answered_message_id=120))
         assert await TicketStateStore(db).already_answered(17, 100) is True
 
     async def test_false_for_a_message_newer_than_the_last_answer(self) -> None:
-        db = _FakeDbManager(
-            row=BedolagaTicketState(ticket_id=17, last_answered_message_id=100)
-        )
+        db = _FakeDbManager(row=BedolagaTicketState(ticket_id=17, last_answered_message_id=100))
         assert await TicketStateStore(db).already_answered(17, 101) is False
 
 

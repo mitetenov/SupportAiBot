@@ -174,7 +174,9 @@ class TestResolveTelegramId:
     """A ticket carries the panel's own user id, never a Telegram one."""
 
     async def test_reads_the_telegram_id_of_the_panel_user(self) -> None:
-        client, http_client = _client(get=AsyncMock(return_value=_response(200, {"telegram_id": 42})))
+        client, http_client = _client(
+            get=AsyncMock(return_value=_response(200, {"telegram_id": 42}))
+        )
         assert await client.resolve_telegram_id(55) == 42
         assert http_client.get.await_args.args[0] == "http://bedolaga:8080/users/55"
 
@@ -190,9 +192,7 @@ class TestResolveTelegramId:
         assert get.await_count == 1
 
     async def test_does_not_cache_a_failed_lookup(self) -> None:
-        get = AsyncMock(
-            side_effect=[_response(500, {}), _response(200, {"telegram_id": 42})]
-        )
+        get = AsyncMock(side_effect=[_response(500, {}), _response(200, {"telegram_id": 42})])
         client, _ = _client(get=get)
         assert await client.resolve_telegram_id(55) is None
         assert await client.resolve_telegram_id(55) == 42
@@ -202,7 +202,9 @@ class TestDownloadMedia:
     """A ticket screenshot lives behind the panel's own API key."""
 
     async def test_returns_the_encoded_image(self) -> None:
-        media_response = _response(200, {"media_type": "photo", "media_url": "http://bedolaga:8080/media/abc"})
+        media_response = _response(
+            200, {"media_type": "photo", "media_url": "http://bedolaga:8080/media/abc"}
+        )
         file_response = MagicMock(spec=httpx.Response)
         file_response.status_code = 200
         file_response.content = b"binary-bytes"

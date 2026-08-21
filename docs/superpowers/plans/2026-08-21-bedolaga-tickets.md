@@ -286,7 +286,9 @@ class TestAwaitsAnswer:
         assert ticket.awaits_answer is True
 
     def test_true_for_a_pending_ticket_from_the_cabinet(self) -> None:
-        ticket = self._ticket("pending", TicketMessage(id=1, text="Ещё вопрос", is_from_admin=False))
+        ticket = self._ticket(
+            "pending", TicketMessage(id=1, text="Ещё вопрос", is_from_admin=False)
+        )
         assert ticket.awaits_answer is True
 
     def test_false_when_support_answered_last(self) -> None:
@@ -321,7 +323,9 @@ class TestQuestion:
             user_id=2,
             title="Карта не проходит",
             status="open",
-            messages=(TicketMessage(id=1, text="Карта не проходит, помогите", is_from_admin=False),),
+            messages=(
+                TicketMessage(id=1, text="Карта не проходит, помогите", is_from_admin=False),
+            ),
         )
         assert ticket.question == "Карта не проходит, помогите"
 
@@ -622,7 +626,9 @@ class TestResolveTelegramId:
     """A ticket carries the panel's own user id, never a Telegram one."""
 
     async def test_reads_the_telegram_id_of_the_panel_user(self) -> None:
-        client, http_client = _client(get=AsyncMock(return_value=_response(200, {"telegram_id": 42})))
+        client, http_client = _client(
+            get=AsyncMock(return_value=_response(200, {"telegram_id": 42}))
+        )
         assert await client.resolve_telegram_id(55) == 42
         assert http_client.get.await_args.args[0] == "http://bedolaga:8080/users/55"
 
@@ -638,9 +644,7 @@ class TestResolveTelegramId:
         assert get.await_count == 1
 
     async def test_does_not_cache_a_failed_lookup(self) -> None:
-        get = AsyncMock(
-            side_effect=[_response(500, {}), _response(200, {"telegram_id": 42})]
-        )
+        get = AsyncMock(side_effect=[_response(500, {}), _response(200, {"telegram_id": 42})])
         client, _ = _client(get=get)
         assert await client.resolve_telegram_id(55) is None
         assert await client.resolve_telegram_id(55) == 42
@@ -885,21 +889,15 @@ class TestAlreadyAnswered:
         assert await TicketStateStore(db).already_answered(17, 100) is False
 
     async def test_true_when_that_message_was_answered(self) -> None:
-        db = _FakeDbManager(
-            row=BedolagaTicketState(ticket_id=17, last_answered_message_id=100)
-        )
+        db = _FakeDbManager(row=BedolagaTicketState(ticket_id=17, last_answered_message_id=100))
         assert await TicketStateStore(db).already_answered(17, 100) is True
 
     async def test_true_when_a_later_message_was_answered(self) -> None:
-        db = _FakeDbManager(
-            row=BedolagaTicketState(ticket_id=17, last_answered_message_id=120)
-        )
+        db = _FakeDbManager(row=BedolagaTicketState(ticket_id=17, last_answered_message_id=120))
         assert await TicketStateStore(db).already_answered(17, 100) is True
 
     async def test_false_for_a_message_newer_than_the_last_answer(self) -> None:
-        db = _FakeDbManager(
-            row=BedolagaTicketState(ticket_id=17, last_answered_message_id=100)
-        )
+        db = _FakeDbManager(row=BedolagaTicketState(ticket_id=17, last_answered_message_id=100))
         assert await TicketStateStore(db).already_answered(17, 101) is False
 
 
@@ -1603,35 +1601,36 @@ Expected: FAIL — новые классы падают (`forward_to_support` н
 Добавить в класс два метода:
 
 ```python
-    async def mirror(self, ticket: Ticket, user_key: int, text: str, escalate: bool) -> None:
-        """Put this ticket turn into the user's forum topic.
+async def mirror(self, ticket: Ticket, user_key: int, text: str, escalate: bool) -> None:
+    """Put this ticket turn into the user's forum topic.
 
-        The answer is already delivered — by Bedolaga, into the ticket — so a
-        support group that is down or misconfigured must not cost the user
-        their reply. Every failure here stays here.
-        """
-        try:
-            await self.forwarder.forward_to_support(
-                user_chat_id=user_key,
-                user_message_ids=None,
-                user=self.stand_in(ticket, user_key),
-                bot_response=text,
-                needs_escalation=escalate,
-            )
-        except Exception as e:
-            logger.warning("Could not mirror Bedolaga ticket %d to the topic: %s", ticket.id, e)
+    The answer is already delivered — by Bedolaga, into the ticket — so a
+    support group that is down or misconfigured must not cost the user
+    their reply. Every failure here stays here.
+    """
+    try:
+        await self.forwarder.forward_to_support(
+            user_chat_id=user_key,
+            user_message_ids=None,
+            user=self.stand_in(ticket, user_key),
+            bot_response=text,
+            needs_escalation=escalate,
+        )
+    except Exception as e:
+        logger.warning("Could not mirror Bedolaga ticket %d to the topic: %s", ticket.id, e)
 
-    @staticmethod
-    def stand_in(ticket: Ticket, user_key: int) -> TicketUser:
-        """The sender the forwarder needs to find or name a topic.
 
-        A Telegram user already has a topic under their own id. A cabinet-only
-        account does not, so its topic is named after the panel account rather
-        than the synthetic negative id nobody would recognise.
-        """
-        if user_key > 0:
-            return TicketUser(id=user_key)
-        return TicketUser(id=user_key, first_name=f"Кабинет #{ticket.user_id}")
+@staticmethod
+def stand_in(ticket: Ticket, user_key: int) -> TicketUser:
+    """The sender the forwarder needs to find or name a topic.
+
+    A Telegram user already has a topic under their own id. A cabinet-only
+    account does not, so its topic is named after the panel account rather
+    than the synthetic negative id nobody would recognise.
+    """
+    if user_key > 0:
+        return TicketUser(id=user_key)
+    return TicketUser(id=user_key, first_name=f"Кабинет #{ticket.user_id}")
 ```
 
 - [ ] **Step 4: Убедиться, что все тесты файла проходят**
@@ -1753,7 +1752,9 @@ class TestHandle:
     async def test_rejects_a_bad_signature(self) -> None:
         endpoint, answerer = _endpoint()
         body = _body({"ticket_id": 17})
-        response = await endpoint.handle(_request(body, "ticket.created", _signature(body, "other")))
+        response = await endpoint.handle(
+            _request(body, "ticket.created", _signature(body, "other"))
+        )
         assert response.status == 403
         answerer.schedule.assert_not_called()
 
@@ -1856,7 +1857,7 @@ class BedolagaWebhookEndpoint:
 
         try:
             payload = json.loads(body or b"{}")
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except json.JSONDecodeError, UnicodeDecodeError:
             logger.warning("Bedolaga webhook: body was not JSON")
             return web.json_response({"status": "bad request"}, status=400)
 
@@ -2323,7 +2324,9 @@ class TestDownloadMedia:
     """A ticket screenshot lives behind the panel's own API key."""
 
     async def test_returns_the_encoded_image(self) -> None:
-        media_response = _response(200, {"media_type": "photo", "media_url": "http://bedolaga:8080/media/abc"})
+        media_response = _response(
+            200, {"media_type": "photo", "media_url": "http://bedolaga:8080/media/abc"}
+        )
         file_response = MagicMock(spec=httpx.Response)
         file_response.status_code = 200
         file_response.content = b"binary-bytes"

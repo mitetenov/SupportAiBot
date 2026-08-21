@@ -89,7 +89,9 @@ class TestHandle:
     async def test_rejects_a_bad_signature(self) -> None:
         endpoint, answerer = _endpoint()
         body = _body({"ticket_id": 17})
-        response = await endpoint.handle(_request(body, "ticket.created", _signature(body, "other")))
+        response = await endpoint.handle(
+            _request(body, "ticket.created", _signature(body, "other"))
+        )
         assert response.status == 403
         answerer.schedule.assert_not_called()
 
@@ -113,7 +115,9 @@ class TestHandle:
 
     async def test_rejects_a_non_numeric_ticket_id(self) -> None:
         endpoint, answerer = _endpoint(secret="")
-        response = await endpoint.handle(_request(_body({"ticket_id": "abc", "user_id": 55}), "ticket.created"))
+        response = await endpoint.handle(
+            _request(_body({"ticket_id": "abc", "user_id": 55}), "ticket.created")
+        )
         assert response.status == 400
         answerer.schedule.assert_not_called()
 
