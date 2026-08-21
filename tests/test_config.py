@@ -336,3 +336,35 @@ class TestSecretsAreNotPrintable:
     ) -> None:
         settings = Settings(**valid_settings_dict)
         assert "secret_password" in settings.database_url
+
+
+class TestBedolagaSettings:
+    """The Bedolaga ticket integration is off until it is fully configured."""
+
+    def test_disabled_by_default(self, valid_settings_dict: dict[str, object]) -> None:
+        settings = Settings(**valid_settings_dict)
+        assert settings.bedolaga_enabled is False
+        assert settings.bedolaga_webhook_path == "/bedolaga/webhook"
+        assert settings.bedolaga_poll_interval_seconds == 60
+
+    def test_enabled_requires_api_url(self, valid_settings_dict: dict[str, object]) -> None:
+        with pytest.raises(ValidationError, match="BEDOLAGA_API_URL"):
+            Settings(**valid_settings_dict, bedolaga_enabled=True, bedolaga_api_key="key")
+
+    def test_enabled_requires_api_key(self, valid_settings_dict: dict[str, object]) -> None:
+        with pytest.raises(ValidationError, match="BEDOLAGA_API_KEY"):
+            Settings(
+                **valid_settings_dict,
+                bedolaga_enabled=True,
+                bedolaga_api_url="http://bedolaga:8080",
+            )
+
+    def test_enabled_with_full_configuration(self, valid_settings_dict: dict[str, object]) -> None:
+        settings = Settings(
+            **valid_settings_dict,
+            bedolaga_enabled=True,
+            bedolaga_api_url="http://bedolaga:8080/",
+            bedolaga_api_key="secret-token",
+        )
+        assert settings.bedolaga_enabled is True
+        assert reveal(settings.bedolaga_api_key) == "secret-token"

@@ -91,6 +91,14 @@ class Settings(BaseSettings):
     remnawave_api_token: SecretStr = SecretStr("")
     remnawave_mcp_readonly: bool = False
 
+    # Bedolaga tickets
+    bedolaga_enabled: bool = False
+    bedolaga_api_url: str = ""
+    bedolaga_api_key: SecretStr = SecretStr("")
+    bedolaga_webhook_secret: SecretStr = SecretStr("")
+    bedolaga_webhook_path: str = "/bedolaga/webhook"
+    bedolaga_poll_interval_seconds: int = 60
+
     # Server / Healthcheck
     healthcheck_port: int = 8080
 
@@ -264,6 +272,15 @@ class Settings(BaseSettings):
             "REMNAWAVE_MCP_URL не задан. Укажите URL MCP-сервера Remnawave, "
             "например: REMNAWAVE_MCP_URL=http://mcp-remnawave:3100",
         )
+
+        # 5. Validate Bedolaga
+        if self.bedolaga_enabled:
+            if not self.bedolaga_api_url.strip():
+                raise ValueError("BEDOLAGA_API_URL is required when BEDOLAGA_ENABLED is true")
+            _require_text(
+                self.bedolaga_api_key,
+                "BEDOLAGA_API_KEY is required when BEDOLAGA_ENABLED is true",
+            )
 
         return self
 
