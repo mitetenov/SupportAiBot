@@ -157,28 +157,41 @@ async def main() -> None:
             settings=settings,
             admin_notifier=admin_notifier,
         )
-        await mcp_client.init()
+        mcp_initialized = await mcp_client.init()
         mcp_router = McpRouter(
             clients=[mcp_client],
             readonly=settings.remnawave_mcp_readonly,
             settings=settings,
         )
-        if not mcp_router.list_tools():
-            # mcp-remnawave keeps a single global session and offers no way to
-            # release it, so a bot restarted on its own gets "already
-            # initialized" and comes up with no Remnawave tools at all. That is
-            # invisible to users — the model just answers without their data —
-            # so say it out loud rather than leaving one WARNING in the log.
+        exposed_tools = mcp_router.list_tools()
+
+        if not mcp_initialized:
+            context = (
+                "Бот запущен БЕЗ инструментов Remnawave: не удалось инициализировать "
+                f"MCP ({settings.remnawave_mcp_url}). Проверьте доступность и логи "
+                "контейнера mcp-remnawave."
+            )
             logger.error(
-                "Starting WITHOUT Remnawave tools — the model cannot look up "
-                "subscriptions, nodes or devices. Restart %s to clear its session.",
+                "Starting WITHOUT Remnawave tools: MCP initialization failed at %s",
                 settings.remnawave_mcp_url,
             )
             await admin_notifier.notify_error(
-                "Бот запущен БЕЗ инструментов Remnawave: MCP-сервер держит "
-                f"занятую сессию ({settings.remnawave_mcp_url}). "
-                "Перезапустите контейнер mcp-remnawave вместе с ботом.",
-                error=RuntimeError("no MCP tools exposed"),
+                context,
+                error=RuntimeError("MCP initialization failed"),
+            )
+        elif not exposed_tools:
+            context = (
+                "Бот запущен БЕЗ инструментов Remnawave: MCP вернул 0 разрешённых "
+                "инструментов. Проверьте MCP_TAG, REMNAWAVE_IS_SUPPORT и allowlist бота "
+                f"({settings.remnawave_mcp_url})."
+            )
+            logger.error(
+                "Starting WITHOUT Remnawave tools: MCP exposed no allowed tools at %s",
+                settings.remnawave_mcp_url,
+            )
+            await admin_notifier.notify_error(
+                context,
+                error=RuntimeError("no allowed MCP tools exposed"),
             )
 
         # 4. Setup Chat History & LLM Client
