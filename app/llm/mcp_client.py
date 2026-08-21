@@ -423,8 +423,7 @@ class HttpMcpClient(McpClientInterface):
     async def close(self) -> None:
         """Terminate the owned MCP session and close an internally owned HTTP client."""
         try:
-            if self._initialized:
-                await self._terminate_session()
+            await self._terminate_session()
         except Exception as error:
             logger.warning("Failed to terminate MCP session at %s: %s", self.base_url, error)
         finally:
