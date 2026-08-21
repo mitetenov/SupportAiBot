@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from app.bedolaga.client import MAX_REPLY_LENGTH, BedolagaClient
+from app.bedolaga.types import TELEGRAM_ID_UNKNOWN, TelegramIdLookup
 
 BASE_URL = "http://bedolaga:8080"
 API_KEY = "test-api-key"
@@ -177,12 +178,29 @@ class TestResolveTelegramId:
         client, http_client = _client(
             get=AsyncMock(return_value=_response(200, {"telegram_id": 42}))
         )
-        assert await client.resolve_telegram_id(55) == 42
+        lookup = await client.resolve_telegram_id(55)
+        assert lookup == TelegramIdLookup(known=True, telegram_id=42)
         assert http_client.get.await_args.args[0] == "http://bedolaga:8080/users/55"
 
-    async def test_returns_none_for_a_cabinet_only_user(self) -> None:
+    async def test_a_cabinet_only_user_is_a_known_answer_without_an_id(self) -> None:
         client, _ = _client(get=AsyncMock(return_value=_response(200, {"telegram_id": None})))
-        assert await client.resolve_telegram_id(55) is None
+        lookup = await client.resolve_telegram_id(55)
+        assert lookup.known is True
+        assert lookup.telegram_id is None
+
+    async def test_an_error_status_is_not_the_same_as_no_telegram_id(self) -> None:
+        """A one-second 502 must not read as "this account has no Telegram".
+
+        The caller turns "no Telegram id" into a negative synthetic key that a
+        forum topic and a chat history then hang off permanently, so the two
+        outcomes may never share a value.
+        """
+        client, _ = _client(get=AsyncMock(return_value=_response(502, {})))
+        assert await client.resolve_telegram_id(55) == TELEGRAM_ID_UNKNOWN
+
+    async def test_a_transport_error_is_not_the_same_as_no_telegram_id(self) -> None:
+        client, _ = _client(get=AsyncMock(side_effect=httpx.ReadTimeout("too slow")))
+        assert await client.resolve_telegram_id(55) == TELEGRAM_ID_UNKNOWN
 
     async def test_caches_the_lookup(self) -> None:
         get = AsyncMock(return_value=_response(200, {"telegram_id": 42}))
@@ -194,8 +212,8 @@ class TestResolveTelegramId:
     async def test_does_not_cache_a_failed_lookup(self) -> None:
         get = AsyncMock(side_effect=[_response(500, {}), _response(200, {"telegram_id": 42})])
         client, _ = _client(get=get)
-        assert await client.resolve_telegram_id(55) is None
-        assert await client.resolve_telegram_id(55) == 42
+        assert (await client.resolve_telegram_id(55)).known is False
+        assert (await client.resolve_telegram_id(55)).telegram_id == 42
 
 
 class TestDownloadMedia:

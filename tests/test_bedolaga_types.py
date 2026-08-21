@@ -132,3 +132,49 @@ class TestQuestion:
             ),
         )
         assert ticket.question == "Та же ошибка"
+
+    def test_falls_back_to_the_title_when_the_last_message_has_no_text(self) -> None:
+        """A bare picture after «пришлите скриншот» is the commonest ticket there is.
+
+        The title used to be mixed in only for a one-message ticket, so a
+        screenshot arriving into a running thread left the model an empty
+        string to answer — and the panel published whatever it invented.
+        """
+        ticket = Ticket(
+            id=1,
+            user_id=2,
+            title="Не работает оплата",
+            status="open",
+            messages=(
+                TicketMessage(id=1, text="Не работает", is_from_admin=False),
+                TicketMessage(id=2, text="Пришлите скриншот", is_from_admin=True),
+                TicketMessage(
+                    id=3, text="", is_from_admin=False, has_media=True, media_type="photo"
+                ),
+            ),
+        )
+        assert ticket.question == "Не работает оплата"
+
+    def test_a_whitespace_only_message_counts_as_no_text(self) -> None:
+        ticket = Ticket(
+            id=1,
+            user_id=2,
+            title="Не работает оплата",
+            status="open",
+            messages=(
+                TicketMessage(id=1, text="Карта не проходит", is_from_admin=False),
+                TicketMessage(id=2, text="Попробуйте другую", is_from_admin=True),
+                TicketMessage(id=3, text="   \n ", is_from_admin=False),
+            ),
+        )
+        assert ticket.question == "Не работает оплата"
+
+    def test_returns_nothing_when_neither_the_title_nor_the_message_says_anything(self) -> None:
+        ticket = Ticket(
+            id=1,
+            user_id=2,
+            title="   ",
+            status="open",
+            messages=(TicketMessage(id=1, text="", is_from_admin=False, has_media=True),),
+        )
+        assert ticket.question == ""

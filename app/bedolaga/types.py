@@ -18,6 +18,26 @@ class ImageAttachment:
 
 
 @dataclass(frozen=True)
+class TelegramIdLookup:
+    """What the panel said when asked for the Telegram id behind a panel user.
+
+    `telegram_id is None` is a real answer — a cabinet account registered by
+    email has no Telegram at all — but only when `known` is True. A panel that
+    answered 502, or did not answer, knows nothing about this user either way,
+    and the two outcomes must never collapse into one value: the caller turns
+    "no Telegram id" into a synthetic identity that, once a forum topic and a
+    chat history hang off it, cannot be taken back.
+    """
+
+    known: bool
+    telegram_id: int | None = None
+
+
+#: The panel could not be asked, or did not answer — ask again later.
+TELEGRAM_ID_UNKNOWN: TelegramIdLookup = TelegramIdLookup(known=False)
+
+
+@dataclass(frozen=True)
 class TicketMessage:
     """One message inside a ticket."""
 
@@ -59,12 +79,19 @@ class Ticket:
         "уже третий раз"). Once the thread is running, the title is stale
         context the chat history already carries, so only the newest message
         counts.
+
+        Unless that newest message has no text at all — a bare screenshot after
+        "пришлите скриншот" is the commonest ticket there is. The title is the
+        only thing left that names the problem, so it stands in whatever the
+        length of the thread, rather than leaving nothing to ask about.
         """
         last = self.last_message
         text = last.text.strip() if last else ""
         title = self.title.strip()
+        if not text:
+            return title
         if len(self.messages) == 1 and title and title.lower() not in text.lower():
-            return f"{title}\n\n{text}" if text else title
+            return f"{title}\n\n{text}"
         return text
 
 

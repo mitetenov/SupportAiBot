@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from app.bedolaga.client import BedolagaClient
 from app.bedolaga.state import TicketStateStore
-from app.bedolaga.types import Ticket
+from app.bedolaga.types import ImageAttachment, Ticket
 from app.bot.admin_notifier import AdminNotifier
 from app.bot.conversation_state import ConversationState
 from app.bot.forwarder import SupportGroupForwarder
@@ -105,6 +105,20 @@ class TicketAnswerer:
             return
 
         user_key = await self.user_key(ticket)
+        if user_key is None:
+            # The panel would not say who this is. Guessing means filing the
+            # turn under a synthetic cabinet key, and that key outlives the
+            # blip: a forum topic, a chat history and every future Remnawave
+            # lookup for this person hang off it. Nothing is marked, so the
+            # sweep a minute from now asks again.
+            logger.warning(
+                "Bedolaga ticket %d: the panel did not resolve user %d, leaving it for the "
+                "next sweep",
+                ticket.id,
+                ticket.user_id,
+            )
+            return
+
         question = ticket.question
 
         if self.conversation_state.is_operator_recently_active(user_key):
@@ -127,7 +141,17 @@ class TicketAnswerer:
             logger.info("Bedolaga ticket %d is rate limited for user %d", ticket.id, user_key)
             return
 
-        reply = await self.ask_model(ticket, question, user_key)
+        attachment = await self.attachment_for(ticket)
+        if not question.strip() and attachment is None:
+            # There is genuinely nothing to ask about: no text anywhere in the
+            # ticket and no picture the model can read. Sending an empty prompt
+            # gets a plausible invention back, and `client.reply` would publish
+            # it to the user as support's answer. Nothing is marked answered,
+            # so the user's next message is still the bot's to take.
+            await self.hand_over(ticket, user_key)
+            return
+
+        reply = await self.ask_model(question, user_key, attachment)
         answer = EscalationPolicy.strip_marker(reply.text) or get_message("bedolaga.llm.empty")
         escalate = EscalationPolicy.model_requested_escalation(
             reply.text
@@ -163,22 +187,36 @@ class TicketAnswerer:
                 reply.faq_context,
             )
 
-    async def ask_model(self, ticket: Ticket, question: str, user_key: int) -> LlmReply:
-        """Ask the model about this ticket, with the screenshot when there is one."""
-        last = ticket.last_message
-        wants_vision = (
-            last is not None
-            and last.has_media
-            and (last.media_type or "") == "photo"
-            and self.llm_client.supports_images()
-        )
-        if not wants_vision or last is None:
-            return await self.llm_client.chat(question, user_key)
+    async def attachment_for(self, ticket: Ticket) -> ImageAttachment | None:
+        """The screenshot this turn can show the model, when there is one.
 
-        attachment = await self.client.download_media(ticket.id, last.id)
+        None is every reason the model will see no picture, answered in one
+        place: no attachment at all, an attachment that is not a photo (voice,
+        video, a document), a text-only provider, and a panel that could not
+        serve the file. The caller needs that single answer twice — once to
+        decide whether an empty question leaves anything to ask about, and once
+        to pick which model call to make.
+        """
+        last = ticket.last_message
+        if last is None or not last.has_media:
+            return None
+        if (last.media_type or "") != "photo":
+            logger.info(
+                "Bedolaga ticket %d: message %d carries %s, which the bot does not read",
+                ticket.id,
+                last.id,
+                last.media_type or "an attachment of unknown type",
+            )
+            return None
+        if not self.llm_client.supports_images():
+            return None
+        return await self.client.download_media(ticket.id, last.id)
+
+    async def ask_model(
+        self, question: str, user_key: int, attachment: ImageAttachment | None
+    ) -> LlmReply:
+        """Ask the model about this ticket, with the screenshot when there is one."""
         if attachment is None:
-            # Better a text-only answer than none: the panel may simply have
-            # lost the file.
             return await self.llm_client.chat(question, user_key)
 
         prompt = question.strip() or get_message("bot.photo.default.prompt")
@@ -187,6 +225,29 @@ class TicketAnswerer:
             user_key,
             attachment.base64_image,
             attachment.mime_type,
+        )
+
+    async def hand_over(self, ticket: Ticket, user_key: int) -> None:
+        """Answer a ticket with nothing in it by asking for words, and call a human.
+
+        Deliberately not routed through the model and deliberately not marked
+        answered: the bot has been given nothing to work with, and the honest
+        reply is a fixed line rather than whatever a model invents from an
+        empty prompt. The mirror escalates so an operator, who can open the
+        attachment the bot cannot, sees the ticket in the topic.
+        """
+        if not await self.client.reply(ticket.id, get_message("bedolaga.nothing.to.answer")):
+            await self.admin_notifier.notify_error(
+                get_message("bedolaga.reply.failed", ticket.id),
+                user_id=user_key,
+            )
+            return
+
+        await self.mirror(
+            ticket,
+            user_key,
+            get_message("bedolaga.nothing.mirror", ticket.id, ticket.title),
+            escalate=True,
         )
 
     async def mirror(self, ticket: Ticket, user_key: int, text: str, escalate: bool) -> None:
@@ -219,8 +280,8 @@ class TicketAnswerer:
             return TicketUser(id=user_key)
         return TicketUser(id=user_key, first_name=f"Кабинет #{ticket.user_id}")
 
-    async def user_key(self, ticket: Ticket) -> int:
-        """The id this ticket's conversation is kept under.
+    async def user_key(self, ticket: Ticket) -> int | None:
+        """The id this ticket's conversation is kept under, or None to try later.
 
         A Telegram id is what the rest of the bot keys on — chat history, FAQ
         follow-ups and every Remnawave lookup. A cabinet account registered by
@@ -228,6 +289,13 @@ class TicketAnswerer:
         per person, never colliding with a real Telegram id, and finding
         nothing in Remnawave, which is exactly right — we cannot prove who
         that person is.
+
+        None is not a third kind of person, it is "the panel did not answer".
+        The negative key is permanent in practice, so it may only be minted
+        when the panel actually said this account has no Telegram — never
+        because a request timed out at the wrong moment.
         """
-        telegram_id = await self.client.resolve_telegram_id(ticket.user_id)
-        return telegram_id if telegram_id else -ticket.user_id
+        lookup = await self.client.resolve_telegram_id(ticket.user_id)
+        if not lookup.known:
+            return None
+        return lookup.telegram_id or -ticket.user_id

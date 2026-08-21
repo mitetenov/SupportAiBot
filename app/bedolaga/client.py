@@ -6,7 +6,14 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from app.bedolaga.types import OPEN_STATUSES, ImageAttachment, Ticket, ticket_from_payload
+from app.bedolaga.types import (
+    OPEN_STATUSES,
+    TELEGRAM_ID_UNKNOWN,
+    ImageAttachment,
+    TelegramIdLookup,
+    Ticket,
+    ticket_from_payload,
+)
 from app.retry import post_with_retry
 
 logger = logging.getLogger(__name__)
@@ -143,15 +150,19 @@ class BedolagaClient:
             return False
         return response.status_code == 200
 
-    async def resolve_telegram_id(self, user_id: int) -> int | None:
-        """The Telegram id behind a panel user id, or None when there is none.
+    async def resolve_telegram_id(self, user_id: int) -> TelegramIdLookup:
+        """Ask the panel for the Telegram id behind a panel user id.
 
         Cabinet accounts created by email or OAuth have no Telegram id at all,
-        which is a normal answer here rather than a failure.
+        which is a normal answer here rather than a failure — so the answer is
+        a `TelegramIdLookup` and not a bare `int | None`. A one-second 502 and
+        an account that genuinely has no Telegram both used to come back as
+        None, and the caller reads None as "this person only exists in the
+        panel" and files them under a synthetic identity forever.
         """
         cached = self._telegram_ids.get(user_id)
         if cached is not None:
-            return cached
+            return TelegramIdLookup(known=True, telegram_id=cached)
 
         try:
             response = await self.http_client.get(
@@ -160,19 +171,19 @@ class BedolagaClient:
             )
         except httpx.HTTPError as e:
             logger.warning("Bedolaga: could not read user %d: %s", user_id, e)
-            return None
+            return TELEGRAM_ID_UNKNOWN
 
         if response.status_code != 200:
             logger.warning("Bedolaga: reading user %d returned %d", user_id, response.status_code)
-            return None
+            return TELEGRAM_ID_UNKNOWN
 
         telegram_id = (response.json() or {}).get("telegram_id")
         if telegram_id is None:
-            return None
+            return TelegramIdLookup(known=True, telegram_id=None)
 
         resolved = int(telegram_id)
         self._telegram_ids[user_id] = resolved
-        return resolved
+        return TelegramIdLookup(known=True, telegram_id=resolved)
 
     def resolve_media_url(self, media_url: str) -> str | None:
         """Turn the panel's `media_url` into an absolute URL we may send the key to.

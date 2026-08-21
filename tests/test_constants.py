@@ -65,6 +65,8 @@ class TestMessages:
             "bedolaga.llm.empty",
             "bedolaga.escalation.note",
             "bedolaga.mirror",
+            "bedolaga.nothing.to.answer",
+            "bedolaga.nothing.mirror",
         ]
         for key in required_keys:
             assert key in MESSAGES, f"Missing key in MESSAGES: {key}"

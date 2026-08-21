@@ -4,9 +4,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from app.bedolaga.pipeline import TicketAnswerer
-from app.bedolaga.types import Ticket, TicketMessage
+from app.bedolaga.types import TELEGRAM_ID_UNKNOWN, TelegramIdLookup, Ticket, TicketMessage
 from app.bot.conversation_state import ConversationState
 from app.bot.rate_limiter import UserRateLimiter
+from app.constants import get_message
 from app.llm.base import LlmReply
 
 TICKET_ID = 17
@@ -35,10 +36,15 @@ def _answerer(
     telegram_id: int | None = TELEGRAM_ID,
     reply_ok: bool = True,
     conversation_state: ConversationState | None = None,
+    lookup: TelegramIdLookup | None = None,
 ) -> tuple[TicketAnswerer, dict[str, Any]]:
     client = MagicMock()
     client.get_ticket = AsyncMock(return_value=ticket if ticket is not None else _ticket())
-    client.resolve_telegram_id = AsyncMock(return_value=telegram_id)
+    client.resolve_telegram_id = AsyncMock(
+        return_value=lookup
+        if lookup is not None
+        else TelegramIdLookup(known=True, telegram_id=telegram_id)
+    )
     client.reply = AsyncMock(return_value=reply_ok)
     client.set_priority = AsyncMock(return_value=True)
 
@@ -407,3 +413,161 @@ class TestScreenshots:
 
         parts["client"].download_media.assert_not_awaited()
         parts["llm_client"].chat.assert_awaited_once()
+
+
+class TestNothingToAnswer:
+    """A screenshot with no words, on a model that cannot see it.
+
+    The commonest ticket in the tracker is "пришлите скриншот" followed by a
+    bare picture, and the default provider is text-only. Asking the model
+    anyway means asking it nothing, and `client.reply` publishes whatever it
+    invents to the user as support's answer — permanently, because the message
+    is then marked answered and never revisited.
+    """
+
+    def _screenshot_thread(self) -> Ticket:
+        return _ticket(
+            TicketMessage(id=100, text="Не работает", is_from_admin=False),
+            TicketMessage(id=101, text="Пришлите скриншот", is_from_admin=True),
+            TicketMessage(id=102, text="", is_from_admin=False, has_media=True, media_type="photo"),
+            title="",
+        )
+
+    def _blind(self, answerer: TicketAnswerer, parts: dict[str, Any]) -> None:
+        parts["client"].download_media = AsyncMock()
+        parts["llm_client"].supports_images = MagicMock(return_value=False)
+        parts["llm_client"].chat_with_image = AsyncMock()
+        answerer.client = parts["client"]
+        answerer.llm_client = parts["llm_client"]
+
+    async def test_never_asks_the_model_an_empty_question(self) -> None:
+        answerer, parts = _answerer(ticket=self._screenshot_thread())
+        self._blind(answerer, parts)
+
+        await answerer.handle(TICKET_ID)
+
+        parts["llm_client"].chat.assert_not_awaited()
+        parts["llm_client"].chat_with_image.assert_not_awaited()
+
+    async def test_does_not_burn_the_message(self) -> None:
+        """Unmarked on purpose: the user's next message is still ours to answer."""
+        answerer, parts = _answerer(ticket=self._screenshot_thread())
+        self._blind(answerer, parts)
+
+        await answerer.handle(TICKET_ID)
+
+        parts["state"].mark_answered.assert_not_awaited()
+
+    async def test_asks_the_user_for_words_in_the_ticket(self) -> None:
+        answerer, parts = _answerer(ticket=self._screenshot_thread())
+        self._blind(answerer, parts)
+
+        await answerer.handle(TICKET_ID)
+
+        parts["client"].reply.assert_awaited_once_with(
+            TICKET_ID, get_message("bedolaga.nothing.to.answer")
+        )
+
+    async def test_calls_a_human_into_the_topic(self) -> None:
+        answerer, parts = _answerer(ticket=self._screenshot_thread())
+        self._blind(answerer, parts)
+
+        await answerer.handle(TICKET_ID)
+
+        kwargs = parts["forwarder"].forward_to_support.await_args.kwargs
+        assert kwargs["needs_escalation"] is True
+        assert str(TICKET_ID) in kwargs["bot_response"]
+
+    async def test_records_no_knowledge_gap_for_a_question_nobody_asked(self) -> None:
+        answerer, parts = _answerer(ticket=self._screenshot_thread())
+        self._blind(answerer, parts)
+
+        await answerer.handle(TICKET_ID)
+
+        parts["knowledge_gap_service"].evaluate.assert_not_awaited()
+
+    async def test_reports_a_panel_that_rejects_the_handover(self) -> None:
+        answerer, parts = _answerer(ticket=self._screenshot_thread(), reply_ok=False)
+        self._blind(answerer, parts)
+
+        await answerer.handle(TICKET_ID)
+
+        parts["admin_notifier"].notify_error.assert_awaited()
+
+    async def test_a_vision_model_still_answers_the_same_ticket(self) -> None:
+        """The guard must not cost the working path anything."""
+        from app.bedolaga.types import ImageAttachment
+
+        answerer, parts = _answerer(ticket=self._screenshot_thread())
+        parts["client"].download_media = AsyncMock(
+            return_value=ImageAttachment(base64_image="Zm9v", mime_type="image/png")
+        )
+        parts["llm_client"].supports_images = MagicMock(return_value=True)
+        parts["llm_client"].chat_with_image = AsyncMock(return_value=LlmReply(text="Видно ошибку"))
+        answerer.client = parts["client"]
+        answerer.llm_client = parts["llm_client"]
+
+        await answerer.handle(TICKET_ID)
+
+        parts["client"].reply.assert_awaited_once_with(TICKET_ID, "Видно ошибку")
+        parts["state"].mark_answered.assert_awaited_once_with(TICKET_ID, 102)
+
+    async def test_an_attachment_the_bot_does_not_read_hands_over_too(self) -> None:
+        """A voice note is media, but never one the vision path can use."""
+        ticket = _ticket(
+            TicketMessage(id=100, text="Не работает", is_from_admin=False),
+            TicketMessage(id=101, text="Что именно?", is_from_admin=True),
+            TicketMessage(id=102, text="", is_from_admin=False, has_media=True, media_type="voice"),
+            title="",
+        )
+        answerer, parts = _answerer(ticket=ticket)
+        parts["client"].download_media = AsyncMock()
+        parts["llm_client"].supports_images = MagicMock(return_value=True)
+        answerer.client = parts["client"]
+        answerer.llm_client = parts["llm_client"]
+
+        await answerer.handle(TICKET_ID)
+
+        parts["client"].download_media.assert_not_awaited()
+        parts["llm_client"].chat.assert_not_awaited()
+        parts["client"].reply.assert_awaited_once_with(
+            TICKET_ID, get_message("bedolaga.nothing.to.answer")
+        )
+
+
+class TestUnresolvedIdentity:
+    """A panel blip must not mint a permanent identity for a Telegram user."""
+
+    async def test_does_not_answer_when_the_panel_does_not_say_who_this_is(self) -> None:
+        answerer, parts = _answerer(lookup=TELEGRAM_ID_UNKNOWN)
+        await answerer.handle(TICKET_ID)
+        parts["llm_client"].chat.assert_not_awaited()
+        parts["client"].reply.assert_not_awaited()
+
+    async def test_leaves_the_message_for_the_next_sweep(self) -> None:
+        answerer, parts = _answerer(lookup=TELEGRAM_ID_UNKNOWN)
+        await answerer.handle(TICKET_ID)
+        parts["state"].mark_answered.assert_not_awaited()
+
+    async def test_does_not_open_a_cabinet_topic_for_a_telegram_user(self) -> None:
+        """The forum topic and its TopicMapping row would outlive the outage."""
+        answerer, parts = _answerer(lookup=TELEGRAM_ID_UNKNOWN)
+        await answerer.handle(TICKET_ID)
+        parts["forwarder"].forward_to_support.assert_not_awaited()
+
+    async def test_does_not_wake_the_admins_over_a_transient_blip(self) -> None:
+        answerer, parts = _answerer(lookup=TELEGRAM_ID_UNKNOWN)
+        await answerer.handle(TICKET_ID)
+        parts["admin_notifier"].notify_error.assert_not_awaited()
+
+    async def test_a_definite_no_telegram_id_still_answers_under_the_negative_key(self) -> None:
+        answerer, parts = _answerer(lookup=TelegramIdLookup(known=True, telegram_id=None))
+        await answerer.handle(TICKET_ID)
+        assert parts["llm_client"].chat.await_args.args[1] == -PANEL_USER_ID
+        parts["client"].reply.assert_awaited_once()
+
+    async def test_a_resolved_lookup_still_answers_under_the_telegram_id(self) -> None:
+        answerer, parts = _answerer(lookup=TelegramIdLookup(known=True, telegram_id=TELEGRAM_ID))
+        await answerer.handle(TICKET_ID)
+        assert parts["llm_client"].chat.await_args.args[1] == TELEGRAM_ID
+        parts["client"].reply.assert_awaited_once()

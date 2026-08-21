@@ -20,7 +20,7 @@ import httpx
 from app.bedolaga.client import BedolagaClient
 from app.bedolaga.pipeline import TicketAnswerer
 from app.bedolaga.state import TicketStateStore
-from app.bedolaga.types import Ticket, TicketMessage
+from app.bedolaga.types import TelegramIdLookup, Ticket, TicketMessage
 from app.bedolaga.webhook import BedolagaWebhookEndpoint
 from app.bot.conversation_state import ConversationState
 from app.bot.rate_limiter import UserRateLimiter
@@ -214,7 +214,9 @@ class TestConcurrentTurns:
 
         client = MagicMock()
         client.get_ticket = AsyncMock(side_effect=read_ticket)
-        client.resolve_telegram_id = AsyncMock(return_value=TELEGRAM_ID)
+        client.resolve_telegram_id = AsyncMock(
+            return_value=TelegramIdLookup(known=True, telegram_id=TELEGRAM_ID)
+        )
         client.reply = AsyncMock(return_value=True)
         client.set_priority = AsyncMock(return_value=True)
 
