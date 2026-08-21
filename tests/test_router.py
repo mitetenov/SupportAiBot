@@ -19,6 +19,7 @@ from app.bot.command_handler import SupportCommandHandler
 from app.bot.conversation_state import ConversationState
 from app.bot.router import setup_router
 from app.bot.sender import TelegramMessageSender
+from app.constants import get_message
 from app.storage.chat_history import ChatHistoryService
 from app.storage.models import MessageMapping, TopicMapping
 from app.storage.models import User as DbUser
@@ -546,3 +547,59 @@ async def test_router_still_delivers_ordinary_operator_text(mock_db):
 
     operator_ask.handle.assert_not_awaited()
     assert bot.send_message.call_args_list[0][1]["chat_id"] == 100
+
+
+@pytest.mark.asyncio
+async def test_router_refuses_to_confirm_delivery_for_a_cabinet_only_topic(mock_db):
+    """A Bedolaga cabinet account has no Telegram chat to deliver to.
+
+    Its topic is keyed by the synthetic negative id the ticket pipeline
+    invents. Every send there fails silently, so confirming "отправлено" told
+    the operator their reply had landed when nothing had been delivered.
+    """
+    mock_db.topic_mappings_by_topic[42] = TopicMapping(
+        user_id=-55, topic_id=42, user_name="Кабинет #55"
+    )
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    bot.copy_message = AsyncMock()
+
+    conv_state = ConversationState()
+    operator_ask = MagicMock()
+    operator_ask.handle = AsyncMock()
+
+    router = setup_router(
+        sender=TelegramMessageSender(bot),
+        llm_client=MagicMock(),
+        forwarder=MagicMock(),
+        db_manager=mock_db,
+        chat_history_service=ChatHistoryService(),
+        knowledge_gap_service=MagicMock(),
+        command_handler=MagicMock(),
+        photo_downloader=MagicMock(),
+        message_buffer=MagicMock(),
+        pipeline=MagicMock(),
+        conversation_state=conv_state,
+        operator_ask=operator_ask,
+        support_group_chat_id=-100123,
+    )
+
+    dp = Dispatcher()
+    dp.include_router(router)
+
+    await dp.feed_update(bot, _operator_message("Проверьте оплату"))
+
+    bot.copy_message.assert_not_called()
+    operator_ask.handle.assert_not_awaited()
+
+    # The only message sent is the clarification, and it stays in the topic.
+    bot.send_message.assert_awaited_once()
+    sent = bot.send_message.await_args.kwargs
+    assert sent["chat_id"] == -100123
+    assert sent["message_thread_id"] == 42
+    assert sent["reply_to_message_id"] == 501
+    assert sent["text"] == get_message("support.cabinet_only.no_delivery")
+
+    # Nothing was delivered, so the bot must keep answering the ticket.
+    assert not conv_state.is_operator_recently_active(-55)

@@ -213,6 +213,87 @@ class TestUserReplyFailureStillReachesSupport:
         assert "\n".join(sent) == long_answer
 
 
+def _stub_process_boundaries(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
+    """Replace everything main() talks to outside this process.
+
+    Telegram, Postgres, the MCP server and long-polling — and nothing else, so
+    the real composition root is what runs.
+    """
+    import app.main as main_module
+    from app.config import Settings
+
+    settings = Settings(
+        telegram_bot_token="123:ABC",
+        telegram_support_group_chat_id=-1001234567890,
+        telegram_support_admin_username="admin",
+        telegram_support_admin_telegram_ids={1},
+        llm_provider="deepseek",
+        deepseek_api_key="sk-deepseek",
+        deepseek_model="deepseek-chat",
+        embedding_provider="gemini",
+        gemini_api_key="gemini-key",
+        remnawave_mcp_url=MCP_URL,
+        healthcheck_port=0,
+    )
+    monkeypatch.setattr(main_module, "get_settings", lambda: settings)
+
+    bot = MagicMock()
+    bot.session = None
+    bot.set_my_commands = AsyncMock()
+    monkeypatch.setattr(main_module, "Bot", lambda **_: bot)
+
+    db_manager = MagicMock()
+    db_manager.init_models = AsyncMock()
+    db_manager.close = AsyncMock()
+    monkeypatch.setattr(main_module, "get_db_manager", lambda *_: db_manager)
+    # Schema reconciliation is integration-tested against a real engine; this
+    # composition-root test deliberately replaces every process boundary, so
+    # do not let an AsyncMock engine manufacture unawaited-result warnings.
+    monkeypatch.setattr(main_module, "sync_legacy_schema", AsyncMock(return_value=[]))
+
+    faq_initializer = MagicMock()
+    faq_initializer.run = AsyncMock()
+    monkeypatch.setattr(main_module, "FaqInitializer", lambda **_: faq_initializer)
+
+    knowledge_gaps = MagicMock()
+    knowledge_gaps.init_schema = AsyncMock()
+    monkeypatch.setattr(main_module, "KnowledgeGapService", lambda **_: knowledge_gaps)
+
+    mcp_client = MagicMock()
+    mcp_client.init = AsyncMock(return_value=True)
+    mcp_client.close = AsyncMock()
+    mcp_client.list_tools = MagicMock(return_value=[])
+    monkeypatch.setattr(main_module, "HttpMcpClient", lambda **_: mcp_client)
+
+    health_runner = MagicMock()
+    stop_health_server = AsyncMock()
+    monkeypatch.setattr(main_module, "start_health_server", AsyncMock(return_value=health_runner))
+    monkeypatch.setattr(main_module, "stop_health_server", stop_health_server)
+
+    reached_polling = asyncio.Event()
+
+    class StubDispatcher:
+        def include_router(self, _router: object) -> None:
+            self.router = _router
+
+        def resolve_used_update_types(self) -> list[str]:
+            return ["message", "message_reaction"]
+
+        async def start_polling(self, *_args: object, **_kwargs: object) -> None:
+            reached_polling.set()
+
+    monkeypatch.setattr(main_module, "Dispatcher", StubDispatcher)
+
+    return {
+        "bot": bot,
+        "db_manager": db_manager,
+        "faq_initializer": faq_initializer,
+        "mcp_client": mcp_client,
+        "reached_polling": reached_polling,  # type: ignore[dict-item]
+        "stop_health_server": stop_health_server,
+    }
+
+
 class TestCompositionRoot:
     """main() is where the MCP bug lived, and nothing exercised main().
 
@@ -226,74 +307,82 @@ class TestCompositionRoot:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import app.main as main_module
-        from app.config import Settings
 
-        settings = Settings(
-            telegram_bot_token="123:ABC",
-            telegram_support_group_chat_id=-1001234567890,
-            telegram_support_admin_username="admin",
-            telegram_support_admin_telegram_ids={1},
-            llm_provider="deepseek",
-            deepseek_api_key="sk-deepseek",
-            deepseek_model="deepseek-chat",
-            embedding_provider="gemini",
-            gemini_api_key="gemini-key",
-            remnawave_mcp_url=MCP_URL,
-            healthcheck_port=0,
-        )
-        monkeypatch.setattr(main_module, "get_settings", lambda: settings)
-
-        bot = MagicMock()
-        bot.session = None
-        bot.set_my_commands = AsyncMock()
-        monkeypatch.setattr(main_module, "Bot", lambda **_: bot)
-
-        db_manager = MagicMock()
-        db_manager.init_models = AsyncMock()
-        db_manager.close = AsyncMock()
-        monkeypatch.setattr(main_module, "get_db_manager", lambda *_: db_manager)
-
-        faq_initializer = MagicMock()
-        faq_initializer.run = AsyncMock()
-        monkeypatch.setattr(main_module, "FaqInitializer", lambda **_: faq_initializer)
-
-        knowledge_gaps = MagicMock()
-        knowledge_gaps.init_schema = AsyncMock()
-        monkeypatch.setattr(main_module, "KnowledgeGapService", lambda **_: knowledge_gaps)
-
-        mcp_client = MagicMock()
-        mcp_client.init = AsyncMock(return_value=True)
-        mcp_client.close = AsyncMock()
-        mcp_client.list_tools = MagicMock(return_value=[])
-        monkeypatch.setattr(main_module, "HttpMcpClient", lambda **_: mcp_client)
-
-        health_runner = MagicMock()
-        monkeypatch.setattr(
-            main_module, "start_health_server", AsyncMock(return_value=health_runner)
-        )
-        monkeypatch.setattr(main_module, "stop_health_server", AsyncMock())
-
-        reached_polling = asyncio.Event()
-
-        class StubDispatcher:
-            def include_router(self, _router: object) -> None:
-                self.router = _router
-
-            def resolve_used_update_types(self) -> list[str]:
-                return ["message", "message_reaction"]
-
-            async def start_polling(self, *_args: object, **_kwargs: object) -> None:
-                reached_polling.set()
-
-        monkeypatch.setattr(main_module, "Dispatcher", StubDispatcher)
+        parts = _stub_process_boundaries(monkeypatch)
 
         await main_module.main()
 
-        assert reached_polling.is_set(), "main() never got to long-polling"
-        mcp_client.init.assert_awaited_once()
-        bot.set_my_commands.assert_awaited_once()
-        db_manager.init_models.assert_awaited_once()
-        faq_initializer.run.assert_awaited_once()
+        assert parts["reached_polling"].is_set(), "main() never got to long-polling"
+        parts["mcp_client"].init.assert_awaited_once()
+        parts["bot"].set_my_commands.assert_awaited_once()
+        parts["db_manager"].init_models.assert_awaited_once()
+        parts["faq_initializer"].run.assert_awaited_once()
         # ...and it tore everything back down.
-        mcp_client.close.assert_awaited_once()
-        db_manager.close.assert_awaited_once()
+        parts["mcp_client"].close.assert_awaited_once()
+        parts["db_manager"].close.assert_awaited_once()
+
+
+class TestShutdownOrder:
+    """`docker stop` gives the whole sequence ten seconds before SIGKILL.
+
+    A ticket turn is a model call plus retries plus a tool loop, so waiting on
+    one without a bound used to put the Telegram buffer drain — the path that
+    worked long before this integration existed — behind an unbounded wait.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_stuck_ticket_drain_cannot_hold_up_the_shutdown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import app.main as main_module
+
+        parts = _stub_process_boundaries(monkeypatch)
+        monkeypatch.setattr(main_module, "TICKET_DRAIN_TIMEOUT_SECONDS", 0.01)
+
+        order: list[str] = []
+        never_finishes = asyncio.Event()
+
+        async def stuck_drain() -> None:
+            order.append("ticket-drain")
+            await never_finishes.wait()
+
+        async def stop_health(_runner: object) -> None:
+            order.append("stop-health")
+
+        monkeypatch.setattr(main_module, "stop_health_server", stop_health)
+
+        from app.bot.buffer import UserMessageBuffer
+
+        buffer_drain = UserMessageBuffer.drain
+
+        async def recording_drain(
+            self: UserMessageBuffer, sink: object, timeout: float = 20.0
+        ) -> None:
+            order.append("telegram-drain")
+            await buffer_drain(self, sink, timeout)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(UserMessageBuffer, "drain", recording_drain)
+
+        from app.bot.maintenance import MaintenanceJob
+
+        ticket_support = MagicMock()
+        ticket_support.answerer.drain = stuck_drain
+        ticket_support.register_routes = MagicMock()
+        ticket_support.maintenance_job = MagicMock(
+            return_value=MaintenanceJob(
+                name="bedolaga-ticket-sweep",
+                interval_seconds=3600.0,
+                run=AsyncMock(return_value=0),
+            )
+        )
+        monkeypatch.setattr(main_module, "create_ticket_support", lambda **_: ticket_support)
+
+        await main_module.main()
+
+        # The shutdown got past the stuck drain and closed everything after it.
+        parts["db_manager"].close.assert_awaited_once()
+        parts["mcp_client"].close.assert_awaited_once()
+        # The webhook endpoint went down first, so no delivery could schedule
+        # work nothing would wait for; then Telegram — the larger audience and
+        # the older path — got its turn before the optional integration did.
+        assert order == ["stop-health", "telegram-drain", "ticket-drain"]

@@ -42,7 +42,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 
 | Переменная | Обязательна | По умолчанию | Описание |
 |---|---|---|---|
-| `LLM_PROVIDER` | — | `deepseek` | `deepseek`, `gemini` или `openai` |
+| `LLM_PROVIDER` | — | `openai` | `deepseek`, `gemini` или `openai` |
 | `EMBEDDING_PROVIDER` | — | `gemini` | `gemini` или `openai` |
 | `TELEGRAM_BOT_TOKEN` | да | — | Токен бота от @BotFather |
 | `TELEGRAM_SUPPORT_GROUP_CHAT_ID` | да | — | ID форум-группы (отрицательный, напр. `-1001234567890`) |
@@ -53,7 +53,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `GEMINI_API_KEY` | при gemini | — | API-ключ Google Gemini |
 | `GEMINI_MODEL` | при gemini | — | Модель Gemini |
 | `OPENAI_API_KEY` | при openai | — | API-ключ OpenAI |
-| `OPENAI_MODEL` | при openai | — | Модель OpenAI (напр. `gpt-5.6-luna`) |
+| `OPENAI_MODEL` | при openai | `gpt-5.6-luna` | Модель OpenAI |
 | `OPENAI_EMBEDDING_MODEL` | при embedding=openai | `text-embedding-3-small` | Модель эмбеддингов OpenAI |
 | `REMNAWAVE_BASE_URL` | да | — | URL панели Remnawave |
 | `REMNAWAVE_API_TOKEN` | да | — | JWT API-токен Remnawave |
@@ -67,6 +67,13 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `PGVECTOR_DB` | — | `vpnsupport` | Название БД |
 | `BOT_TAG` | — | `latest` | Тег образа mitetenov/supportbot |
 | `MCP_TAG` | — | `v3.2.0` | Тег образа mitetenov/remnawave-mcp. Закреплён намеренно: набор инструментов MCP зависит от версии |
+| `BEDOLAGA_ENABLED` | — | `false` | Включить интеграцию с Bedolaga |
+| `BEDOLAGA_API_URL` | при enabled | — | URL Web API Bedolaga (напр. `http://bedolaga:8080`) |
+| `BEDOLAGA_API_KEY` | при enabled | — | API-ключ Bedolaga (создаётся в админке) |
+| `BEDOLAGA_WEBHOOK_SECRET` | при enabled | — | Секрет для проверки подписи вебхуков (HMAC-SHA256) |
+| `BEDOLAGA_WEBHOOK_PATH` | — | `/bedolaga/webhook` | Путь вебхука бота (настраивается в Bedolaga) |
+| `BEDOLAGA_POLL_INTERVAL_SECONDS` | — | `60` | Интервал проверки новых тикетов (сверка при отказе вебхука) |
+| `BEDOLAGA_MAX_CONCURRENT_TICKETS` | — | `5` | Сколько тикетов обрабатывается одновременно. Защищает общий пул HTTP-соединений (его же используют LLM и эмбеддинги) и rate limit провайдера от большого бэклога. Минимум `1` |
 
 При запуске валидируются только переменные выбранного провайдера (ключа и модели). Переменные неактивного провайдера можно не заполнять.
 
@@ -104,6 +111,113 @@ FAQ, история его диалога, инструменты Remnawave с �
 срок.
 
 Ошибка модели и `/ask` без вопроса остаются в топике — пользователю в этих случаях не уходит ничего.
+
+## Тикеты Bedolaga
+
+Бот умеет отвечать на тикеты, которые пользователи открывают в кабинете и боте
+[Bedolaga](https://github.com/fr1ngg/remnawave-bedolaga-telegram-bot), — тем же
+FAQ, той же историей диалога и теми же данными Remnawave, что и в Telegram.
+Ответ приходит пользователю от лица поддержки: Bedolaga сохраняет его как
+сообщение админа, переводит тикет в статус `answered`, шлёт уведомление в
+Telegram и обновляет кабинет. Каждый обработанный тикет зеркалится в топик
+пользователя в форум-группе поддержки.
+
+Включается переменными `BEDOLAGA_*` (см. `.env.example`). Пока
+`BEDOLAGA_ENABLED=false`, ничего из этого не работает и не запускается.
+
+### Как это устроено
+
+- **События.** Bedolaga шлёт вебхуки `ticket.created` и `ticket.message_added`
+  на `POST <бот>:8080/bedolaga/webhook` (путь настраивается). Подпись
+  `X-Webhook-Signature` проверяется HMAC-SHA256 по `BEDOLAGA_WEBHOOK_SECRET`.
+  Секрет обязателен: с `BEDOLAGA_ENABLED=true` и пустым секретом бот не
+  стартует, иначе эндпоинт принимал бы любые запросы без проверки подписи.
+- **Сверка.** Раз в `BEDOLAGA_POLL_INTERVAL_SECONDS` секунд бот сам смотрит
+  тикеты в статусах `open` и `pending`. Это не роскошь: доставка вебхуков в
+  Bedolaga не ретраится, упавший запрос теряется навсегда.
+- **Идемпотентность.** Таблица `bedolaga_ticket_state` хранит id последнего
+  отвеченного сообщения каждого тикета, поэтому повторная доставка, гонка
+  вебхука с опросом и рестарт бота не приводят к второму ответу.
+- **Без петель.** Собственный ответ бота возвращается событием с
+  `is_from_admin=true` и отбрасывается.
+- **Отказ записи не крутится бесконечно.** Если панель не приняла ответ
+  (отозванный токен, 500 на `/reply`), тикет откладывается с растущей паузой —
+  минута, две, четыре и так до получаса, — а не переспрашивается моделью на
+  каждой сверке. Одинаковые алерты администраторам схлопываются: одно
+  сообщение раз в 10 минут с числом подавленных повторов.
+- **Эскалация.** Если модель просит человека или пользователь сам его зовёт,
+  к ответу добавляется строка про оператора, приоритет тикета поднимается до
+  `high`, а в группу поддержки уходит алерт.
+- **Оператор главнее.** Если с пользователем прямо сейчас работает живой
+  оператор, бот в тикет не пишет — вопрос уходит в топик с пометкой. Это
+  работает в обе стороны: и когда оператор отвечает в зеркальном топике
+  Telegram, и когда он отвечает прямо в админке Bedolaga **после уже
+  записанного ответа бота**. Во втором случае бот узнаёт человека по
+  сообщению админа, которое новее его собственного (id каждого своего ответа
+  он запоминает в `bedolaga_ticket_state`), и отступает на 30 минут с момента
+  ответа оператора. По истечении окна (если оператор закончил диалог) бот снова
+  подхватывает новые вопросы пользователя. До первого ответа бота старые
+  сообщения админа неотличимы от истории, существовавшей до подключения.
+- **Кабинетные аккаунты без Telegram ID** (регистрация по email или OAuth)
+  получают ответ по FAQ: история такого диалога ведётся под синтетическим
+  ключом, а данные подписки не запрашиваются — подтвердить, кто это, нечем.
+- **Скриншоты** из тикета скачиваются через API Bedolaga и уходят в модель,
+  если выбранный провайдер умеет зрение.
+
+### Подключение
+
+> **Перед первым включением разберите бэклог.** Сверка не фильтрует тикеты ни по
+> возрасту, ни по watermark: первый же проход после `BEDOLAGA_ENABLED=true`
+> возьмёт **все** тикеты в статусах `open` и `pending` — включая заброшенные
+> месячной давности — и ответит на каждый. Это не тихая операция: на каждый
+> ответ Bedolaga шлёт пользователю уведомление в Telegram и пушит сообщение в
+> кабинет. Истории диалога по этим людям у бота нет, а вопросом для модели
+> служит последняя реплика треда, поэтому ответы на старые тикеты выходят
+> вырванными из контекста («да, всё ещё не работает» без предыстории).
+> Закройте или разберите старые тикеты в Bedolaga **до** того, как включите
+> интеграцию, и включайте её на спокойной очереди.
+> `BEDOLAGA_MAX_CONCURRENT_TICKETS` ограничивает только скорость разбора, но не
+> сам факт: рано или поздно ответ получит каждый открытый тикет.
+
+1. Создайте в Bedolaga токен Web API (админка → API-токены) и заполните
+   `BEDOLAGA_API_URL`, `BEDOLAGA_API_KEY`, `BEDOLAGA_WEBHOOK_SECRET`,
+   `BEDOLAGA_ENABLED=true`.
+2. Свяжите контейнеры общей docker-сетью:
+
+```bash
+docker network create bedolaga-net
+```
+
+   и подключите к ней стек Bedolaga. Бот подключается к этой сети только с
+   оверлеем `docker-compose.bedolaga.yml` — в базовом `docker-compose.yml`
+   её нет, поэтому обычный запуск не требует, чтобы сеть существовала.
+   С интеграцией бот поднимается так:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.bedolaga.yml up -d
+```
+
+3. Зарегистрируйте два вебхука — по одному на событие, `event_type` в Bedolaga
+   один на вебхук:
+
+```bash
+curl -X POST "$BEDOLAGA_API_URL/webhooks" \
+  -H "X-API-Key: $BEDOLAGA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"support-bot: new ticket","url":"http://vpn-support-bot:8080/bedolaga/webhook","event_type":"ticket.created","secret":"'"$BEDOLAGA_WEBHOOK_SECRET"'"}'
+```
+
+```bash
+curl -X POST "$BEDOLAGA_API_URL/webhooks" \
+  -H "X-API-Key: $BEDOLAGA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"support-bot: ticket message","url":"http://vpn-support-bot:8080/bedolaga/webhook","event_type":"ticket.message_added","secret":"'"$BEDOLAGA_WEBHOOK_SECRET"'"}'
+```
+
+4. Перезапустите бота (той же командой с обоими `-f`) и откройте тестовый
+   тикет. Доставки видно в
+   `GET /webhooks/stats` на стороне Bedolaga, обработку — в логах бота
+   (`Bedolaga ticket ...`).
 
 ## Автоэскалация
 

@@ -21,6 +21,7 @@ _SETTINGS_ENV_PREFIXES = (
     "CHAT_HISTORY_",
     "CONVERSATION_",
     "HEALTHCHECK_",
+    "BEDOLAGA_",
 )
 
 

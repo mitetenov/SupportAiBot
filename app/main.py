@@ -9,6 +9,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 from aiohttp import web
 
+from app.bedolaga import TicketSupport, create_ticket_support
 from app.bot.admin_notifier import AdminNotifier
 from app.bot.buffer import UserMessageBuffer
 from app.bot.command_handler import SupportCommandHandler
@@ -36,6 +37,12 @@ from app.storage.database import get_db_manager
 from app.storage.schema import sync_legacy_schema
 
 logger = logging.getLogger(__name__)
+
+#: How long shutdown waits for Bedolaga ticket turns already in flight.
+#: `docker compose` allows the whole shutdown ten seconds by default, and the
+#: Telegram buffer drain has to fit in there too, so this is a courtesy for the
+#: turn that is nearly done — not a promise to finish one that just started.
+TICKET_DRAIN_TIMEOUT_SECONDS: float = 3.0
 
 __all__ = [
     "create_health_app",
@@ -119,6 +126,7 @@ async def main() -> None:
     pipeline: UserMessagePipeline | None = None
     typing_indicator: TypingIndicator | None = None
     maintenance: MaintenanceScheduler | None = None
+    ticket_support: TicketSupport | None = None
 
     try:
         # 1. Initialize DB models, then reconcile anything an earlier version left behind
@@ -236,6 +244,17 @@ async def main() -> None:
             window_ms=settings.telegram_buffer_window_ms,
             max_messages=settings.telegram_buffer_max_messages,
         )
+        ticket_support = create_ticket_support(
+            settings=settings,
+            http_client=http_client,
+            llm_client=llm_client,
+            db_manager=db_manager,
+            forwarder=forwarder,
+            admin_notifier=admin_notifier,
+            rate_limiter=rate_limiter,
+            knowledge_gap_service=knowledge_gap_service,
+            conversation_state=conversation_state,
+        )
 
         router = setup_router(
             sender=sender,
@@ -261,13 +280,16 @@ async def main() -> None:
         await knowledge_gap_service.init_schema()
 
         # 7. Start recurring cleanups (chat history TTL, rate limiter, conversation state)
-        maintenance = MaintenanceScheduler(
-            build_default_jobs(chat_history_service, rate_limiter, conversation_state)
-        )
+        jobs = build_default_jobs(chat_history_service, rate_limiter, conversation_state)
+        if ticket_support is not None:
+            jobs.append(ticket_support.maintenance_job())
+        maintenance = MaintenanceScheduler(jobs)
         maintenance.start()
 
         # 8. Start Healthcheck server
         health_app = create_health_app()
+        if ticket_support is not None:
+            ticket_support.register_routes(health_app)
         health_runner = await start_health_server(
             health_app,
             port=settings.healthcheck_port,
@@ -286,16 +308,39 @@ async def main() -> None:
         logger.info("Shutting down VPN Support Bot...")
         if maintenance is not None:
             await maintenance.stop()
+        if health_runner is not None:
+            # Before either drain: while this is up, a Bedolaga webhook
+            # delivery still schedules new background work, and nothing below
+            # would wait for a task created after the drain it belongs to.
+            await stop_health_server(health_runner)
         if message_buffer is not None:
             # Anything still buffered or being answered gets its turn first;
             # only then do the clients it needs get closed underneath it.
+            # Telegram goes before tickets: it is the larger audience and the
+            # one that worked before the integration existed.
             if pipeline is not None:
                 await message_buffer.drain(pipeline.handle)
             message_buffer.shutdown()
+        if ticket_support is not None:
+            # A ticket half-answered on shutdown is a user waiting forever:
+            # the model call already cost tokens, and nothing would retry it.
+            # Bounded, because one turn is a model call plus retries plus up to
+            # five tool-loop iterations, and `docker stop` gives the whole
+            # sequence ten seconds before SIGKILL — an unbounded wait here
+            # would take everything after it down with it.
+            try:
+                await asyncio.wait_for(
+                    ticket_support.answerer.drain(),
+                    timeout=TICKET_DRAIN_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "Bedolaga ticket turns did not finish within %.0fs; "
+                    "the next sweep after restart picks them up",
+                    TICKET_DRAIN_TIMEOUT_SECONDS,
+                )
         if typing_indicator is not None:
             typing_indicator.shutdown()
-        if health_runner is not None:
-            await stop_health_server(health_runner)
         if mcp_client is not None:
             await mcp_client.close()
         await http_client.aclose()

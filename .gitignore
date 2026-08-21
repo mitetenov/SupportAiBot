@@ -15,6 +15,7 @@ bin/
 data/
 .env
 .worktrees/
+.superpowers/
 .DS_Store
 *.log
 DataExport_*/
@@ -31,6 +32,7 @@ coverage.xml
 htmlcov/
 .ruff_cache/
 .venv/
+.venv
 dist/
 build/
 *.egg-info/

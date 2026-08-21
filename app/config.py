@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     conversation_last_query_ttl_hours: int = 6
 
     # Providers
-    llm_provider: str = "deepseek"
+    llm_provider: str = "openai"
     embedding_provider: str = "gemini"
 
     # Telegram
@@ -90,6 +90,15 @@ class Settings(BaseSettings):
     remnawave_base_url: str = ""
     remnawave_api_token: SecretStr = SecretStr("")
     remnawave_mcp_readonly: bool = False
+
+    # Bedolaga tickets
+    bedolaga_enabled: bool = False
+    bedolaga_api_url: str = ""
+    bedolaga_api_key: SecretStr = SecretStr("")
+    bedolaga_webhook_secret: SecretStr = SecretStr("")
+    bedolaga_webhook_path: str = "/bedolaga/webhook"
+    bedolaga_poll_interval_seconds: int = 60
+    bedolaga_max_concurrent_tickets: int = 5
 
     # Server / Healthcheck
     healthcheck_port: int = 8080
@@ -264,6 +273,54 @@ class Settings(BaseSettings):
             "REMNAWAVE_MCP_URL не задан. Укажите URL MCP-сервера Remnawave, "
             "например: REMNAWAVE_MCP_URL=http://mcp-remnawave:3100",
         )
+
+        # 5. Validate Bedolaga
+        if self.bedolaga_enabled:
+            _require_text(
+                self.bedolaga_api_url,
+                "BEDOLAGA_ENABLED=true, но BEDOLAGA_API_URL не задан. "
+                "Укажите URL Web API Bedolaga, "
+                "например: BEDOLAGA_API_URL=http://bedolaga:8080 "
+                "или выключите интеграцию: BEDOLAGA_ENABLED=false",
+            )
+            _require_text(
+                self.bedolaga_api_key,
+                "BEDOLAGA_ENABLED=true, но BEDOLAGA_API_KEY не задан. "
+                "Создайте токен Web API в админке Bedolaga и добавьте в .env: "
+                "BEDOLAGA_API_KEY=...",
+            )
+            # Without a secret the webhook endpoint accepts every delivery, and
+            # it schedules model calls for anyone who can reach the bot's port —
+            # bedolaga-net is a shared network, so "internal only" is no promise.
+            _require_text(
+                self.bedolaga_webhook_secret,
+                "BEDOLAGA_ENABLED=true, но BEDOLAGA_WEBHOOK_SECRET не задан. "
+                "Без него вебхук принимает любые запросы без проверки подписи. "
+                "Придумайте случайную строку, укажите её при регистрации вебхуков "
+                "в Bedolaga и добавьте в .env: BEDOLAGA_WEBHOOK_SECRET=...",
+            )
+            if not self.bedolaga_webhook_path.startswith("/"):
+                raise ValueError(
+                    f"BEDOLAGA_WEBHOOK_PATH должен начинаться со слэша '/'. "
+                    f"Сейчас задано: '{self.bedolaga_webhook_path}'"
+                )
+            if self.bedolaga_poll_interval_seconds < 1:
+                raise ValueError(
+                    f"BEDOLAGA_POLL_INTERVAL_SECONDS должен быть не меньше 1. "
+                    f"Сейчас задано: {self.bedolaga_poll_interval_seconds}. "
+                    f"Значение по умолчанию: BEDOLAGA_POLL_INTERVAL_SECONDS=60"
+                )
+            # Zero would let the semaphore block every ticket forever; a
+            # negative value is a typo. Nothing here is a security boundary —
+            # the cap only protects the shared connection pool and the LLM
+            # provider's rate limit from a large backlog.
+            if self.bedolaga_max_concurrent_tickets < 1:
+                raise ValueError(
+                    f"BEDOLAGA_MAX_CONCURRENT_TICKETS должен быть не меньше 1. "
+                    f"Сейчас задано: {self.bedolaga_max_concurrent_tickets}. "
+                    f"Это ограничение числа тикетов, обрабатываемых одновременно; "
+                    f"значение по умолчанию: BEDOLAGA_MAX_CONCURRENT_TICKETS=5"
+                )
 
         return self
 

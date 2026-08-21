@@ -57,10 +57,16 @@ class TestMessages:
             "support.media.received",
             "support.ratelimited",
             "support.ai.suppressed",
+            "support.cabinet_only.no_delivery",
             "admin.error.prefix",
             "admin.error.details",
             "admin.response.prefix",
             "admin.response.truncated",
+            "bedolaga.llm.empty",
+            "bedolaga.escalation.note",
+            "bedolaga.mirror",
+            "bedolaga.nothing.to.answer",
+            "bedolaga.nothing.mirror",
         ]
         for key in required_keys:
             assert key in MESSAGES, f"Missing key in MESSAGES: {key}"
