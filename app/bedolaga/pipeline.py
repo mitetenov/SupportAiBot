@@ -1,0 +1,132 @@
+"""One turn of a Bedolaga ticket conversation: read it, answer it, write it back."""
+
+import asyncio
+import logging
+from dataclasses import dataclass
+
+from app.bedolaga.client import BedolagaClient
+from app.bedolaga.state import TicketStateStore
+from app.bedolaga.types import Ticket
+from app.bot.admin_notifier import AdminNotifier
+from app.bot.conversation_state import ConversationState
+from app.bot.forwarder import SupportGroupForwarder
+from app.bot.keyed_lock import KeyedLock
+from app.bot.rate_limiter import UserRateLimiter
+from app.constants import get_message
+from app.llm.base import LlmClient
+from app.llm.escalation import EscalationPolicy
+from app.rag.knowledge_gaps import KnowledgeGapService
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TicketUser:
+    """A stand-in for an aiogram user, for the code that forwards to a topic.
+
+    SupportGroupForwarder only ever reads `id`, `username`, `first_name` and
+    `last_name` off the sender, and a ticket has no aiogram update behind it.
+    """
+
+    id: int
+    username: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+
+
+class TicketAnswerer:
+    """Answers Bedolaga tickets with the model that answers Telegram messages."""
+
+    def __init__(
+        self,
+        client: BedolagaClient,
+        llm_client: LlmClient,
+        state: TicketStateStore,
+        rate_limiter: UserRateLimiter,
+        admin_notifier: AdminNotifier,
+        forwarder: SupportGroupForwarder,
+        knowledge_gap_service: KnowledgeGapService,
+        conversation_state: ConversationState,
+    ) -> None:
+        self.client = client
+        self.llm_client = llm_client
+        self.state = state
+        self.rate_limiter = rate_limiter
+        self.admin_notifier = admin_notifier
+        self.forwarder = forwarder
+        self.knowledge_gap_service = knowledge_gap_service
+        self.conversation_state = conversation_state
+        # One turn per ticket: a webhook and a poll sweep can both bring in the
+        # same ticket a millisecond apart.
+        self._tickets = KeyedLock()
+        self._in_flight: set[asyncio.Task[None]] = set()
+
+    def schedule(self, ticket_id: int) -> None:
+        """Answer this ticket in the background.
+
+        A webhook delivery has ten seconds before Bedolaga gives up on it, and
+        a model turn takes longer than that — so the HTTP handler schedules and
+        answers 200 immediately.
+        """
+        task = asyncio.create_task(self.handle(ticket_id), name=f"bedolaga-ticket-{ticket_id}")
+        self._in_flight.add(task)
+        task.add_done_callback(self._in_flight.discard)
+
+    async def drain(self) -> None:
+        """Wait for the turns already in flight — used on shutdown."""
+        if self._in_flight:
+            await asyncio.gather(*tuple(self._in_flight), return_exceptions=True)
+
+    async def handle(self, ticket_id: int) -> None:
+        """Answer one ticket, one turn at a time, never raising to the caller."""
+        async with self._tickets.hold(ticket_id):
+            try:
+                await self._answer(ticket_id)
+            except Exception as e:
+                logger.error("Failed to answer Bedolaga ticket %d: %s", ticket_id, e, exc_info=True)
+                await self.admin_notifier.notify_error(
+                    get_message("bedolaga.error.context", ticket_id),
+                    error=e,
+                )
+
+    async def _answer(self, ticket_id: int) -> None:
+        ticket = await self.client.get_ticket(ticket_id)
+        if ticket is None or not ticket.awaits_answer:
+            return
+
+        last = ticket.last_message
+        if last is None or await self.state.already_answered(ticket.id, last.id):
+            return
+
+        user_key = await self.user_key(ticket)
+        if not self.rate_limiter.try_acquire(user_key):
+            # Nothing is recorded, so the next sweep answers this message once
+            # the window has passed.
+            logger.info("Bedolaga ticket %d is rate limited for user %d", ticket.id, user_key)
+            return
+
+        question = ticket.question
+        reply = await self.llm_client.chat(question, user_key)
+        answer = EscalationPolicy.strip_marker(reply.text) or get_message("bedolaga.llm.empty")
+
+        if not await self.client.reply(ticket.id, answer):
+            await self.admin_notifier.notify_error(
+                get_message("bedolaga.reply.failed", ticket.id),
+                user_id=user_key,
+            )
+            return
+
+        await self.state.mark_answered(ticket.id, last.id)
+
+    async def user_key(self, ticket: Ticket) -> int:
+        """The id this ticket's conversation is kept under.
+
+        A Telegram id is what the rest of the bot keys on — chat history, FAQ
+        follow-ups and every Remnawave lookup. A cabinet account registered by
+        email has none, so it gets its panel id with the sign flipped: unique
+        per person, never colliding with a real Telegram id, and finding
+        nothing in Remnawave, which is exactly right — we cannot prove who
+        that person is.
+        """
+        telegram_id = await self.client.resolve_telegram_id(ticket.user_id)
+        return telegram_id if telegram_id else -ticket.user_id

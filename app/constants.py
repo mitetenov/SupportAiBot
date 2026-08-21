@@ -87,6 +87,15 @@ MESSAGES: dict[str, str] = {
     "support.ask.usage": "Использование: /ask <вопрос>. Ответ ИИ уйдёт пользователю от лица бота.",
     "support.ask.header": "Ответ ИИ отправлен пользователю:\n\n{0}",
     "support.ask.error": "Не удалось получить ответ ИИ, пользователю ничего не отправлено. Детали: {0}",
+    # Bedolaga tickets
+    "bedolaga.llm.empty": "Передаю обращение живому оператору — он ответит в этом тикете.",
+    "bedolaga.escalation.note": (
+        "\n\n———\nПередаю обращение живому оператору — он ответит в этом тикете."
+    ),
+    "bedolaga.mirror": "🎫 Тикет #{0} · {1}\n\nВопрос:\n{2}\n\nОтвет бота:\n{3}",
+    "bedolaga.suppressed": "🎫 Тикет #{0} · {1}\n\nВопрос:\n{2}\n\n(бот молчит: с пользователем работает оператор)",
+    "bedolaga.error.context": "Не удалось обработать тикет Bedolaga #{0}",
+    "bedolaga.reply.failed": "Не удалось отправить ответ в тикет Bedolaga #{0}",
     # Admin notifications
     "admin.error.prefix": "[ОШИБКА БОТА]",
     "admin.error.details": "Детали ошибки:",

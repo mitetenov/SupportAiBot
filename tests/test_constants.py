@@ -61,6 +61,9 @@ class TestMessages:
             "admin.error.details",
             "admin.response.prefix",
             "admin.response.truncated",
+            "bedolaga.llm.empty",
+            "bedolaga.escalation.note",
+            "bedolaga.mirror",
         ]
         for key in required_keys:
             assert key in MESSAGES, f"Missing key in MESSAGES: {key}"
