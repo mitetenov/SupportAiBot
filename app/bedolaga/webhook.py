@@ -16,8 +16,8 @@ def signature_matches(secret: str, body: bytes, header: str | None) -> bool:
     """Verify the `X-Webhook-Signature` Bedolaga sends over the raw body.
 
     With no secret configured there is nothing to check — the endpoint is then
-    only as safe as the network it listens on, which is why the README tells
-    you to set one.
+    only as safe as the network it listens on, which is why `validate_startup`
+    refuses to start the integration without one.
     """
     if not secret:
         return True

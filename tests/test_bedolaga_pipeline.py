@@ -289,6 +289,37 @@ class TestOperatorSuppression:
         await answerer.handle(TICKET_ID)
         parts["state"].mark_answered.assert_not_awaited()
 
+    async def test_mirrors_the_notice_once_per_message(self) -> None:
+        """The ticket stays open, so every sweep reads the same message again.
+
+        Without a guard the operator's topic collects one identical notice per
+        sweep for the whole suppression window.
+        """
+        conversation_state = ConversationState()
+        conversation_state.record_operator_reply(TELEGRAM_ID)
+        answerer, parts = _answerer(conversation_state=conversation_state)
+
+        await answerer.handle(TICKET_ID)
+        await answerer.handle(TICKET_ID)
+
+        assert parts["forwarder"].forward_to_support.await_count == 1
+
+    async def test_mirrors_again_when_the_user_writes_another_message(self) -> None:
+        conversation_state = ConversationState()
+        conversation_state.record_operator_reply(TELEGRAM_ID)
+        answerer, parts = _answerer(conversation_state=conversation_state)
+
+        await answerer.handle(TICKET_ID)
+        parts["client"].get_ticket = AsyncMock(
+            return_value=_ticket(
+                TicketMessage(id=100, text="Помогите", is_from_admin=False),
+                TicketMessage(id=101, text="Алло?", is_from_admin=False),
+            )
+        )
+        await answerer.handle(TICKET_ID)
+
+        assert parts["forwarder"].forward_to_support.await_count == 2
+
 
 class TestKnowledgeGaps:
     """A ticket nobody could answer is a gap in the FAQ, same as a chat message."""

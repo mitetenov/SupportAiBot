@@ -275,11 +275,28 @@ class Settings(BaseSettings):
 
         # 5. Validate Bedolaga
         if self.bedolaga_enabled:
-            if not self.bedolaga_api_url.strip():
-                raise ValueError("BEDOLAGA_API_URL is required when BEDOLAGA_ENABLED is true")
+            _require_text(
+                self.bedolaga_api_url,
+                "BEDOLAGA_ENABLED=true, но BEDOLAGA_API_URL не задан. "
+                "Укажите URL Web API Bedolaga, "
+                "например: BEDOLAGA_API_URL=http://bedolaga:8080 "
+                "или выключите интеграцию: BEDOLAGA_ENABLED=false",
+            )
             _require_text(
                 self.bedolaga_api_key,
-                "BEDOLAGA_API_KEY is required when BEDOLAGA_ENABLED is true",
+                "BEDOLAGA_ENABLED=true, но BEDOLAGA_API_KEY не задан. "
+                "Создайте токен Web API в админке Bedolaga и добавьте в .env: "
+                "BEDOLAGA_API_KEY=...",
+            )
+            # Without a secret the webhook endpoint accepts every delivery, and
+            # it schedules model calls for anyone who can reach the bot's port —
+            # bedolaga-net is a shared network, so "internal only" is no promise.
+            _require_text(
+                self.bedolaga_webhook_secret,
+                "BEDOLAGA_ENABLED=true, но BEDOLAGA_WEBHOOK_SECRET не задан. "
+                "Без него вебхук принимает любые запросы без проверки подписи. "
+                "Придумайте случайную строку, укажите её при регистрации вебхуков "
+                "в Bedolaga и добавьте в .env: BEDOLAGA_WEBHOOK_SECRET=...",
             )
 
         return self

@@ -119,6 +119,21 @@ def setup_router(
             return
 
         user_id = mapping.user_id
+        if user_id < 0:
+            # A Bedolaga cabinet account has no Telegram id, so its topic is
+            # keyed by the synthetic negative id the ticket pipeline invents.
+            # There is no chat behind it: every send fails, and the sender
+            # swallows the failure, so the operator would read "отправлено"
+            # for a message that went nowhere. Nothing is recorded either —
+            # the bot must keep answering the ticket on the next sweep.
+            await sender.send_reply(
+                support_group_chat_id,
+                message.message_id,
+                get_message("support.cabinet_only.no_delivery"),
+                message_thread_id=topic_id,
+            )
+            return
+
         # Deliberately not falling back to the caption: a photo with a caption is
         # still media, and copying it delivers both halves. Reading the caption as
         # the operator's message would drop the image.

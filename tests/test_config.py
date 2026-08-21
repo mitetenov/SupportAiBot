@@ -349,7 +349,12 @@ class TestBedolagaSettings:
 
     def test_enabled_requires_api_url(self, valid_settings_dict: dict[str, object]) -> None:
         with pytest.raises(ValidationError, match="BEDOLAGA_API_URL"):
-            Settings(**valid_settings_dict, bedolaga_enabled=True, bedolaga_api_key="key")
+            Settings(
+                **valid_settings_dict,
+                bedolaga_enabled=True,
+                bedolaga_api_key="key",
+                bedolaga_webhook_secret="shhh",
+            )
 
     def test_enabled_requires_api_key(self, valid_settings_dict: dict[str, object]) -> None:
         with pytest.raises(ValidationError, match="BEDOLAGA_API_KEY"):
@@ -357,6 +362,17 @@ class TestBedolagaSettings:
                 **valid_settings_dict,
                 bedolaga_enabled=True,
                 bedolaga_api_url="http://bedolaga:8080",
+                bedolaga_webhook_secret="shhh",
+            )
+
+    def test_enabled_requires_webhook_secret(self, valid_settings_dict: dict[str, object]) -> None:
+        """An unsigned webhook schedules model calls for anyone who reaches the port."""
+        with pytest.raises(ValidationError, match="BEDOLAGA_WEBHOOK_SECRET"):
+            Settings(
+                **valid_settings_dict,
+                bedolaga_enabled=True,
+                bedolaga_api_url="http://bedolaga:8080",
+                bedolaga_api_key="key",
             )
 
     def test_enabled_with_full_configuration(self, valid_settings_dict: dict[str, object]) -> None:
@@ -365,6 +381,8 @@ class TestBedolagaSettings:
             bedolaga_enabled=True,
             bedolaga_api_url="http://bedolaga:8080/",
             bedolaga_api_key="secret-token",
+            bedolaga_webhook_secret="shhh",
         )
         assert settings.bedolaga_enabled is True
         assert reveal(settings.bedolaga_api_key) == "secret-token"
+        assert reveal(settings.bedolaga_webhook_secret) == "shhh"

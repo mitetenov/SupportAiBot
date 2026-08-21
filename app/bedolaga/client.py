@@ -2,6 +2,7 @@
 
 import base64
 import logging
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -98,14 +99,20 @@ class BedolagaClient:
         The panel takes it from here: the message is stored as an admin reply,
         the ticket flips to `answered`, and the user gets a Telegram
         notification plus a live update in the cabinet.
+
+        Sent exactly once, never through `post_with_retry`: all three of those
+        happen on the panel's side before the response comes back, so a read
+        timeout on a write that landed would resend a duplicate reply and a
+        duplicate notification. The retry lives in the ticket status instead —
+        a failure here leaves the message unmarked, the next sweep re-reads the
+        ticket, and if the reply did land its last message is now an admin one,
+        so `awaits_answer` is False and nothing is answered twice.
         """
         try:
-            response = await post_with_retry(
-                self.http_client,
+            response = await self.http_client.post(
                 f"{self.base_url}/tickets/{ticket_id}/reply",
                 headers=self.headers,
                 json={"message_text": text[:MAX_REPLY_LENGTH]},
-                description=f"bedolaga reply to ticket {ticket_id}",
             )
         except httpx.HTTPError as e:
             logger.error("Bedolaga: replying to ticket %d failed: %s", ticket_id, e)
@@ -167,6 +174,22 @@ class BedolagaClient:
         self._telegram_ids[user_id] = resolved
         return resolved
 
+    def resolve_media_url(self, media_url: str) -> str | None:
+        """Turn the panel's `media_url` into an absolute URL we may send the key to.
+
+        This is the one URL in the bot that a remote response decides, and the
+        request that follows carries `X-API-Key`. Relative (`/media/abc`) is
+        what the panel's own route returns and httpx cannot request it as a
+        full URL, so it is joined onto the configured base; anything pointing
+        somewhere else is dropped rather than handing the service token to a
+        host the operator never configured.
+        """
+        absolute = urljoin(f"{self.base_url}/", media_url)
+        if urlsplit(absolute).netloc != urlsplit(self.base_url).netloc:
+            logger.warning("Bedolaga: refusing to fetch media from a foreign host: %s", absolute)
+            return None
+        return absolute
+
     async def download_media(self, ticket_id: int, message_id: int) -> ImageAttachment | None:
         """Fetch a ticket screenshot, base64-encoded for the vision APIs.
 
@@ -191,8 +214,12 @@ class BedolagaClient:
             logger.info("Bedolaga: message %d has media the panel cannot serve", message_id)
             return None
 
+        resolved = self.resolve_media_url(str(media_url))
+        if resolved is None:
+            return None
+
         try:
-            downloaded = await self.http_client.get(media_url, headers=self.headers)
+            downloaded = await self.http_client.get(resolved, headers=self.headers)
         except httpx.HTTPError as e:
             logger.warning("Bedolaga: could not download media of message %d: %s", message_id, e)
             return None

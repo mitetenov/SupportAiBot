@@ -60,6 +60,12 @@ class TicketAnswerer:
         # same ticket a millisecond apart.
         self._tickets = KeyedLock()
         self._in_flight: set[asyncio.Task[None]] = set()
+        # ticket id -> the message id whose suppression notice already went to
+        # the topic. A suppressed ticket stays open with the user's message
+        # last, so every sweep for the next half hour reads it again; without
+        # this the operator's topic fills with the same notice dozens of times.
+        # In memory on purpose: a restart costs at most one duplicate notice.
+        self._suppressed: dict[int, int] = {}
 
     def schedule(self, ticket_id: int) -> None:
         """Answer this ticket in the background.
@@ -103,13 +109,16 @@ class TicketAnswerer:
 
         if self.conversation_state.is_operator_recently_active(user_key):
             # The operator is holding this conversation in Telegram; a bot
-            # answer in the ticket would talk over them.
-            await self.mirror(
-                ticket,
-                user_key,
-                get_message("bedolaga.suppressed", ticket.id, ticket.title, question),
-                escalate=True,
-            )
+            # answer in the ticket would talk over them. Nothing is marked
+            # answered — the bot must pick this ticket up once the window ends.
+            if self._suppressed.get(ticket.id) != last.id:
+                self._suppressed[ticket.id] = last.id
+                await self.mirror(
+                    ticket,
+                    user_key,
+                    get_message("bedolaga.suppressed", ticket.id, ticket.title, question),
+                    escalate=True,
+                )
             return
 
         if not self.rate_limiter.try_acquire(user_key):
@@ -133,6 +142,7 @@ class TicketAnswerer:
             return
 
         await self.state.mark_answered(ticket.id, last.id)
+        self._suppressed.pop(ticket.id, None)
         self.conversation_state.record_query(user_key, question, reply.faq_context)
 
         if escalate:

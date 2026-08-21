@@ -4,6 +4,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import pytest
 
 from app.bedolaga.client import MAX_REPLY_LENGTH, BedolagaClient
 
@@ -25,6 +26,7 @@ def _response(status_code: int, json_body: Any = None) -> MagicMock:
     response.status_code = status_code
     response.json = MagicMock(return_value=json_body)
     response.text = "body"
+    response.headers = {}
     return response
 
 
@@ -36,6 +38,16 @@ def _client(
     http_client.get = get or AsyncMock(return_value=_response(200, TICKET_BODY))
     http_client.post = post or AsyncMock(return_value=_response(201, {}))
     return BedolagaClient(BASE_URL, API_KEY, http_client), http_client
+
+
+@pytest.fixture(autouse=True)
+def _no_real_sleeping(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The one call site that still retries must not spend its backoff here."""
+
+    async def instant(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.retry._sleep", instant)
 
 
 class TestGetTicket:
@@ -114,6 +126,27 @@ class TestReply:
         client, _ = _client(post=AsyncMock(side_effect=httpx.ConnectError("refused")))
         assert await client.reply(17, "текст") is False
 
+    async def test_never_resends_a_gateway_error(self) -> None:
+        """Posting a reply is not idempotent, so it must not go through a retry.
+
+        The panel stores the message, flips the status and notifies the user
+        before it answers; resending a write that may have landed duplicates
+        all three. The ticket status is the retry: an unmarked message is
+        re-read by the next sweep, which sees an admin reply if it did land.
+        """
+        post = AsyncMock(return_value=_response(500, {}))
+        client, _ = _client(post=post)
+
+        assert await client.reply(17, "текст") is False
+        assert post.await_count == 1
+
+    async def test_never_resends_after_a_timeout(self) -> None:
+        post = AsyncMock(side_effect=httpx.ReadTimeout("too slow"))
+        client, _ = _client(post=post)
+
+        assert await client.reply(17, "текст") is False
+        assert post.await_count == 1
+
 
 class TestSetPriority:
     """Raising the priority is best effort — a failure must not lose the answer."""
@@ -127,6 +160,14 @@ class TestSetPriority:
     async def test_returns_false_instead_of_raising(self) -> None:
         client, _ = _client(post=AsyncMock(side_effect=httpx.ConnectError("refused")))
         assert await client.set_priority(17, "high") is False
+
+    async def test_still_retries_a_gateway_error(self) -> None:
+        """Raising a priority twice is harmless, so this one keeps its retry."""
+        post = AsyncMock(return_value=_response(500, {}))
+        client, _ = _client(post=post)
+
+        assert await client.set_priority(17, "high") is False
+        assert post.await_count == 3
 
 
 class TestResolveTelegramId:
@@ -192,3 +233,37 @@ class TestDownloadMedia:
         media_response = _response(200, {"media_url": "http://bedolaga:8080/media/abc"})
         client, _ = _client(get=AsyncMock(side_effect=[media_response, httpx.ConnectError("no")]))
         assert await client.download_media(17, 100) is None
+
+    async def test_resolves_a_relative_media_url_against_the_base_url(self) -> None:
+        """httpx cannot request a bare path, and the panel plausibly returns one.
+
+        Passing it through raised UnsupportedProtocol, which the handler below
+        swallowed — screenshots would have silently stopped reaching the model.
+        """
+        media_response = _response(200, {"media_url": "/media/abc"})
+        file_response = MagicMock(spec=httpx.Response)
+        file_response.status_code = 200
+        file_response.content = b"binary-bytes"
+        file_response.headers = {"content-type": "image/png"}
+        get = AsyncMock(side_effect=[media_response, file_response])
+        client, _ = _client(get=get)
+
+        attachment = await client.download_media(17, 100)
+
+        assert attachment is not None
+        assert attachment.base64_image == "YmluYXJ5LWJ5dGVz"
+        assert get.await_args_list[1].args[0] == "http://bedolaga:8080/media/abc"
+
+    async def test_refuses_a_media_url_on_a_foreign_host(self) -> None:
+        """The API key goes to the configured panel and nowhere else.
+
+        This is the only URL in the bot chosen by a remote response body, so a
+        misconfigured or compromised panel must not be able to redirect the
+        service token at a host of its choosing.
+        """
+        media_response = _response(200, {"media_url": "http://evil.example.com/steal"})
+        get = AsyncMock(side_effect=[media_response])
+        client, _ = _client(get=get)
+
+        assert await client.download_media(17, 100) is None
+        assert get.await_count == 1

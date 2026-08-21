@@ -57,6 +57,7 @@ class TestMessages:
             "support.media.received",
             "support.ratelimited",
             "support.ai.suppressed",
+            "support.cabinet_only.no_delivery",
             "admin.error.prefix",
             "admin.error.details",
             "admin.response.prefix",

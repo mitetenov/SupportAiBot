@@ -51,6 +51,7 @@ class TestCreateTicketSupport:
                 bedolaga_enabled=True,
                 bedolaga_api_url="http://bedolaga:8080",
                 bedolaga_api_key="token",
+                bedolaga_webhook_secret="shhh",
             )
         )
         assert support is not None
@@ -62,6 +63,7 @@ class TestCreateTicketSupport:
                 bedolaga_enabled=True,
                 bedolaga_api_url="http://bedolaga:8080",
                 bedolaga_api_key="token",
+                bedolaga_webhook_secret="shhh",
                 bedolaga_webhook_path="/hooks/tickets",
             )
         )
@@ -77,6 +79,7 @@ class TestCreateTicketSupport:
                 bedolaga_enabled=True,
                 bedolaga_api_url="http://bedolaga:8080",
                 bedolaga_api_key="token",
+                bedolaga_webhook_secret="shhh",
                 bedolaga_poll_interval_seconds=30,
             )
         )

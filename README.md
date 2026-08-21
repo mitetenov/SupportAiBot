@@ -128,8 +128,9 @@ Telegram и обновляет кабинет. Каждый обработанн
 
 - **События.** Bedolaga шлёт вебхуки `ticket.created` и `ticket.message_added`
   на `POST <бот>:8080/bedolaga/webhook` (путь настраивается). Подпись
-  `X-Webhook-Signature` проверяется HMAC-SHA256 по `BEDOLAGA_WEBHOOK_SECRET`;
-  без секрета эндпоинт принимает всё подряд — задавайте секрет.
+  `X-Webhook-Signature` проверяется HMAC-SHA256 по `BEDOLAGA_WEBHOOK_SECRET`.
+  Секрет обязателен: с `BEDOLAGA_ENABLED=true` и пустым секретом бот не
+  стартует, иначе эндпоинт принимал бы любые запросы без проверки подписи.
 - **Сверка.** Раз в `BEDOLAGA_POLL_INTERVAL_SECONDS` секунд бот сам смотрит
   тикеты в статусах `open` и `pending`. Это не роскошь: доставка вебхуков в
   Bedolaga не ретраится, упавший запрос теряется навсегда.
@@ -160,7 +161,14 @@ Telegram и обновляет кабинет. Каждый обработанн
 docker network create bedolaga-net
 ```
 
-   и подключите к ней оба стека (у бота это уже описано в `docker-compose.yml`).
+   и подключите к ней стек Bedolaga. Бот подключается к этой сети только с
+   оверлеем `docker-compose.bedolaga.yml` — в базовом `docker-compose.yml`
+   её нет, поэтому обычный запуск не требует, чтобы сеть существовала.
+   С интеграцией бот поднимается так:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.bedolaga.yml up -d
+```
 
 3. Зарегистрируйте два вебхука — по одному на событие, `event_type` в Bedolaga
    один на вебхук:
@@ -179,7 +187,8 @@ curl -X POST "$BEDOLAGA_API_URL/webhooks" \
   -d '{"name":"support-bot: ticket message","url":"http://vpn-support-bot:8080/bedolaga/webhook","event_type":"ticket.message_added","secret":"'"$BEDOLAGA_WEBHOOK_SECRET"'"}'
 ```
 
-4. Перезапустите бота и откройте тестовый тикет. Доставки видно в
+4. Перезапустите бота (той же командой с обоими `-f`) и откройте тестовый
+   тикет. Доставки видно в
    `GET /webhooks/stats` на стороне Bedolaga, обработку — в логах бота
    (`Bedolaga ticket ...`).
 
