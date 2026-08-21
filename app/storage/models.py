@@ -178,3 +178,29 @@ class FaqMetadata(Base):
 
     def __repr__(self) -> str:
         return f"<FaqMetadata key={self.key} val={self.val}>"
+
+
+class BedolagaTicketState(Base):
+    """The last Bedolaga ticket message this bot has answered.
+
+    Both the webhook and the reconciling poll can bring the same ticket in, and
+    a delivery may arrive twice — this row is what makes answering a ticket
+    idempotent instead of posting the same reply again.
+    """
+
+    __tablename__ = "bedolaga_ticket_state"
+
+    ticket_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    last_answered_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<BedolagaTicketState ticket_id={self.ticket_id} "
+            f"last_answered_message_id={self.last_answered_message_id}>"
+        )
