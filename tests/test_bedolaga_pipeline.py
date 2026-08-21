@@ -199,3 +199,104 @@ class TestScheduling:
     async def test_drain_is_a_no_op_without_work(self) -> None:
         answerer, _ = _answerer()
         await answerer.drain()
+
+
+class TestEscalation:
+    """A ticket the model cannot close is handed to a human, loudly."""
+
+    async def test_appends_a_handover_line_when_the_model_asks(self) -> None:
+        answerer, parts = _answerer(reply=LlmReply(text="Не могу помочь [ESCALATE]"))
+        await answerer.handle(TICKET_ID)
+        sent = parts["client"].reply.await_args.args[1]
+        assert sent.startswith("Не могу помочь")
+        assert "оператор" in sent.lower()
+
+    async def test_raises_the_ticket_priority(self) -> None:
+        answerer, parts = _answerer(reply=LlmReply(text="Не могу помочь [ESCALATE]"))
+        await answerer.handle(TICKET_ID)
+        parts["client"].set_priority.assert_awaited_once_with(TICKET_ID, "high")
+
+    async def test_escalates_when_the_user_asks_for_a_human(self) -> None:
+        ticket = _ticket(
+            TicketMessage(id=100, text="Хочу поговорить с оператором", is_from_admin=False)
+        )
+        answerer, parts = _answerer(ticket=ticket)
+        await answerer.handle(TICKET_ID)
+        parts["client"].set_priority.assert_awaited_once_with(TICKET_ID, "high")
+
+    async def test_tags_the_mirrored_message_for_escalation(self) -> None:
+        answerer, parts = _answerer(reply=LlmReply(text="Не могу помочь [ESCALATE]"))
+        await answerer.handle(TICKET_ID)
+        assert parts["forwarder"].forward_to_support.await_args.kwargs["needs_escalation"] is True
+
+    async def test_leaves_priority_alone_on_an_ordinary_answer(self) -> None:
+        answerer, parts = _answerer()
+        await answerer.handle(TICKET_ID)
+        parts["client"].set_priority.assert_not_awaited()
+
+
+class TestMirroring:
+    """Operators read the support group, so the ticket turn shows up there too."""
+
+    async def test_mirrors_question_and_answer_into_the_topic(self) -> None:
+        answerer, parts = _answerer()
+        await answerer.handle(TICKET_ID)
+        kwargs = parts["forwarder"].forward_to_support.await_args.kwargs
+        assert kwargs["user_chat_id"] == TELEGRAM_ID
+        assert kwargs["user_message_ids"] is None
+        assert "Помогите" in kwargs["bot_response"]
+        assert "Проверьте подписку" in kwargs["bot_response"]
+        assert str(TICKET_ID) in kwargs["bot_response"]
+
+    async def test_names_a_cabinet_only_user_in_the_topic_title(self) -> None:
+        answerer, parts = _answerer(telegram_id=None)
+        await answerer.handle(TICKET_ID)
+        user = parts["forwarder"].forward_to_support.await_args.kwargs["user"]
+        assert user.id == -PANEL_USER_ID
+        assert str(PANEL_USER_ID) in (user.first_name or "")
+
+    async def test_a_failing_mirror_does_not_lose_the_answer(self) -> None:
+        answerer, parts = _answerer()
+        parts["forwarder"].forward_to_support = AsyncMock(side_effect=RuntimeError("no topic"))
+        answerer.forwarder = parts["forwarder"]
+        await answerer.handle(TICKET_ID)
+        parts["state"].mark_answered.assert_awaited_once_with(TICKET_ID, 100)
+
+
+class TestOperatorSuppression:
+    """While a human is holding the conversation, the bot stays out of it."""
+
+    async def test_does_not_answer_the_ticket(self) -> None:
+        conversation_state = ConversationState()
+        conversation_state.record_operator_reply(TELEGRAM_ID)
+        answerer, parts = _answerer(conversation_state=conversation_state)
+        await answerer.handle(TICKET_ID)
+        parts["client"].reply.assert_not_awaited()
+        parts["llm_client"].chat.assert_not_awaited()
+
+    async def test_puts_the_question_in_the_topic_instead(self) -> None:
+        conversation_state = ConversationState()
+        conversation_state.record_operator_reply(TELEGRAM_ID)
+        answerer, parts = _answerer(conversation_state=conversation_state)
+        await answerer.handle(TICKET_ID)
+        text = parts["forwarder"].forward_to_support.await_args.kwargs["bot_response"]
+        assert "Помогите" in text
+
+    async def test_does_not_mark_the_message_answered(self) -> None:
+        conversation_state = ConversationState()
+        conversation_state.record_operator_reply(TELEGRAM_ID)
+        answerer, parts = _answerer(conversation_state=conversation_state)
+        await answerer.handle(TICKET_ID)
+        parts["state"].mark_answered.assert_not_awaited()
+
+
+class TestKnowledgeGaps:
+    """A ticket nobody could answer is a gap in the FAQ, same as a chat message."""
+
+    async def test_evaluates_the_question(self) -> None:
+        answerer, parts = _answerer()
+        await answerer.handle(TICKET_ID)
+        query, user_id, raw_response, _ = parts["knowledge_gap_service"].evaluate.await_args.args
+        assert "Помогите" in query
+        assert user_id == TELEGRAM_ID
+        assert raw_response == "Проверьте подписку"

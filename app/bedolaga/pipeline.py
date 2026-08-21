@@ -99,17 +99,33 @@ class TicketAnswerer:
             return
 
         user_key = await self.user_key(ticket)
+        question = ticket.question
+
+        if self.conversation_state.is_operator_recently_active(user_key):
+            # The operator is holding this conversation in Telegram; a bot
+            # answer in the ticket would talk over them.
+            await self.mirror(
+                ticket,
+                user_key,
+                get_message("bedolaga.suppressed", ticket.id, ticket.title, question),
+                escalate=True,
+            )
+            return
+
         if not self.rate_limiter.try_acquire(user_key):
             # Nothing is recorded, so the next sweep answers this message once
             # the window has passed.
             logger.info("Bedolaga ticket %d is rate limited for user %d", ticket.id, user_key)
             return
 
-        question = ticket.question
         reply = await self.llm_client.chat(question, user_key)
         answer = EscalationPolicy.strip_marker(reply.text) or get_message("bedolaga.llm.empty")
+        escalate = EscalationPolicy.model_requested_escalation(
+            reply.text
+        ) or EscalationPolicy.user_requests_human(question)
 
-        if not await self.client.reply(ticket.id, answer):
+        posted = answer + get_message("bedolaga.escalation.note") if escalate else answer
+        if not await self.client.reply(ticket.id, posted):
             await self.admin_notifier.notify_error(
                 get_message("bedolaga.reply.failed", ticket.id),
                 user_id=user_key,
@@ -117,6 +133,55 @@ class TicketAnswerer:
             return
 
         await self.state.mark_answered(ticket.id, last.id)
+        self.conversation_state.record_query(user_key, question, reply.faq_context)
+
+        if escalate:
+            await self.client.set_priority(ticket.id, "high")
+
+        await self.mirror(
+            ticket,
+            user_key,
+            get_message("bedolaga.mirror", ticket.id, ticket.title, question, answer),
+            escalate=escalate,
+        )
+
+        if question.strip():
+            await self.knowledge_gap_service.evaluate(
+                question,
+                user_key,
+                reply.text,
+                reply.faq_context,
+            )
+
+    async def mirror(self, ticket: Ticket, user_key: int, text: str, escalate: bool) -> None:
+        """Put this ticket turn into the user's forum topic.
+
+        The answer is already delivered — by Bedolaga, into the ticket — so a
+        support group that is down or misconfigured must not cost the user
+        their reply. Every failure here stays here.
+        """
+        try:
+            await self.forwarder.forward_to_support(
+                user_chat_id=user_key,
+                user_message_ids=None,
+                user=self.stand_in(ticket, user_key),
+                bot_response=text,
+                needs_escalation=escalate,
+            )
+        except Exception as e:
+            logger.warning("Could not mirror Bedolaga ticket %d to the topic: %s", ticket.id, e)
+
+    @staticmethod
+    def stand_in(ticket: Ticket, user_key: int) -> TicketUser:
+        """The sender the forwarder needs to find or name a topic.
+
+        A Telegram user already has a topic under their own id. A cabinet-only
+        account does not, so its topic is named after the panel account rather
+        than the synthetic negative id nobody would recognise.
+        """
+        if user_key > 0:
+            return TicketUser(id=user_key)
+        return TicketUser(id=user_key, first_name=f"Кабинет #{ticket.user_id}")
 
     async def user_key(self, ticket: Ticket) -> int:
         """The id this ticket's conversation is kept under.
