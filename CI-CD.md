@@ -134,6 +134,12 @@ docker compose up -d --wait support-bot
   увидит новые инструменты.
 - `bedolaga-mcp` живёт только во внутренней сети compose; host-порт не
   публикуется.
+- **Rollback интеграции:** выключение `BEDOLAGA_MCP_ENABLED=false` в `.env` и
+  перезапуск бота возвращают его в Remnawave-only режим — Bedolaga MCP не
+  подключается, его инструменты исчезают из allowlist. База данных и финансовые
+  данные не меняются (MCP read-only), а webhook/poller тикеты
+  (`BEDOLAGA_ENABLED`) управляются отдельным флагом. Образ `bedolaga-mcp` можно
+  не удалять из compose — при выключенном флаге бот его не использует.
 
 ## Docker-образы
 
