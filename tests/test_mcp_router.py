@@ -19,7 +19,9 @@ class StubMcpClient(McpClientInterface):
         self,
         tools: list[McpTool] | None = None,
         tool_results: dict[str, str] | None = None,
+        server_name: str = "remnawave",
     ) -> None:
+        self.server_name = server_name
         self.tools = tools if tools is not None else []
         self.tool_results = tool_results if tool_results is not None else {}
         self.calls: list[dict[str, Any]] = []

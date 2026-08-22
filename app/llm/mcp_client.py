@@ -1,4 +1,8 @@
-"""HTTP client for Model Context Protocol (MCP) JSON-RPC 2.0 communication."""
+"""HTTP client for Model Context Protocol (MCP) JSON-RPC 2.0 communication.
+
+One instance binds to exactly one MCP server (``server_name`` + ``base_url``);
+the bot keeps separate instances for Remnawave and Bedolaga.
+"""
 
 import asyncio
 import json
@@ -8,8 +12,6 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
-
-from app.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,10 @@ class AdminNotifier(Protocol):
 class McpClientInterface(Protocol):
     """Interface for MCP clients."""
 
+    #: Stable server identity (e.g. "remnawave", "bedolaga") so allowlists and
+    #: alerts can be chosen by owner, never by tool-name similarity.
+    server_name: str
+
     def list_tools(self) -> list[McpTool]:
         """Return cached list of available MCP tools."""
         ...
@@ -94,7 +100,12 @@ def extract_json_from_sse(response_body: str) -> str:
 
 
 class HttpMcpClient(McpClientInterface):
-    """JSON-RPC 2.0 client for Remnawave MCP server over HTTP."""
+    """JSON-RPC 2.0 client for an MCP server over HTTP.
+
+    One instance talks to exactly one MCP server, identified by ``server_name``.
+    The bot keeps separate instances for Remnawave and Bedolaga so a restart,
+    a tool-set change or a burst of calls on one never bleeds into the other.
+    """
 
     PROTOCOL_VERSION = "2025-11-25"
     SESSION_HEADER = "Mcp-Session-Id"
@@ -104,14 +115,17 @@ class HttpMcpClient(McpClientInterface):
 
     def __init__(
         self,
-        base_url: str | None = None,
+        server_name: str,
+        base_url: str,
         http_client: httpx.AsyncClient | None = None,
-        settings: Settings | None = None,
         admin_notifier: AdminNotifier | None = None,
     ) -> None:
-        if base_url is None and settings is not None:
-            base_url = settings.remnawave_mcp_url
-        self.base_url = (base_url or "http://localhost:3100").rstrip("/")
+        if not server_name or not server_name.strip():
+            raise ValueError("MCP client requires a non-empty server_name")
+        if not base_url or not base_url.strip():
+            raise ValueError("MCP client requires a non-empty base_url")
+        self.server_name = server_name
+        self.base_url = base_url.rstrip("/")
         self.admin_notifier = admin_notifier
         self._custom_client = http_client is not None
         self._http_client = http_client
@@ -183,27 +197,32 @@ class HttpMcpClient(McpClientInterface):
             has_session = await self._initialize_session()
             if not has_session:
                 logger.error(
-                    "MCP initialization at %s did not yield a usable session; "
+                    "MCP initialization for '%s' at %s did not yield a usable session; "
                     "bot will run without tools from this server",
+                    self.server_name,
                     self.base_url,
                 )
                 return False
             await self._load_tools()
             self._initialized = True
             logger.info(
-                "MCP HTTP client initialized with %d tools at %s",
+                "MCP HTTP client '%s' initialized with %d tools at %s",
+                self.server_name,
                 len(self._cached_tools),
                 self.base_url,
             )
             return True
         except Exception as e:
             logger.error(
-                "Failed to initialize MCP HTTP client — bot will run without tools from %s: %s",
+                "Failed to initialize MCP HTTP client '%s' — bot will run without tools from %s: %s",
+                self.server_name,
                 self.base_url,
                 e,
                 exc_info=True,
             )
-            await self._notify_admins(f"MCP HTTP init failed for {self.base_url}", e)
+            await self._notify_admins(
+                f"MCP '{self.server_name}' init failed for {self.base_url}", e
+            )
             return False
 
     async def _notify_admins(self, context: str, error: Exception) -> None:
@@ -213,7 +232,12 @@ class HttpMcpClient(McpClientInterface):
         try:
             await self.admin_notifier.notify_error(context, error=error)
         except Exception as e:
-            logger.warning("Failed to notify admins about %s: %s", context, e)
+            logger.warning(
+                "Failed to notify admins about '%s' (%s): %s",
+                self.server_name,
+                context,
+                e,
+            )
 
     async def _initialize_session(self) -> bool:
         self._request_id += 1
@@ -225,14 +249,16 @@ class HttpMcpClient(McpClientInterface):
                 "protocolVersion": self.PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {
-                    "name": "vpn-support-bot",
+                    "name": f"vpn-support-bot/{self.server_name}",
                     "version": "1.0.0",
                     "instance": uuid.uuid4().hex[:8],
                 },
             },
         }
 
-        logger.debug("MCP initialize request [%d]", self._request_id)
+        logger.debug(
+            "MCP initialize request [%d] for server '%s'", self._request_id, self.server_name
+        )
 
         response = await self._post(req)
 
@@ -305,7 +331,11 @@ class HttpMcpClient(McpClientInterface):
                 # Another task already re-initialised while we waited for the lock.
                 return self._initialized
 
-            logger.warning("MCP session at %s expired — re-initializing", self.base_url)
+            logger.warning(
+                "MCP session for '%s' at %s expired — re-initializing",
+                self.server_name,
+                self.base_url,
+            )
             previous_tools = {tool.name for tool in self._cached_tools}
             self._session_id = None
             self._protocol_version = None
@@ -315,13 +345,18 @@ class HttpMcpClient(McpClientInterface):
             self._session_generation += 1
 
             if not recovered:
-                logger.error("Could not re-establish the MCP session at %s", self.base_url)
+                logger.error(
+                    "Could not re-establish the MCP session for '%s' at %s",
+                    self.server_name,
+                    self.base_url,
+                )
                 return False
 
             current_tools = {tool.name for tool in self._cached_tools}
             if current_tools != previous_tools:
                 logger.warning(
-                    "MCP tool set changed after reconnect: %s -> %s",
+                    "MCP tool set changed after reconnect for '%s': %s -> %s",
+                    self.server_name,
                     sorted(previous_tools),
                     sorted(current_tools),
                 )
@@ -335,7 +370,7 @@ class HttpMcpClient(McpClientInterface):
             "method": method,
             "params": params if params is not None else {},
         }
-        logger.debug("MCP request [%d]: %s", self._request_id, method)
+        logger.debug("MCP request [%d] on '%s': %s", self._request_id, self.server_name, method)
 
         response = await self._post(req)
         if response.is_error:
@@ -399,11 +434,15 @@ class HttpMcpClient(McpClientInterface):
                 return await self._invoke_tool(tool_name, arguments)
             except Exception as e:
                 logger.error("Tool %s failed after reconnect: %s", tool_name, e, exc_info=True)
-                await self._notify_admins(f"MCP tool call failed after reconnect: {tool_name}", e)
+                await self._notify_admins(
+                    f"MCP tool call failed after reconnect on '{self.server_name}': {tool_name}", e
+                )
                 return json.dumps({"error": str(e) if str(e) else "unknown error"})
         except Exception as e:
             logger.error("Failed to call tool: %s: %s", tool_name, e, exc_info=True)
-            await self._notify_admins(f"MCP tool call failed: {tool_name}", e)
+            await self._notify_admins(
+                f"MCP tool call failed on '{self.server_name}': {tool_name}", e
+            )
             return json.dumps({"error": str(e) if str(e) else "unknown error"})
 
     async def _invoke_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> str:
@@ -425,7 +464,12 @@ class HttpMcpClient(McpClientInterface):
         try:
             await self._terminate_session()
         except Exception as error:
-            logger.warning("Failed to terminate MCP session at %s: %s", self.base_url, error)
+            logger.warning(
+                "Failed to terminate MCP session for '%s' at %s: %s",
+                self.server_name,
+                self.base_url,
+                error,
+            )
         finally:
             self.shutdown()
 

@@ -28,7 +28,8 @@ Telegram-бот первой линии поддержки VPN-сервиса. �
 1. Пользователь пишет боту или создаёт тикет в кабинете.
 2. Бот учитывает текущий вопрос, недавнюю историю диалога и базу знаний.
 3. Если Telegram пользователя связан с Remnawave, бот может проверить его
-   подписку, устройства и доступность серверов.
+   подписку, устройства и доступность серверов; при включённом Bedolaga MCP —
+   также баланс, операции, покупки и рефералов в боте Bedolaga.
 4. Ответ отправляется пользователю, а копия обращения появляется в его топике
    в группе поддержки.
 5. Если нужен человек, оператор получает уведомление и продолжает диалог.
@@ -106,6 +107,24 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `PGVECTOR_PORT` | `5432` | Порт базы данных |
 | `BOT_TAG` | `latest` | Тег образа бота |
 | `MCP_TAG` | `v3.2.1` | Тег образа интеграции с Remnawave |
+| `BEDOLAGA_MCP_TAG` | `1.0.0` | Тег образа Bedolaga MCP; закрепите конкретную версию, не используйте `latest` |
+
+### Bedolaga MCP
+
+Bedolaga MCP даёт модели персональные данные бота Bedolaga: баланс, финансовые
+операции, факт покупки подписки и реферальную сводку. Это отдельный enable flag
+от обработки тикетов ниже.
+
+| Переменная | Обязательна | Описание |
+|---|---|---|
+| `BEDOLAGA_MCP_ENABLED` | нет | `true` подключает инструменты Bedolaga MCP; по умолчанию `false` |
+| `BEDOLAGA_MCP_URL` | при `true` | Адрес сервиса Bedolaga MCP; в Docker — `http://bedolaga-mcp:3100` |
+| `BEDOLAGA_API_URL` | при `true` | URL Web API Bedolaga Bot (общая с тикетами) |
+| `BEDOLAGA_API_KEY` | при `true` | Токен Web API Bedolaga (общий с тикетами) |
+
+`BEDOLAGA_MCP_ENABLED` включает только персональные MCP-инструменты для support;
+`BEDOLAGA_ENABLED` управляет отдельной интеграцией тикетов (webhook/poller). Их
+можно включать и выключать независимо.
 
 ## Использование в Telegram
 
@@ -156,6 +175,48 @@ FAQ находится в `faq/faq.json`. Запись может содержа
 docker build -t mitetenov/supportbot:latest .
 docker compose up -d --wait support-bot
 ```
+
+## Два MCP: Remnawave и Bedolaga
+
+Бот держит две независимые MCP-сессии и маршрутизирует инструменты по владельцу
+сервера — имён недостаточно, allowlist выбирается по `server_name`:
+
+```
+LLM → McpRouter → Bedolaga MCP → Bedolaga Bot API (баланс, операции, покупки, рефералы)
+LLM → McpRouter → Remnawave MCP → панель Remnawave (ноды, трафик, HWID, статус подписки)
+```
+
+| Область | Bedolaga MCP | Remnawave MCP |
+|---|:---:|:---:|
+| Баланс в боте | да | нет |
+| Пополнения, покупки, возвраты, бонусы, выводы | да | нет |
+| Реферальный код и начисления | да | нет |
+| Внутренняя запись подписки Bedolaga (`bot_record_status`) | да | нет |
+| Фактический статус пользователя в VPN-панели | нет | да |
+| Срок, трафик, доступность подписки | нет | да |
+| Ноды, HWID-устройства | нет | да |
+| Ссылка подписки, ключи, конфигурации | нет | да |
+
+Инструменты Bedolaga read-only в любом случае (даже при
+`REMNAWAVE_MCP_READONLY=false`) — write-инструментов у Bedolaga MCP нет.
+
+### Identity pinning
+
+- Telegram-пользователь: инструменты получают `telegram_id` фактического
+  отправителя; любой ID из сообщения или аргументов модели игнорируется.
+- Email-only тикет кабинета (отрицательный synthetic conversation key):
+  Bedolaga-инструменты получают внутренний `user_id = abs(key)`; инструменты
+  Remnawave по Telegram ID недоступны и возвращают `identity_unavailable`.
+
+### Поведение при падении одного MCP
+
+- Строго независимые клиенты и allowlists: падение или перезапуск Bedolaga MCP
+  не отключает инструменты Remnawave и наоборот.
+- При старте бот формирует отдельное уведомление администратору на каждый MCP:
+  сбой инициализации, 0 разрешённых инструментов или конфликт имён
+  инструментов (fail-closed: конфликтующее имя скрывается).
+- Модель никогда не выдумывает данные за недоступный MCP: инструмент вернёт
+  `ok=false`, и модель сообщит, что проверить сейчас нельзя.
 
 ## Тикеты Bedolaga
 
@@ -308,3 +369,25 @@ docker compose up -d --wait support-bot
 - Однократное обновление MCP очищает старую singleton-сессию.
 - После деплоя обеих версий перезапуск бота `docker compose restart support-bot` безопасен и не перезапускает MCP.
 - При работе на v3.2.0 аварийным восстановлением остаётся `docker compose up -d --force-recreate mcp-remnawave support-bot`, но для штатного деплоя оно больше не требуется.
+
+## Обновление двух MCP независимо
+
+Remnawave и Bedolaga MCP обновляются отдельно и независимо:
+
+1. Пулл нового образа Bedolaga MCP и его health/tool list:
+   ```bash
+   docker compose pull bedolaga-mcp
+   docker compose up -d --wait bedolaga-mcp
+   # проверьте, что сервер объявляет ровно три инструмента:
+   # bedolaga_user_get, bedolaga_billing_get, bedolaga_referrals_get
+   curl -s http://localhost:3100/health   # на самом сервере или внутри сети
+   ```
+2. Затем обновите supportBot с новым allowlist и промптом:
+   ```bash
+   docker compose pull support-bot
+   docker compose up -d --wait support-bot
+   ```
+3. Rollback: отключение `BEDOLAGA_MCP_ENABLED=false` (или откат тега
+   `BEDOLAGA_MCP_TAG`) возвращает бота к Remnawave-only режиму без изменения
+   пользовательской базы и финансовых данных. Откат supportBot не требует
+   отката Remnawave MCP и наоборот.

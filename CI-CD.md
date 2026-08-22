@@ -1,8 +1,8 @@
 # CI/CD Pipeline — SupportAiBot
 
-Бот и MCP-сервер собираются и публикуются независимо, как два отдельных образа.
-Связи между их пайплайнами нет: `docker-compose.yml` сводит их вместе уже на
-сервере.
+Бот и два MCP-сервера собираются и публикуются независимо, как отдельные
+образы. Связей между пайплайнами нет: `docker-compose.yml` сводит их вместе уже
+на сервере.
 
 ```
 push → SupportAiBot (master)
@@ -11,6 +11,9 @@ push → SupportAiBot (master)
 
 push → mcp-remnawave (main)
   └─ build → GitHub Release (mcp-release.zip) + mitetenov/remnawave-mcp:latest + :v{version} + :{sha}
+
+push → bedolaga-mcp (main / test-1)
+  └─ check (import + ровно три инструмента) → build → mitetenov/bedolaga-mcp:1.0.0 + :{sha}
 ```
 
 ## SupportAiBot
@@ -98,14 +101,49 @@ docker compose up -d --wait support-bot
 - После деплоя обеих версий перезапуск бота `docker compose restart support-bot` безопасен и не перезапускает MCP.
 - При работе на v3.2.0 аварийным восстановлением остаётся `docker compose up -d --force-recreate mcp-remnawave support-bot`, но для штатного деплоя оно больше не требуется.
 
+## bedolaga-mcp
+
+Живёт в [mitetenov/bedolaga-mcp](https://github.com/mitenetov/bedolaga-mcp),
+собирается своим CI (`.github/workflows/ci.yml`) на Python 3.13.
+
+| Workflow | Когда | Что делает |
+|----------|-------|------------|
+| `check` | push и PR | ставит pinned-зависимости, проверяет импорт пакета и что сервер объявляет ровно `bedolaga_user_get`, `bedolaga_billing_get`, `bedolaga_referrals_get` (и никакого `bedolaga_subscription`) |
+| `build-and-push` | push в main/master/test-1 | multi-stage образ с non-root runtime, пуш в Docker Hub |
+
+Теги образа: `:{version из bedolaga_mcp/__init__.py}` (сейчас `1.0.0`) и
+`:commit-sha`. `latest` не публикуется намеренно: набор инструментов зависит от
+контракта Bedolaga Bot API, и молчаливое обновление образа может незаметно
+изменить то, что видит модель. В compose бота образ закрепляется через
+`BEDOLAGA_MCP_TAG`.
+
+### Обновление двух MCP независимо
+
+Порядок деплоя на сервере:
+
+```bash
+cd /root/supportBot
+# 1) новый Bedolaga MCP образ и его health/tool list
+docker compose pull bedolaga-mcp
+docker compose up -d --wait bedolaga-mcp
+# 2) поддержка с новым allowlist и промптом
+docker compose pull support-bot
+docker compose up -d --wait support-bot
+```
+
+- Remnawave и Bedolaga MCP обновляются отдельно; откат одного не трогает второй.
+- Rollback Bedolaga MCP: откат `BEDOLAGA_MCP_TAG` (или `BEDOLAGA_MCP_ENABLED=false`)
+  возвращает бота к Remnawave-only режиму без изменения пользовательской базы и
+  финансовых данных.
+
 ## Docker-образы
 
-| | Бот | MCP |
-|---|---|---|
-| Репозиторий | `mitetenov/supportbot` | `mitetenov/remnawave-mcp` |
-| Теги | `latest`, `:{version}`, `:{sha}` | `latest`, `:v{version}`, `:{sha}` |
-| Платформы | `linux/amd64`, `linux/arm64` | `linux/amd64` |
-| Кэш | GitHub Actions Cache (`type=gha, mode=max`) | нет |
+| | Бот | mcp-remnawave | bedolaga-mcp |
+|---|---|---|---|
+| Репозиторий | `mitetenov/supportbot` | `mitetenov/remnawave-mcp` | `mitetenov/bedolaga-mcp` |
+| Теги | `latest`, `:{version}`, `:{sha}` | `latest`, `:v{version}`, `:{sha}` | `:{version}`, `:{sha}` |
+| Платформы | `linux/amd64`, `linux/arm64` | `linux/amd64` | `linux/amd64` |
+| Кэш | GitHub Actions Cache (`type=gha, mode=max`) | нет | нет |
 
 > MCP-образ собирается без `platforms:`, то есть только под архитектуру раннера —
 > `linux/amd64`. На arm64-хосте он пойдёт через эмуляцию (или не запустится

@@ -121,7 +121,7 @@ async def main() -> None:
     db_manager = get_db_manager(settings.database_url)
 
     health_runner: web.AppRunner | None = None
-    mcp_client: HttpMcpClient | None = None
+    mcp_clients: list[HttpMcpClient] = []
     message_buffer: UserMessageBuffer | None = None
     pipeline: UserMessagePipeline | None = None
     typing_indicator: TypingIndicator | None = None
@@ -146,53 +146,78 @@ async def main() -> None:
         )
         faq_initializer = FaqInitializer(service=faq_service)
 
-        # 3. Setup MCP client & router
+        # 3. Setup MCP clients & router
         admin_notifier = AdminNotifier(
             bot=bot,
             support_group_chat_id=settings.telegram_support_group_chat_id,
         )
-        mcp_client = HttpMcpClient(
+        # Remnawave is created always; Bedolaga only behind its own enable flag.
+        # They stay fully independent: a failed or unavailable Bedolaga MCP must
+        # never take Remnawave tools down with it, and vice versa.
+        remnawave_client = HttpMcpClient(
+            server_name="remnawave",
             base_url=settings.remnawave_mcp_url,
             http_client=http_client,
-            settings=settings,
             admin_notifier=admin_notifier,
         )
-        mcp_initialized = await mcp_client.init()
+        mcp_clients.append(remnawave_client)
+        if settings.bedolaga_mcp_enabled:
+            bedolaga_client = HttpMcpClient(
+                server_name="bedolaga",
+                base_url=settings.bedolaga_mcp_url,
+                http_client=http_client,
+                admin_notifier=admin_notifier,
+            )
+            mcp_clients.append(bedolaga_client)
+
+        initialized_clients: list[HttpMcpClient] = []
+        for client in mcp_clients:
+            if await client.init():
+                initialized_clients.append(client)
+                continue
+            context = (
+                "Бот запущен БЕЗ инструментов MCP: не удалось инициализировать MCP "
+                f"'{client.server_name}' ({client.base_url}). Проверьте доступность и логи "
+                "соответствующего MCP-контейнера."
+            )
+            logger.error(
+                "Starting WITHOUT '%s' tools: MCP initialization failed", client.server_name
+            )
+            await admin_notifier.notify_error(
+                context, error=RuntimeError("MCP initialization failed")
+            )
+
         mcp_router = McpRouter(
-            clients=[mcp_client],
+            clients=initialized_clients,
             readonly=settings.remnawave_mcp_readonly,
             settings=settings,
         )
-        exposed_tools = mcp_router.list_tools()
 
-        if not mcp_initialized:
-            context = (
-                "Бот запущен БЕЗ инструментов Remnawave: не удалось инициализировать "
-                f"MCP ({settings.remnawave_mcp_url}). Проверьте доступность и логи "
-                "контейнера mcp-remnawave."
-            )
-            logger.error(
-                "Starting WITHOUT Remnawave tools: MCP initialization failed at %s",
-                settings.remnawave_mcp_url,
-            )
+        if mcp_router.collisions:
             await admin_notifier.notify_error(
-                context,
-                error=RuntimeError("MCP initialization failed"),
+                "Обнаружен конфликт имён инструментов между MCP-серверами: "
+                f"{', '.join(sorted(mcp_router.collisions))}. Конфликтующие имена скрыты "
+                "fail-closed — модель их не увидит.",
+                error=RuntimeError("MCP tool name collision"),
             )
-        elif not exposed_tools:
-            context = (
-                "Бот запущен БЕЗ инструментов Remnawave: MCP вернул 0 разрешённых "
-                "инструментов. Проверьте MCP_TAG, REMNAWAVE_IS_SUPPORT и allowlist бота "
-                f"({settings.remnawave_mcp_url})."
-            )
-            logger.error(
-                "Starting WITHOUT Remnawave tools: MCP exposed no allowed tools at %s",
-                settings.remnawave_mcp_url,
-            )
-            await admin_notifier.notify_error(
-                context,
-                error=RuntimeError("no allowed MCP tools exposed"),
-            )
+
+        for client in initialized_clients:
+            allowed = mcp_router.allowed_tools_for(client.server_name)
+            if not allowed:
+                context = (
+                    "Бот запущен БЕЗ инструментов MCP "
+                    f"'{client.server_name}': MCP вернул 0 разрешённых инструментов. "
+                    f"Проверьте тег образа, support-режим и allowlist бота ({client.base_url})."
+                )
+                logger.error(
+                    "Starting WITHOUT '%s' tools: MCP exposed no allowed tools at %s",
+                    client.server_name,
+                    client.base_url,
+                )
+                await admin_notifier.notify_error(
+                    context,
+                    error=RuntimeError("no allowed MCP tools exposed"),
+                )
 
         # 4. Setup Chat History & LLM Client
         chat_history_service = ChatHistoryService(
@@ -354,8 +379,8 @@ async def main() -> None:
                 )
         if typing_indicator is not None:
             typing_indicator.shutdown()
-        if mcp_client is not None:
-            await mcp_client.close()
+        for client in mcp_clients:
+            await client.close()
         await http_client.aclose()
         if bot.session:
             await bot.session.close()
