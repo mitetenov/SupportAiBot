@@ -82,21 +82,21 @@ class TestHttpMcpClient:
         assert tool.input_schema == schema
 
     def test_should_return_empty_list_before_init(self) -> None:
-        client = HttpMcpClient(base_url="http://localhost:3100")
+        client = HttpMcpClient(server_name="remnawave", base_url="http://localhost:3100")
         assert client.list_tools() == []
         assert client.initialized is False
         assert client.session_id is None
 
     @pytest.mark.asyncio
     async def test_should_return_error_when_calling_tool_before_init(self) -> None:
-        client = HttpMcpClient(base_url="http://localhost:3100")
+        client = HttpMcpClient(server_name="remnawave", base_url="http://localhost:3100")
         result = await client.call_tool("test_tool", {})
         data = json.loads(result)
         assert "error" in data
         assert "not initialized" in data["error"]
 
     def test_should_set_initialized_flag_to_false_on_shutdown(self) -> None:
-        client = HttpMcpClient(base_url="http://localhost:3100")
+        client = HttpMcpClient(server_name="remnawave", base_url="http://localhost:3100")
         client.initialized = True
         client.session_id = "test-session-123"
         client.shutdown()
@@ -144,6 +144,7 @@ class TestHttpMcpClient:
             transport=transport, base_url="http://test-mcp:3100"
         ) as http_client:
             client = HttpMcpClient(
+                server_name="remnawave",
                 base_url="http://test-mcp:3100",
                 http_client=http_client,
                 admin_notifier=admin_notifier,
@@ -194,7 +195,9 @@ class TestHttpMcpClient:
             return httpx.Response(202)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
+            )
             assert await client.init() is True
 
         assert client.protocol_version == "2025-11-25"
@@ -229,7 +232,9 @@ class TestHttpMcpClient:
             return httpx.Response(202)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
+            )
             await client.init()
             await client.close()
 
@@ -273,7 +278,9 @@ class TestHttpMcpClient:
             return httpx.Response(202)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
+            )
             await client.init()
             await client.close()
 
@@ -303,7 +310,9 @@ class TestHttpMcpClient:
             return httpx.Response(202)
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
+            )
             assert await client.init() is False
             assert client.initialized is False
             assert client.session_id == "sess-partial-init"
@@ -333,7 +342,9 @@ class TestHttpMcpClient:
             )
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
+            )
             assert await client.init() is False
 
         assert initialize_calls == 1
@@ -372,6 +383,7 @@ class TestHttpMcpClient:
             transport=transport, base_url="http://test-mcp:3100"
         ) as http_client:
             client = HttpMcpClient(
+                server_name="remnawave",
                 base_url="http://test-mcp:3100",
                 http_client=http_client,
                 admin_notifier=admin_notifier,
@@ -400,6 +412,7 @@ class TestHttpMcpClient:
             transport=transport, base_url="http://test-mcp:3100"
         ) as http_client:
             client = HttpMcpClient(
+                server_name="remnawave",
                 base_url="http://test-mcp:3100",
                 http_client=http_client,
                 admin_notifier=admin_notifier,
@@ -419,6 +432,7 @@ class TestHttpMcpClient:
             transport=transport, base_url="http://test-mcp:3100"
         ) as http_client:
             client = HttpMcpClient(
+                server_name="remnawave",
                 base_url="http://test-mcp:3100",
                 http_client=http_client,
                 admin_notifier=admin_notifier,
@@ -478,6 +492,7 @@ class TestHttpMcpClient:
             transport=transport, base_url="http://test-mcp:3100"
         ) as http_client:
             client = HttpMcpClient(
+                server_name="remnawave",
                 base_url="http://test-mcp:3100",
                 http_client=http_client,
                 admin_notifier=admin_notifier,
@@ -558,7 +573,9 @@ class TestSessionRecovery:
         transport, state = self._server()
 
         async with httpx.AsyncClient(transport=transport) as http_client:
-            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
+            )
             assert await client.init() is True
 
             state["dead"].add("sess-1")  # the MCP server restarts
@@ -573,7 +590,9 @@ class TestSessionRecovery:
         transport, state = self._server()
 
         async with httpx.AsyncClient(transport=transport) as http_client:
-            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
+            )
             await client.init()
 
             await client.call_tool("nodes_list", {})
@@ -585,7 +604,9 @@ class TestSessionRecovery:
         transport, state = self._server()
 
         async with httpx.AsyncClient(transport=transport) as http_client:
-            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
+            )
             await client.init()
 
             state["dead"].update({"sess-1", "sess-2"})
@@ -598,7 +619,9 @@ class TestSessionRecovery:
         transport, state = self._server()
 
         async with httpx.AsyncClient(transport=transport) as http_client:
-            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
+            )
             await client.init()
 
             state["dead"].add("sess-1")
@@ -630,7 +653,9 @@ class TestSessionRecovery:
             return httpx.Response(200, json={})
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(base_url="http://mcp.test", http_client=http_client)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
+            )
             await client.init()
 
             result = json.loads(await client.call_tool("nodes_get", {}))

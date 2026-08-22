@@ -76,7 +76,7 @@ class TestMcpWiringMatchesProduction:
         async with httpx.AsyncClient(
             transport=mcp_transport(seen), timeout=httpx.Timeout(30.0)
         ) as shared:
-            client = HttpMcpClient(base_url=MCP_URL, http_client=shared)
+            client = HttpMcpClient(server_name="remnawave", base_url=MCP_URL, http_client=shared)
 
             assert await client.init() is True
             assert [t.name for t in client.list_tools()] == ["nodes_list"]
@@ -87,7 +87,7 @@ class TestMcpWiringMatchesProduction:
         async with httpx.AsyncClient(
             transport=mcp_transport(seen), timeout=httpx.Timeout(30.0)
         ) as shared:
-            client = HttpMcpClient(base_url=MCP_URL, http_client=shared)
+            client = HttpMcpClient(server_name="remnawave", base_url=MCP_URL, http_client=shared)
             await client.init()
 
         assert seen, "no request was made"
@@ -101,7 +101,9 @@ class TestMcpWiringMatchesProduction:
         async with httpx.AsyncClient(
             transport=mcp_transport(seen), timeout=httpx.Timeout(30.0)
         ) as shared:
-            await HttpMcpClient(base_url=MCP_URL, http_client=shared).init()
+            await HttpMcpClient(
+                server_name="remnawave", base_url=MCP_URL, http_client=shared
+            ).init()
 
         follow_ups = seen[1:]
         assert follow_ups
@@ -122,7 +124,10 @@ class TestAdminNotificationIsAwaited:
             raise httpx.ConnectError("connection refused")
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(explode)) as shared:
-            client = HttpMcpClient(base_url=MCP_URL, http_client=shared, admin_notifier=notifier)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url=MCP_URL, http_client=shared,
+                admin_notifier=notifier,
+            )
             assert await client.init() is False
 
         bot.send_message.assert_awaited_once()
@@ -139,7 +144,10 @@ class TestAdminNotificationIsAwaited:
             raise httpx.ConnectError("connection refused")
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(explode)) as shared:
-            client = HttpMcpClient(base_url=MCP_URL, http_client=shared, admin_notifier=notifier)
+            client = HttpMcpClient(
+                server_name="remnawave", base_url=MCP_URL, http_client=shared,
+                admin_notifier=notifier,
+            )
             assert await client.init() is False
 
 
@@ -268,6 +276,7 @@ def _stub_process_boundaries(monkeypatch: pytest.MonkeyPatch) -> dict[str, Magic
     monkeypatch.setattr(main_module, "KnowledgeGapService", lambda **_: knowledge_gaps)
 
     mcp_client = MagicMock()
+    mcp_client.base_url = MCP_URL
     mcp_client.init = AsyncMock(return_value=True)
     mcp_client.close = AsyncMock()
     mcp_client.list_tools = MagicMock(
