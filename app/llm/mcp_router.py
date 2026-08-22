@@ -5,10 +5,22 @@ and the model may only call a tool when (a) its owner declared it and (b) the
 owner's allowlist profile allows it. A name alone can no longer smuggle a call
 to the wrong backend, and a tool one server declared but another did not is
 never silently served by the first match.
+
+Identity is chosen by the caller key's sign, never trusted from the model. A
+positive key is a real Telegram sender: Bedolaga tools receive ``telegram_id``
+and Remnawave tools their telegram-typed parameter. A negative key is the
+synthetic conversation key of an email-only Bedolaga cabinet ticket
+(``-ticket.user_id``): Bedolaga tools are served with the internal ``user_id``
+pinned to ``abs(key)`` — the caller IS known to Bedolaga by that id — while
+Remnawave tools stay ``identity_unavailable``, because such a caller has no
+Telegram identity and we cannot prove a Remnawave panel userId for a cabinet
+account. A key of exactly ``0`` means no identity at all and is never pinned
+anywhere.
 """
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -50,7 +62,12 @@ BEDOLAGA_READ_TOOLS: frozenset[str] = frozenset(
 
 @dataclass(frozen=True)
 class TelegramIdParam:
-    """Descriptor for tool parameter carrying the Telegram user ID."""
+    """Descriptor for a tool parameter carrying the pinned identity.
+
+    ``name`` is the schema-declared key (``telegram_id``, ``telegramId``,
+    ``user_id``, ``userId``) and ``json_type`` the type the schema declares,
+    so the router injects into exactly the parameter the server advertises.
+    """
 
     name: str
     json_type: str | None = None
@@ -63,6 +80,7 @@ class _Route:
     client: McpClientInterface
     owner: str
     telegram_id_param: TelegramIdParam | None
+    user_id_param: TelegramIdParam | None = None
 
 
 class McpRouter:
@@ -73,10 +91,14 @@ class McpRouter:
        profile are exposed and callable; mutating Remnawave tools are gated
        behind readonly=False. A tool name declared by more than one server is
        hidden outright and reported to the administrator — never "first wins".
-    2. The Telegram ID argument is always overwritten or injected with the
-       authenticated sender ID, never trusted from the model.
-    3. A non-positive caller key (email-only Bedolaga ticket) is never sent to
-       any user-by-Telegram-ID tool: the call returns ``identity_unavailable``.
+    2. Identity is always overwritten or injected from the caller key, never
+       trusted from the model.
+    3. A negative caller key is an email-only Bedolaga cabinet ticket
+       (``-ticket.user_id``): Bedolaga tools are served with the internal
+       ``user_id`` pinned to ``abs(key)``, while Remnawave tools return
+       ``identity_unavailable`` (no Telegram identity, no provable panel
+       userId). A key of exactly ``0`` is no identity at all and returns
+       ``identity_unavailable`` for every tool.
     """
 
     def __init__(
@@ -186,14 +208,20 @@ class McpRouter:
                     )
                     continue
                 telegram_param = self._telegram_id_property(tool.input_schema)
-                if server_name == SERVER_BEDOLAGA and telegram_param is None:
-                    # Bedolaga tools always require the sender's Telegram ID in
-                    # integer form; the schema may omit it, the contract never does.
-                    telegram_param = TelegramIdParam(name="telegram_id", json_type="integer")
+                user_id_param = None
+                if server_name == SERVER_BEDOLAGA:
+                    # Bedolaga identity is always system-pinned as an integer:
+                    # the schema may omit either param, the contract never does.
+                    if telegram_param is None:
+                        telegram_param = TelegramIdParam(name="telegram_id", json_type="integer")
+                    user_id_param = self._user_id_property(tool.input_schema)
+                    if user_id_param is None:
+                        user_id_param = TelegramIdParam(name="user_id", json_type="integer")
                 route = _Route(
                     client=client,
                     owner=server_name,
                     telegram_id_param=telegram_param,
+                    user_id_param=user_id_param,
                 )
                 self._routes[(server_name, tool_name)] = route
                 self._route_by_tool_name[tool_name] = route
@@ -201,13 +229,26 @@ class McpRouter:
 
     @classmethod
     def _telegram_id_property(cls, input_schema: dict[str, Any] | None) -> TelegramIdParam | None:
+        return cls._first_identity_property(input_schema, cls._is_telegram_id_arg)
+
+    @classmethod
+    def _user_id_property(cls, input_schema: dict[str, Any] | None) -> TelegramIdParam | None:
+        """Find the internal ``user_id`` parameter a Bedolaga schema declares."""
+        return cls._first_identity_property(input_schema, cls._is_user_id_arg)
+
+    @classmethod
+    def _first_identity_property(
+        cls,
+        input_schema: dict[str, Any] | None,
+        is_match: Callable[[str | None], bool],
+    ) -> TelegramIdParam | None:
         if not input_schema or not isinstance(input_schema, dict):
             return None
         properties = input_schema.get("properties")
         if not properties or not isinstance(properties, dict):
             return None
         for key, prop_schema in properties.items():
-            if cls._is_telegram_id_arg(key):
+            if is_match(key):
                 json_type = (
                     prop_schema.get("type")
                     if isinstance(prop_schema, dict) and isinstance(prop_schema.get("type"), str)
@@ -219,6 +260,10 @@ class McpRouter:
     @staticmethod
     def _is_telegram_id_arg(key: str | None) -> bool:
         return bool(key and key.replace("_", "").lower() == "telegramid")
+
+    @staticmethod
+    def _is_user_id_arg(key: str | None) -> bool:
+        return bool(key and key.replace("_", "").lower() == "userid")
 
     def list_tools(self) -> list[McpTool]:
         """Return allowed tools from all configured clients.
@@ -244,18 +289,18 @@ class McpRouter:
         arguments: dict[str, Any] | None = None,
         telegram_user_id: int = 0,
     ) -> str:
-        """Execute a tool on behalf of telegram_user_id, overriding Telegram ID arguments.
+        """Execute a tool for the caller key, pinning identity by the key's sign.
 
-        A non-positive caller key is an email-only Bedolaga ticket whose owner
-        has no Telegram identity: it must never be sent to any user-by-Telegram-ID
-        tool, so every call for such a key returns ``identity_unavailable``.
+        A key of ``0`` is no identity at all: every call returns
+        ``identity_unavailable``. A negative key is the synthetic conversation
+        key of an email-only Bedolaga cabinet ticket (``-ticket.user_id``):
+        Bedolaga tools are served with the internal ``user_id`` pinned to
+        ``abs(key)``, while Remnawave tools — a cabinet caller has no Telegram
+        identity and no provable panel userId — return ``identity_unavailable``.
+        A positive key is a real Telegram sender and is pinned as today.
         """
-        if telegram_user_id <= 0:
-            logger.warning(
-                "Blocked call to %s: no real Telegram identity for key %d",
-                tool_name,
-                telegram_user_id,
-            )
+        if telegram_user_id == 0:
+            logger.warning("Blocked call to %s: caller key is 0, no identity to pin", tool_name)
             return self._identity_unavailable(tool_name)
 
         route = self._route_for(tool_name)
@@ -272,23 +317,44 @@ class McpRouter:
             logger.warning("Blocked call to non-allowed tool: %s", tool_name)
             return json.dumps({"error": f"Tool not allowed: {tool_name}"})
 
-        safe_args = self._pin_telegram_id(route, tool_name, arguments, telegram_user_id)
+        if telegram_user_id < 0:
+            if route.owner != SERVER_BEDOLAGA:
+                logger.warning(
+                    "Blocked call to %s on %s: email-only key %d has no Telegram "
+                    "identity and no provable panel userId",
+                    tool_name,
+                    route.owner,
+                    telegram_user_id,
+                )
+                return self._identity_unavailable(tool_name)
+            logger.info(
+                "Serving %s on %s for email-only key %d with pinned internal user_id",
+                tool_name,
+                route.owner,
+                telegram_user_id,
+            )
+
+        safe_args = self._pin_identity(route, tool_name, arguments, telegram_user_id)
         return await route.client.call_tool(tool_name, safe_args)
 
     def _route_for(self, tool_name: str) -> _Route | None:
         return self._route_by_tool_name.get(tool_name)
 
-    def _pin_telegram_id(
+    def _pin_identity(
         self,
         route: _Route,
         tool_name: str,
         arguments: dict[str, Any] | None,
         telegram_user_id: int,
     ) -> dict[str, Any]:
-        """Return arguments with the sender's Telegram ID pinned, never the model's.
+        """Return arguments with the caller's identity pinned, never the model's.
 
-        Bedolaga tools: every telegram_id/telegramId variant the model supplied
-        is removed and the canonical parameter carries the sender as an integer.
+        Bedolaga tools: every telegram_id/telegramId and user_id/userId variant
+        the model supplied is removed, then the canonical parameter — the
+        sender's ``telegram_id`` for a positive key, the internal ``user_id`` =
+        ``abs(key)`` for an email-only negative key — carries the
+        system-chosen identity as an integer. The model never controls which
+        account is looked up.
         Remnawave tools: the telegram-typed parameter (``users_get_by_telegram_id``)
         is overwritten in the schema's declared type; a stray variant on a tool
         without one keeps the shape the model chose, and a ``userId`` parameter
@@ -299,17 +365,21 @@ class McpRouter:
 
         if route.owner == SERVER_BEDOLAGA:
             for key in list(safe.keys()):
-                if self._is_telegram_id_arg(key):
+                if self._is_telegram_id_arg(key) or self._is_user_id_arg(key):
                     logger.warning(
-                        "Tool %s called with %s=%s — stripping; injecting actual sender %s",
+                        "Tool %s called with %s=%s — stripping; injecting actual identity",
                         tool_name,
                         key,
                         safe[key],
-                        telegram_user_id,
                     )
                     del safe[key]
-            name = telegram_param.name if telegram_param is not None else "telegram_id"
-            safe[name] = self._coerce(telegram_user_id, telegram_param, None)
+            if telegram_user_id < 0:
+                identity_param = route.user_id_param
+                name = identity_param.name if identity_param is not None else "user_id"
+                safe[name] = self._coerce(-telegram_user_id, identity_param, None)
+            else:
+                name = telegram_param.name if telegram_param is not None else "telegram_id"
+                safe[name] = self._coerce(telegram_user_id, telegram_param, None)
             return safe
 
         for key in list(safe.keys()):

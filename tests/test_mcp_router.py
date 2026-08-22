@@ -579,7 +579,7 @@ class TestOwnerBasedRouting:
 
 
 class TestBedolagaIdentityPinning:
-    """Bedolaga tools always carry the real sender's Telegram ID, as an integer."""
+    """Bedolaga tools always carry the system-pinned identity, as an integer."""
 
     @pytest.mark.asyncio
     async def test_should_pin_the_sender_when_the_model_omits_telegram_id(self) -> None:
@@ -708,10 +708,55 @@ class TestUserIdIsNeverOverwritten:
 
 
 class TestIdentityUnavailable:
-    """A non-positive caller key is an email-only Bedolaga ticket: never sent anywhere."""
+    """Identity is chosen by the caller key's sign; a cabinet caller is served on Bedolaga only."""
 
     @pytest.mark.asyncio
-    async def test_should_return_identity_unavailable_for_a_negative_caller_key(self) -> None:
+    async def test_should_serve_bedolaga_for_a_negative_caller_key_by_pinning_user_id(
+        self,
+    ) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name="bedolaga_user_get", description="desc")],
+            tool_results={"bedolaga_user_get": "ok"},
+        )
+
+        result = await create_router([bedolaga]).call_tool(
+            "bedolaga_user_get",
+            {"telegram_id": 999_999, "userId": 777},
+            telegram_user_id=NEGATIVE_CABINET_KEY,
+        )
+
+        assert result == "ok"
+        assert bedolaga.last_arguments() == {"user_id": -NEGATIVE_CABINET_KEY}
+
+    @pytest.mark.asyncio
+    async def test_should_inject_user_id_under_the_schema_declared_name(self) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[
+                McpTool(
+                    name="bedolaga_billing_get",
+                    description="desc",
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "telegramId": {"type": "integer"},
+                            "userId": {"type": "integer"},
+                        },
+                    },
+                )
+            ],
+            tool_results={"bedolaga_billing_get": "ok"},
+        )
+
+        await create_router([bedolaga]).call_tool(
+            "bedolaga_billing_get", {"limit": 10}, telegram_user_id=NEGATIVE_CABINET_KEY
+        )
+
+        assert bedolaga.last_arguments() == {"userId": -NEGATIVE_CABINET_KEY, "limit": 10}
+
+    @pytest.mark.asyncio
+    async def test_should_return_identity_unavailable_for_a_zero_caller_key(self) -> None:
         bedolaga = StubMcpClient(
             server_name="bedolaga",
             tools=[McpTool(name="bedolaga_user_get", description="desc")],
@@ -719,7 +764,7 @@ class TestIdentityUnavailable:
         )
 
         result = await create_router([bedolaga]).call_tool(
-            "bedolaga_user_get", {}, telegram_user_id=NEGATIVE_CABINET_KEY
+            "bedolaga_user_get", {}, telegram_user_id=0
         )
 
         data = json.loads(result)
