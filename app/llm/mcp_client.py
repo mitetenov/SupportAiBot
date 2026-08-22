@@ -76,6 +76,15 @@ class AdminNotifier(Protocol):
 class McpClientInterface(Protocol):
     """Interface for MCP clients."""
 
+    @property
+    def server_name(self) -> str:
+        """Stable name of the MCP server this client is bound to.
+
+        The router selects the tool allowlist by OWNER from this name, never by
+        matching tool names globally.
+        """
+        ...
+
     def list_tools(self) -> list[McpTool]:
         """Return cached list of available MCP tools."""
         ...
@@ -118,7 +127,7 @@ class HttpMcpClient(McpClientInterface):
         settings: Settings | None = None,
         admin_notifier: AdminNotifier | None = None,
     ) -> None:
-        self.server_name = server_name
+        self._server_name = server_name
         self.base_url = base_url.rstrip("/")
         self.admin_notifier = admin_notifier
         self._custom_client = http_client is not None
@@ -134,6 +143,11 @@ class HttpMcpClient(McpClientInterface):
         # burst of calls to one MCP never blocks another client's recovery.
         self._session_lock = asyncio.Lock()
         self._session_generation = 0
+
+    @property
+    def server_name(self) -> str:
+        """Stable name of the MCP server this client is bound to."""
+        return self._server_name
 
     @property
     def _label(self) -> str:
@@ -337,7 +351,9 @@ class HttpMcpClient(McpClientInterface):
             self._session_generation += 1
 
             if not recovered:
-                logger.error("%s could not re-establish the session at %s", self._label, self.base_url)
+                logger.error(
+                    "%s could not re-establish the session at %s", self._label, self.base_url
+                )
                 return False
 
             current_tools = {tool.name for tool in self._cached_tools}
@@ -417,12 +433,18 @@ class HttpMcpClient(McpClientInterface):
             return await self._invoke_tool(tool_name, arguments)
         except McpSessionExpired:
             if not await self._recover_session(generation):
-                return json.dumps({"error": f"{self._label} session lost and not recovered: {tool_name}"})
+                return json.dumps(
+                    {"error": f"{self._label} session lost and not recovered: {tool_name}"}
+                )
             try:
                 return await self._invoke_tool(tool_name, arguments)
             except Exception as e:
                 logger.error(
-                    "%s tool %s failed after reconnect: %s", self._label, tool_name, e, exc_info=True
+                    "%s tool %s failed after reconnect: %s",
+                    self._label,
+                    tool_name,
+                    e,
+                    exc_info=True,
                 )
                 await self._notify_admins(
                     f"{self._label} tool call failed after reconnect: {tool_name}", e

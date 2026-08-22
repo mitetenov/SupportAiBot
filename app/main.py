@@ -201,13 +201,34 @@ async def main() -> None:
             settings=settings,
         )
 
+        # A tool name declared by more than one MCP server is hidden from the
+        # model and reported here — the router never picks "the first" server.
+        for tool_name, owners in sorted(mcp_router.collisions.items()):
+            context = (
+                "Одноимённый инструмент MCP "
+                f"'{tool_name}' объявлен несколькими серверами "
+                f"({', '.join(owners)}). Имя скрыто от модели. Переименуйте "
+                "инструмент в одном из MCP-серверов."
+            )
+            logger.error(
+                "MCP tool name collision hidden from the model: '%s' declared by %s",
+                tool_name,
+                ", ".join(owners),
+            )
+            await admin_notifier.notify_error(
+                context,
+                error=RuntimeError(f"MCP tool name collision: {tool_name}"),
+            )
+
         for server_name, mcp_client in mcp_clients_by_server.items():
             if mcp_client not in initialized_clients:
                 continue
-            # The MCP answered, but after the router's allowlist filtering the
-            # bot can use none of what it exposed — worth a separate alert.
+            # The MCP answered, but after the router's per-owner allowlist
+            # filtering the bot can use none of what it exposed — worth a
+            # separate alert.
             if not any(
-                tool.name in mcp_router.allowed_tools for tool in mcp_client.list_tools()
+                tool.name in mcp_router.allowed_tools_by_server.get(server_name, set())
+                for tool in mcp_client.list_tools()
             ):
                 context = (
                     "Бот запущен БЕЗ инструментов "
