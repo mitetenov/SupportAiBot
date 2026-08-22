@@ -38,6 +38,84 @@ Telegram-бот первой линии поддержки VPN-сервиса. �
 вопрос. Голосовые сообщения, видео, документы и стикеры бот не распознаёт, но
 пересылает оператору вместе с обращением.
 
+## Два MCP: Remnawave и Bedolaga
+
+Бот подключается к двум независимым MCP-серверам. У каждого свой клиент, своя
+MCP-сессия и свой allowlist инструментов.
+
+```
+LLM ──► McpRouter ──┬──► bedolaga-mcp ──► Bedolaga Bot API
+                    │        │  баланс, платежи, покупки, рефералы
+                    │        │  (http://bedolaga-mcp:3100, только внутренняя сеть)
+                    │
+                    └──► mcp-remnawave ──► Remnawave panel
+                             │  состояние панели, узлы, HWID
+                             │  (http://mcp-remnawave:3100, только внутренняя сеть)
+```
+
+`McpRouter` маршрутизирует вызов инструмента к его владельцу: имя доступно
+модели, только если его объявил владелец и оно есть в его allowlist. Сессии у
+серверов независимые — ошибка инициализации или падение одного MCP не
+отключает инструменты другого.
+
+- **Remnawave MCP** — состояние панели: подписка пользователя, узлы, HWID.
+  Поднимается всегда.
+- **Bedolaga MCP** — персональные данные Bedolaga: баланс, платежи, покупки,
+  рефералы. Включается флагом `BEDOLAGA_MCP_ENABLED` (в `.env`) — это личные
+  MCP-инструменты для Telegram-поддержки. НЕ путать с `BEDOLAGA_ENABLED`,
+  который включает webhook/poller обработку тикетов и прямой Bedolaga Web API
+  client (см. раздел «Тикеты Bedolaga»).
+
+### Частичная деградация
+
+После старта, если один MCP умирает, бот продолжает работать на втором:
+жив `mcp-remnawave` — работают инструменты панели; жив `bedolaga-mcp` —
+работают персональные инструменты. `depends_on: service_healthy` в compose
+требует, чтобы оба MCP были здоровы до старта бота — это про порядок запуска,
+а не про время жизни. Если Bedolaga MCP не нужен совсем, уберите сервис
+`bedolaga-mcp` и его запись в `depends_on` бота: при
+`BEDOLAGA_MCP_ENABLED=false` бот его и так не использует.
+
+### Обновление и откат
+
+Каждый MCP — отдельный образ со своим тегом:
+
+- `mitetenov/remnawave-mcp:${MCP_TAG}`
+- `mitetenov/bedolaga-mcp:${BEDOLAGA_MCP_TAG}` — публикуется только `:{sha}` и
+  `:{version}`, тега `:latest` нет.
+
+Порядок обновления Bedolaga MCP:
+
+```bash
+cd /root/supportBot
+cp .env .env.pre-bedolaga-mcp
+sed -i 's/^BEDOLAGA_MCP_TAG=.*/BEDOLAGA_MCP_TAG=<новый тег>/' .env
+docker compose pull bedolaga-mcp
+docker compose up -d --wait bedolaga-mcp
+# проверьте health и список инструментов (внутренняя сеть), затем бот:
+docker compose pull support-bot
+docker compose up -d --wait support-bot
+```
+
+Сначала разворачивается новый образ Bedolaga MCP и проверяется его health и
+набор инструментов, затем — новый supportBot с обновлённым allowlist/промптом.
+Откат supportBot (`BOT_TAG` на предыдущий тег) не требует отката Remnawave MCP:
+образ Remnawave и его инструменты живут отдельно.
+
+### Эксплуатационная граница
+
+- Для MCP создавайте **отдельный** Bedolaga Web API-токен и указывайте его в
+  `BEDOLAGA_API_KEY`. Сейчас `bedolaga-mcp` и webhook/poller-интеграция читают
+  один и тот же файл `.env` (env_file), поэтому обе используют одну переменную
+  `BEDOLAGA_API_KEY`. Не включайте `BEDOLAGA_ENABLED` и MCP одновременно, если
+  им нужны разные токены; для параллельной работы заведите отдельную переменную
+  для MCP и переопределите ключ в environment сервиса.
+- MCP-сервис работает только во внутренней Docker-сети: порт на host не
+  публикуется, доступа извне к нему нет.
+- У актуальной токен-модели Bedolaga нет scopes: allowlist MCP ограничивает
+  поверхность LLM, но не является полной границей, если сам процесс MCP будет
+  скомпрометирован.
+
 ## Быстрый старт
 
 Перед запуском:
@@ -106,6 +184,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `PGVECTOR_PORT` | `5432` | Порт базы данных |
 | `BOT_TAG` | `latest` | Тег образа бота |
 | `MCP_TAG` | `v3.2.1` | Тег образа интеграции с Remnawave |
+| `BEDOLAGA_MCP_TAG` | `1.0.0` | Тег образа bedolaga-mcp (только `:{sha}` / `:{version}`, без `:latest`) |
 
 ## Использование в Telegram
 
