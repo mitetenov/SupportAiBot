@@ -395,7 +395,7 @@ async def test_should_record_the_caption_when_the_user_wrote_one():
 def _illustrated_context(image: str | None) -> FaqContext:
     return FaqContext(
         text="FAQ...",
-        results=[FaqResult("Где кнопка?", "Слева", 0.8, 0.03, image=image)],
+        results=[FaqResult("Где кнопка?", "Нажмите правую кнопку", 0.8, 0.03, image=image)],
         max_similarity=0.8,
         best_question="Где кнопка?",
     )
@@ -418,7 +418,7 @@ def _pipeline(llm_client, sender, forwarder, gap_service) -> UserMessagePipeline
 def _parts(image: str | None):
     llm_client = MagicMock()
     llm_client.chat = AsyncMock(
-        return_value=LlmReply(text="Нажмите левую кнопку", faq_context=_illustrated_context(image))
+        return_value=LlmReply(text="Нажмите правую кнопку", faq_context=_illustrated_context(image))
     )
     sender = MagicMock(spec=TelegramMessageSender)
     sender.send = AsyncMock()
@@ -458,6 +458,23 @@ class TestIllustrations:
         await _pipeline(llm_client, sender, forwarder, gaps).handle(make_batch("сколько стоит?"))
 
         sender.send_photo.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_does_not_send_a_picture_when_a_tool_answer_ignores_the_top_faq_hit(self) -> None:
+        llm_client, sender, forwarder, gaps = _parts("happ-buttons.png")
+        llm_client.chat = AsyncMock(
+            return_value=LlmReply(
+                text="Ваш текущий баланс: **10 рублей**.",
+                faq_context=_illustrated_context("happ-buttons.png"),
+            )
+        )
+
+        await _pipeline(llm_client, sender, forwarder, gaps).handle(
+            make_batch("Какой у меня баланс?")
+        )
+
+        sender.send_photo.assert_not_awaited()
+        assert forwarder.forward_to_support.await_args.kwargs["illustration_message_id"] is None
 
     @pytest.mark.asyncio
     async def test_hands_the_operator_topic_the_picture_the_user_received(self) -> None:

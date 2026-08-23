@@ -1,4 +1,4 @@
-"""Sends the screenshot named by the best-matching FAQ entry, at most once per conversation."""
+"""Sends the screenshot for an FAQ instruction used in the answer, once per conversation."""
 
 import logging
 from typing import Any
@@ -19,14 +19,21 @@ class IllustrationSender:
         self.sender = sender
         self.conversation_state = conversation_state
 
-    async def send_first(self, chat_id: int, user_id: int, faq_context: Any) -> int | None:
-        """Send the screenshot named by the top FAQ hit, returning the message id it got.
+    async def send_first(
+        self,
+        chat_id: int,
+        user_id: int,
+        faq_context: Any,
+        delivered_answer: str,
+    ) -> int | None:
+        """Send the screenshot used by the delivered FAQ answer, returning its message id.
 
-        The entry that came back first is the one the answer was most likely
-        built from, so its picture is the one to show. Getting that wrong costs
-        a stray screenshot under a correct answer, which is why this is decided
-        from the retrieval result rather than by asking the model to mark it —
-        a marker would cost tokens on every request instead.
+        Retrieval supplies possible instructions to the model, not proof that it
+        used one.  In particular, a personal-data tool can produce the final
+        answer while an only loosely related FAQ remains the top search hit.  The
+        prompt requires FAQ instructions to be copied verbatim, so the picture is
+        relevant only when the top hit's full instruction is present in the text
+        that was actually sent to the user.
 
         Sent at most once per conversation: several entries name the same
         picture, because pressing the two buttons is the opening step of every
@@ -37,8 +44,13 @@ class IllustrationSender:
         if not results:
             return None
 
-        name = getattr(results[0], "image", None)
+        top_hit = results[0]
+        name = getattr(top_hit, "image", None)
         if not name or self.conversation_state.was_illustration_sent(user_id, name):
+            return None
+
+        faq_answer = getattr(top_hit, "answer", None)
+        if not self._contains_instruction(delivered_answer, faq_answer):
             return None
 
         path = faq_image_path(name)
@@ -49,3 +61,18 @@ class IllustrationSender:
         if message_id is not None:
             self.conversation_state.record_illustration_sent(user_id, name)
         return message_id
+
+    @staticmethod
+    def _contains_instruction(delivered_answer: str, faq_answer: Any) -> bool:
+        """Return whether the delivered text contains the retrieved instruction verbatim.
+
+        Whitespace and case are presentation details and do not change whether
+        the instruction was used.  Requiring the complete instruction favours a
+        missing optional picture over attaching an unrelated one.
+        """
+        if not isinstance(faq_answer, str) or not faq_answer.strip():
+            return False
+
+        normalized_delivery = " ".join(delivered_answer.casefold().split())
+        normalized_instruction = " ".join(faq_answer.casefold().split())
+        return normalized_instruction in normalized_delivery

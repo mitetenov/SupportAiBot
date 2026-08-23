@@ -110,7 +110,7 @@ class UserMessagePipeline:
 
             await self.sender.send(chat_id, response)
             illustration_message_id = await self.illustrations.send_first(
-                chat_id, user_id, reply.faq_context
+                chat_id, user_id, reply.faq_context, response
             )
 
             escalate = EscalationPolicy.model_requested_escalation(

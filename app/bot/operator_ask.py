@@ -77,7 +77,7 @@ class OperatorAskCommand:
                 response = get_message("bot.llm.empty")
 
             await self.sender.send(user_id, response)
-            await self.illustrations.send_first(user_id, user_id, reply.faq_context)
+            await self.illustrations.send_first(user_id, user_id, reply.faq_context, response)
 
             # The operator is still the one running this conversation, so the
             # bot stays out of the way for another suppression window.
