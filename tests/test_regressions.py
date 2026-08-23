@@ -125,7 +125,9 @@ class TestAdminNotificationIsAwaited:
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(explode)) as shared:
             client = HttpMcpClient(
-                server_name="remnawave", base_url=MCP_URL, http_client=shared,
+                server_name="remnawave",
+                base_url=MCP_URL,
+                http_client=shared,
                 admin_notifier=notifier,
             )
             assert await client.init() is False
@@ -145,7 +147,9 @@ class TestAdminNotificationIsAwaited:
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(explode)) as shared:
             client = HttpMcpClient(
-                server_name="remnawave", base_url=MCP_URL, http_client=shared,
+                server_name="remnawave",
+                base_url=MCP_URL,
+                http_client=shared,
                 admin_notifier=notifier,
             )
             assert await client.init() is False
