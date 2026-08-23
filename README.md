@@ -188,6 +188,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | Переменная | По умолчанию | Описание |
 |---|---|---|
 | `LLM_PROVIDER` | `openai` | `openai`, `gemini` или `deepseek` |
+| `REASONING_EFFORT` | `none` | Единый уровень размышлений: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`; для support рекомендуется `low` |
 | `OPENAI_API_KEY` | — | Нужен при `LLM_PROVIDER=openai` |
 | `OPENAI_MODEL` | `gpt-5.6-luna` | Модель OpenAI |
 | `GEMINI_API_KEY` | — | Нужен при выборе Gemini или Gemini-эмбеддингов |

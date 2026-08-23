@@ -26,6 +26,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def supports_reasoning(model: str) -> bool:
+    """Return whether an OpenAI model family accepts Responses reasoning config."""
+    normalized = model.strip().lower()
+    return normalized.startswith(("gpt-5", "o1", "o3", "o4"))
+
+
 class OpenAiClient(AbstractLlmClient):
     """Client for OpenAI Responses API (/responses) with tools and vision."""
 
@@ -53,9 +59,35 @@ class OpenAiClient(AbstractLlmClient):
         self.model = settings.openai_model or "gpt-5.6-luna"
         self.base_url = (settings.openai_base_url or "https://api.openai.com/v1").rstrip("/")
         self.temperature = settings.openai_temperature
+        self.reasoning_effort = settings.reasoning_effort
+        self.reasoning_supported = supports_reasoning(self.model)
         self._http_client = http_client
         self._own_client = False
         self.tool_definitions = self._build_tool_definitions()
+        self._log_reasoning_configuration()
+
+    def _log_reasoning_configuration(self) -> None:
+        if not self.reasoning_supported:
+            if self.reasoning_effort != "none":
+                logger.warning(
+                    "OpenAI model %s does not support reasoning; "
+                    "REASONING_EFFORT=%s is ignored and requests are sent without reasoning",
+                    self.model,
+                    self.reasoning_effort,
+                )
+            return
+        logger.info(
+            "OpenAI reasoning %s for model %s (REASONING_EFFORT=%s, MCP tools compatible)",
+            "disabled" if self.reasoning_effort == "none" else "enabled",
+            self.model,
+            self.reasoning_effort,
+        )
+        if self.reasoning_effort != "none" and self.temperature is not None:
+            logger.warning(
+                "OPENAI_TEMPERATURE=%s is ignored while REASONING_EFFORT=%s is enabled",
+                self.temperature,
+                self.reasoning_effort,
+            )
 
     @property
     def http_client(self) -> httpx.AsyncClient:
@@ -99,9 +131,13 @@ class OpenAiClient(AbstractLlmClient):
         if self.tool_definitions:
             body["tools"] = self.tool_definitions
             body["tool_choice"] = "auto"
-            body["reasoning"] = {"effort": "none"}
 
-        if self.temperature is not None:
+        if self.reasoning_supported:
+            body["reasoning"] = {"effort": self.reasoning_effort}
+
+        if self.temperature is not None and (
+            not self.reasoning_supported or self.reasoning_effort == "none"
+        ):
             body["temperature"] = self.temperature
 
         return body
@@ -223,7 +259,11 @@ class OpenAiClient(AbstractLlmClient):
                     "Модель не вернула ответа. Попробуйте переформулировать вопрос.",
                 )
 
-            return LlmResponse(text=full_text, tool_calls=tool_calls)
+            return LlmResponse(
+                text=full_text,
+                tool_calls=tool_calls,
+                raw_parts=[item for item in output if isinstance(item, dict)],
+            )
         except LlmProcessingException:
             raise
         except Exception as e:
@@ -237,6 +277,9 @@ class OpenAiClient(AbstractLlmClient):
         conversation: list[dict[str, Any]],
         response: LlmResponse,
     ) -> None:
+        if response.raw_parts:
+            conversation.extend(response.raw_parts)
+            return
         for tc in response.tool_calls:
             conversation.append(
                 {

@@ -51,11 +51,12 @@ class ToolCall:
 
 @dataclass(frozen=True)
 class LlmResponse:
-    """Parsed model response carrying text, tool calls, and raw candidate parts."""
+    """Parsed response plus provider state that must survive a tool loop."""
 
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw_parts: list[dict[str, Any]] = field(default_factory=list)
+    reasoning_content: str | None = None
 
     def has_tool_calls(self) -> bool:
         """Return True if response contains at least one tool call."""

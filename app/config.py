@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 VALID_LLM_PROVIDERS: list[str] = ["deepseek", "gemini", "openai"]
 VALID_EMBEDDING_PROVIDERS: list[str] = ["gemini", "openai"]
+VALID_REASONING_EFFORTS: list[str] = ["none", "minimal", "low", "medium", "high", "xhigh"]
 
 
 def reveal(value: SecretStr | str | None) -> str:
@@ -59,6 +60,7 @@ class Settings(BaseSettings):
     # Providers
     llm_provider: str = "openai"
     embedding_provider: str = "gemini"
+    reasoning_effort: str = "none"
 
     # Telegram
     telegram_bot_token: SecretStr = SecretStr("")
@@ -149,6 +151,18 @@ class Settings(BaseSettings):
                     continue
             return result
         return set()
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def normalize_reasoning_effort(cls, value: Any) -> str:
+        """Normalize the provider-neutral reasoning level from REASONING_EFFORT."""
+        normalized = str(value or "").strip().lower()
+        if normalized not in VALID_REASONING_EFFORTS:
+            raise ValueError(
+                "Неизвестный REASONING_EFFORT: "
+                f"'{value}'. Допустимые значения: {', '.join(VALID_REASONING_EFFORTS)}"
+            )
+        return normalized
 
     @model_validator(mode="after")
     def validate_startup(self) -> Settings:

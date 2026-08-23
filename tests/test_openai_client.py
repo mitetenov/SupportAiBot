@@ -120,6 +120,39 @@ class TestOpenAiClient:
         assert body["tool_choice"] == "auto"
         assert body["reasoning"] == {"effort": "none"}
 
+    def test_reasoning_with_tools_uses_shared_effort(self, openai_client: OpenAiClient):
+        openai_client.reasoning_effort = "low"
+        openai_client.temperature = 1
+        openai_client.tool_definitions = [
+            {
+                "type": "function",
+                "name": "nodes_list",
+                "parameters": {"type": "object", "properties": {}},
+            }
+        ]
+
+        body = openai_client.build_request_body([{"role": "user", "content": "hello"}])
+
+        assert body["reasoning"] == {"effort": "low"}
+        assert body["tool_choice"] == "auto"
+        assert "temperature" not in body
+
+    def test_unsupported_model_omits_reasoning_and_logs_warning(
+        self, settings: Settings, openai_client: OpenAiClient, caplog: pytest.LogCaptureFixture
+    ):
+        settings.openai_model = "gpt-4.1"
+        settings.reasoning_effort = "low"
+        with caplog.at_level("WARNING"):
+            client = OpenAiClient(
+                settings=settings,
+                mcp_router=openai_client.mcp_router,
+                chat_history_service=openai_client.chat_history_service,
+                faq_embedding_service=openai_client.faq_embedding_service,
+            )
+
+        assert "reasoning" not in client.build_request_body([])
+        assert "ignored" in caplog.text
+
     def test_parse_text_response(self, openai_client: OpenAiClient):
         raw = """
         {
@@ -188,6 +221,25 @@ class TestOpenAiClient:
         assert conv[0]["call_id"] == "call_1"
         assert conv[0]["name"] == "nodes_get"
         assert json.loads(conv[0]["arguments"]) == {"uuid": "abc-123"}
+
+    def test_preserves_reasoning_item_across_tool_loop(self, openai_client: OpenAiClient):
+        payload = {
+            "output": [
+                {"id": "rs_1", "type": "reasoning", "summary": []},
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "nodes_list",
+                    "arguments": "{}",
+                },
+            ]
+        }
+        response = openai_client.parse_response(payload)
+        conversation: list[dict] = []
+
+        openai_client.add_tool_calls_to_conversation(conversation, response)
+
+        assert conversation == payload["output"]
 
     def test_add_tool_result_to_conversation(self, openai_client: OpenAiClient):
         conv = []
