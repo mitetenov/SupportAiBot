@@ -65,6 +65,35 @@ class TestGeminiClient:
 
         assert "tool_config" in body
         assert body["tool_config"]["function_calling_config"]["mode"] == "AUTO"
+        assert body["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
+
+    def test_gemini_3_reasoning_with_tools_uses_shared_effort(self, gemini_client: GeminiClient):
+        gemini_client.reasoning_version = "3"
+        gemini_client.reasoning_effort = "low"
+        body = gemini_client.build_request_body([])
+        assert body["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "low"}
+
+    def test_unsupported_model_omits_thinking_config(self, gemini_client: GeminiClient):
+        gemini_client.reasoning_version = None
+        gemini_client.reasoning_effort = "low"
+        body = gemini_client.build_request_body([])
+        assert "generationConfig" not in body
+
+    def test_unsupported_model_logs_ignored_reasoning(
+        self, settings: Settings, gemini_client: GeminiClient, caplog: pytest.LogCaptureFixture
+    ):
+        settings.gemini_model = "gemini-1.5-pro"
+        settings.reasoning_effort = "low"
+        with caplog.at_level("WARNING"):
+            client = GeminiClient(
+                settings=settings,
+                mcp_router=gemini_client.mcp_router,
+                chat_history_service=gemini_client.chat_history_service,
+                faq_embedding_service=gemini_client.faq_embedding_service,
+            )
+
+        assert "generationConfig" not in client.build_request_body([])
+        assert "ignored" in caplog.text
 
     def test_build_initial_conversation_for_text(self, gemini_client: GeminiClient):
         conv = gemini_client.build_initial_conversation("Hello", 123, "FAQ content", None, None)
@@ -103,10 +132,11 @@ class TestGeminiClient:
                         {"text": "Let me check your devices."},
                         {
                             "functionCall": {
+                                "id": "call_abc123",
                                 "name": "hwid_devices_list",
-                                "args": {"uuid": "abc-123"},
-                                "thought_signature": "sig_abc123xyz"
-                            }
+                                "args": {"uuid": "abc-123"}
+                            },
+                            "thoughtSignature": "sig_abc123xyz"
                         }
                     ]
                 }
@@ -122,6 +152,7 @@ class TestGeminiClient:
         assert response.text == "Let me check your devices."
         assert len(response.tool_calls) == 1
         tc = response.tool_calls[0]
+        assert tc.id == "call_abc123"
         assert tc.name == "hwid_devices_list"
         assert tc.arguments == {"uuid": "abc-123"}
         assert tc.thought_signature == "sig_abc123xyz"
@@ -135,10 +166,11 @@ class TestGeminiClient:
                     "parts": [
                         {
                             "functionCall": {
+                                "id": "call_preserve",
                                 "name": "hwid_devices_list",
-                                "args": {"uuid": "abc-123"},
-                                "thought_signature": "sig_preserve_me"
-                            }
+                                "args": {"uuid": "abc-123"}
+                            },
+                            "thoughtSignature": "sig_preserve_me"
                         }
                     ]
                 }
@@ -153,7 +185,8 @@ class TestGeminiClient:
         assert conversation[0]["role"] == "model"
         fc = conversation[0]["parts"][0]["functionCall"]
         assert fc["name"] == "hwid_devices_list"
-        assert fc["thought_signature"] == "sig_preserve_me"
+        assert fc["id"] == "call_preserve"
+        assert conversation[0]["parts"][0]["thoughtSignature"] == "sig_preserve_me"
 
         # Now add tool result
         tc = response.tool_calls[0]
@@ -161,10 +194,11 @@ class TestGeminiClient:
 
         assert len(conversation) == 2
         func_msg = conversation[1]
-        assert func_msg["role"] == "function"
+        assert func_msg["role"] == "user"
         fn_resp = func_msg["parts"][0]["functionResponse"]
         assert fn_resp["name"] == "hwid_devices_list"
-        assert fn_resp["thought_signature"] == "sig_preserve_me"
+        assert fn_resp["id"] == "call_preserve"
+        assert "thoughtSignature" not in fn_resp
         assert fn_resp["response"] == {"devices": []}
 
     def test_schema_sanitization(self):

@@ -26,6 +26,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+DEEPSEEK_REASONING_EFFORT_MAP: dict[str, str] = {
+    "minimal": "high",
+    "low": "high",
+    "medium": "high",
+    "high": "high",
+    "xhigh": "max",
+}
+
+
+def supports_reasoning(model: str) -> bool:
+    """Return whether the official DeepSeek model supports dual thinking mode."""
+    normalized = model.strip().lower()
+    return normalized.startswith("deepseek-v4-") or normalized in {
+        "deepseek-chat",
+        "deepseek-reasoner",
+    }
+
 
 class DeepSeekClient(AbstractLlmClient):
     """Client for DeepSeek API using OpenAI-compatible /chat/completions."""
@@ -51,9 +68,36 @@ class DeepSeekClient(AbstractLlmClient):
         self.model = settings.deepseek_model or "deepseek-chat"
         self.base_url = (settings.deepseek_base_url or "https://api.deepseek.com/v1").rstrip("/")
         self.api_key = reveal(settings.deepseek_api_key)
+        self.reasoning_effort = settings.reasoning_effort
+        self.reasoning_supported = supports_reasoning(self.model)
         self._http_client = http_client
         self._own_client = False
         self.tool_definitions = self._build_tool_definitions()
+        self._log_reasoning_configuration()
+
+    def _log_reasoning_configuration(self) -> None:
+        if not self.reasoning_supported:
+            if self.reasoning_effort != "none":
+                logger.warning(
+                    "DeepSeek model %s does not support reasoning; "
+                    "REASONING_EFFORT=%s is ignored and requests are sent without reasoning",
+                    self.model,
+                    self.reasoning_effort,
+                )
+            return
+        native_effort = (
+            "none"
+            if self.reasoning_effort == "none"
+            else DEEPSEEK_REASONING_EFFORT_MAP[self.reasoning_effort]
+        )
+        logger.info(
+            "DeepSeek reasoning %s for model %s "
+            "(REASONING_EFFORT=%s, native effort=%s, MCP tools compatible)",
+            "disabled" if self.reasoning_effort == "none" else "enabled",
+            self.model,
+            self.reasoning_effort,
+            native_effort,
+        )
 
     @property
     def http_client(self) -> httpx.AsyncClient:
@@ -92,11 +136,19 @@ class DeepSeekClient(AbstractLlmClient):
         body: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "temperature": self.TEMPERATURE,
         }
+        thinking_enabled = self.reasoning_supported and self.reasoning_effort != "none"
+        if self.reasoning_supported:
+            body["thinking"] = {"type": "enabled" if thinking_enabled else "disabled"}
+            if thinking_enabled:
+                body["reasoning_effort"] = DEEPSEEK_REASONING_EFFORT_MAP[self.reasoning_effort]
+        if not thinking_enabled:
+            body["temperature"] = self.TEMPERATURE
         if self.tool_definitions:
             body["tools"] = self.tool_definitions
-            body["tool_choice"] = "auto"
+            # DeepSeek V4 rejects tool_choice when thinking mode is enabled.
+            if not thinking_enabled:
+                body["tool_choice"] = "auto"
         return body
 
     def build_initial_conversation(
@@ -198,7 +250,14 @@ class DeepSeekClient(AbstractLlmClient):
                     tc_id = tc.get("id", "")
                     tool_calls.append(ToolCall(name=fn_name, id=tc_id, arguments=args))
 
-            return LlmResponse(text=content, tool_calls=tool_calls)
+            reasoning_content = message.get("reasoning_content")
+            return LlmResponse(
+                text=content,
+                tool_calls=tool_calls,
+                reasoning_content=(
+                    reasoning_content if isinstance(reasoning_content, str) else None
+                ),
+            )
         except LlmProcessingException:
             raise
         except Exception as e:
@@ -222,7 +281,15 @@ class DeepSeekClient(AbstractLlmClient):
                     },
                 }
             )
-        conversation.append({"role": "assistant", "tool_calls": tool_call_maps})
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            # DeepSeek thinking tool loops require non-null assistant content.
+            "content": response.text,
+            "tool_calls": tool_call_maps,
+        }
+        if response.reasoning_content is not None:
+            assistant_message["reasoning_content"] = response.reasoning_content
+        conversation.append(assistant_message)
 
     def add_tool_result_to_conversation(
         self,

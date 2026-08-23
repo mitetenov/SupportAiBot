@@ -17,6 +17,21 @@ class TestStartupValidator:
         assert settings.llm_provider == "deepseek"
         assert reveal(settings.deepseek_api_key) == "sk-deepseek-test-key"
 
+    def test_should_normalize_reasoning_effort(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["reasoning_effort"] = " LOW "
+        settings = Settings(**valid_settings_dict)
+        assert settings.reasoning_effort == "low"
+
+    def test_should_reject_unknown_reasoning_effort(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["reasoning_effort"] = "extreme"
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "REASONING_EFFORT" in str(exc_info.value)
+
     def test_should_validate_gemini_provider(self, valid_settings_dict: dict[str, object]) -> None:
         """Verify valid Gemini settings pass validation."""
         valid_settings_dict["llm_provider"] = "gemini"

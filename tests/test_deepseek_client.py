@@ -53,6 +53,60 @@ class TestDeepSeekClient:
     def test_supports_images_is_false(self, deepseek_client: DeepSeekClient):
         assert deepseek_client.supports_images() is False
 
+    def test_reasoning_with_tools_uses_native_effort_and_omits_tool_choice(
+        self, deepseek_client: DeepSeekClient
+    ):
+        deepseek_client.reasoning_effort = "low"
+        deepseek_client.tool_definitions = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "nodes_list",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+        body = deepseek_client.build_request_body([{"role": "user", "content": "hello"}])
+
+        assert body["thinking"] == {"type": "enabled"}
+        assert body["reasoning_effort"] == "high"
+        assert "tool_choice" not in body
+        assert "temperature" not in body
+
+    def test_none_explicitly_disables_reasoning(self, deepseek_client: DeepSeekClient):
+        deepseek_client.tool_definitions = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "nodes_list",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+        body = deepseek_client.build_request_body([])
+        assert body["thinking"] == {"type": "disabled"}
+        assert body["tool_choice"] == "auto"
+        assert body["temperature"] == deepseek_client.TEMPERATURE
+
+    def test_unsupported_model_omits_reasoning_and_logs_warning(
+        self, settings: Settings, deepseek_client: DeepSeekClient, caplog: pytest.LogCaptureFixture
+    ):
+        settings.deepseek_model = "third-party-chat-model"
+        settings.reasoning_effort = "low"
+        with caplog.at_level("WARNING"):
+            client = DeepSeekClient(
+                settings=settings,
+                mcp_router=deepseek_client.mcp_router,
+                chat_history_service=deepseek_client.chat_history_service,
+                faq_embedding_service=deepseek_client.faq_embedding_service,
+            )
+
+        body = client.build_request_body([])
+        assert "thinking" not in body
+        assert "reasoning_effort" not in body
+        assert "ignored" in caplog.text
+
     @pytest.mark.asyncio
     async def test_chat_with_image_raises_friendly_exception(self, deepseek_client: DeepSeekClient):
         with pytest.raises(LlmProcessingException) as exc_info:
@@ -180,6 +234,33 @@ class TestDeepSeekClient:
         assert tc_map["type"] == "function"
         assert isinstance(tc_map["function"]["arguments"], str)
         assert json.loads(tc_map["function"]["arguments"]) == {"uuid": "abc-123"}
+
+    def test_preserves_reasoning_content_across_tool_loop(self, deepseek_client: DeepSeekClient):
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "reasoning_content": "encrypted-or-private-reasoning-state",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "nodes_list", "arguments": "{}"},
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+        response = deepseek_client.parse_response(payload)
+        conversation: list[dict] = []
+
+        deepseek_client.add_tool_calls_to_conversation(conversation, response)
+
+        assert conversation[0]["content"] == ""
+        assert conversation[0]["reasoning_content"] == "encrypted-or-private-reasoning-state"
 
     def test_add_tool_result_to_conversation(self, deepseek_client: DeepSeekClient):
         conv = []
