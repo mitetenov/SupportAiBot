@@ -10,16 +10,27 @@ from app.llm.mcp_client import McpClientInterface, McpTool
 from app.llm.mcp_router import McpRouter
 
 CALLER = 555_000
+NEGATIVE_CABINET_KEY = -42
 
 
 class StubMcpClient(McpClientInterface):
     """Stub implementation of McpClientInterface for testing McpRouter."""
 
+    @property
+    def server_name(self) -> str:
+        return self._server_name
+
+    @server_name.setter
+    def server_name(self, value: str) -> None:
+        self._server_name = value
+
     def __init__(
         self,
         tools: list[McpTool] | None = None,
         tool_results: dict[str, str] | None = None,
+        server_name: str = "remnawave",
     ) -> None:
+        self.server_name = server_name
         self.tools = tools if tools is not None else []
         self.tool_results = tool_results if tool_results is not None else {}
         self.calls: list[dict[str, Any]] = []
@@ -456,3 +467,341 @@ class TestMcpRouter:
 
         assert result == "ok"
         assert client.last_arguments() == {}
+
+
+class TestOwnerBasedRouting:
+    """The backend serving a call is decided by the tool's OWNER, never by name matching."""
+
+    @pytest.mark.asyncio
+    async def test_should_route_each_tool_to_its_owning_server(self) -> None:
+        remnawave = StubMcpClient(
+            server_name="remnawave",
+            tools=[McpTool(name="users_get_by_telegram_id", description="remnawave")],
+            tool_results={"users_get_by_telegram_id": "from remnawave"},
+        )
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name="bedolaga_user_get", description="bedolaga")],
+            tool_results={"bedolaga_user_get": "from bedolaga"},
+        )
+
+        router = create_router([remnawave, bedolaga])
+
+        assert await router.call_tool("bedolaga_user_get", {}, telegram_user_id=CALLER) == (
+            "from bedolaga"
+        )
+        assert (
+            await router.call_tool("users_get_by_telegram_id", {}, telegram_user_id=CALLER)
+            == "from remnawave"
+        )
+        assert bedolaga.last_arguments().get("telegram_id") == CALLER
+
+    def test_should_expose_only_the_owners_own_tools(self) -> None:
+        remnawave = StubMcpClient(
+            server_name="remnawave",
+            tools=[McpTool(name="users_get_by_telegram_id", description="a")],
+        )
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[
+                McpTool(name="bedolaga_user_get", description="b"),
+                McpTool(name="nodes_list", description="declared but not allowed for bedolaga"),
+            ],
+        )
+
+        names = {tool.name for tool in create_router([remnawave, bedolaga]).list_tools()}
+
+        assert names == {"users_get_by_telegram_id", "bedolaga_user_get"}
+
+    @pytest.mark.asyncio
+    async def test_should_block_a_tool_declared_but_not_allowed_by_its_owner(self) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name="nodes_list", description="not in the bedolaga profile")],
+            tool_results={"nodes_list": "must not be served"},
+        )
+
+        router = create_router([bedolaga])
+
+        assert router.list_tools() == []
+        result = await router.call_tool("nodes_list", {}, telegram_user_id=CALLER)
+        assert "Tool not allowed" in result
+        assert "must not be served" not in result
+        assert bedolaga.calls == []
+
+    def test_should_not_apply_remnawave_readonly_to_bedolaga_tools(self) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name="bedolaga_billing_get", description="read-only by contract")],
+        )
+
+        names = {tool.name for tool in create_router([bedolaga], readonly=True).list_tools()}
+
+        assert names == {"bedolaga_billing_get"}
+
+    def test_should_hide_and_report_a_tool_name_declared_by_two_servers(self) -> None:
+        remnawave = StubMcpClient(
+            server_name="remnawave",
+            tools=[McpTool(name="nodes_list", description="remnawave nodes")],
+            tool_results={"nodes_list": "remnawave"},
+        )
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name="nodes_list", description="bedolaga copy")],
+            tool_results={"nodes_list": "bedolaga"},
+        )
+
+        router = create_router([remnawave, bedolaga])
+
+        assert router.collisions == {"nodes_list": ("bedolaga", "remnawave")}
+        assert router.list_tools() == []
+
+    @pytest.mark.asyncio
+    async def test_should_block_a_hidden_colliding_tool(self) -> None:
+        remnawave = StubMcpClient(
+            server_name="remnawave",
+            tools=[McpTool(name="nodes_list", description="remnawave nodes")],
+            tool_results={"nodes_list": "remnawave"},
+        )
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name="nodes_list", description="bedolaga copy")],
+            tool_results={"nodes_list": "bedolaga"},
+        )
+
+        router = create_router([remnawave, bedolaga])
+
+        result = await router.call_tool("nodes_list", {}, telegram_user_id=CALLER)
+        data = json.loads(result)
+        assert "collision" in data["error"]
+        assert remnawave.calls == []
+        assert bedolaga.calls == []
+
+
+class TestBedolagaIdentityPinning:
+    """Bedolaga tools always carry the system-pinned identity, as an integer."""
+
+    @pytest.mark.asyncio
+    async def test_should_pin_the_sender_when_the_model_omits_telegram_id(self) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name="bedolaga_user_get", description="desc")],
+            tool_results={"bedolaga_user_get": "ok"},
+        )
+
+        await create_router([bedolaga]).call_tool("bedolaga_user_get", {}, telegram_user_id=CALLER)
+
+        assert bedolaga.last_arguments().get("telegram_id") == CALLER
+
+    @pytest.mark.asyncio
+    async def test_should_override_a_model_supplied_telegram_id_with_the_sender(self) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name="bedolaga_user_get", description="desc")],
+            tool_results={"bedolaga_user_get": "ok"},
+        )
+
+        await create_router([bedolaga]).call_tool(
+            "bedolaga_user_get",
+            {"telegram_id": 999_999},
+            telegram_user_id=CALLER,
+        )
+
+        assert bedolaga.last_arguments().get("telegram_id") == CALLER
+
+    @pytest.mark.asyncio
+    async def test_should_strip_camel_case_variant_and_inject_the_canonical_integer(self) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name="bedolaga_billing_get", description="desc")],
+            tool_results={"bedolaga_billing_get": "ok"},
+        )
+
+        await create_router([bedolaga]).call_tool(
+            "bedolaga_billing_get",
+            {"telegramId": "777", "limit": 10},
+            telegram_user_id=CALLER,
+        )
+
+        assert bedolaga.last_arguments() == {"telegram_id": CALLER, "limit": 10}
+
+    @pytest.mark.asyncio
+    async def test_should_use_the_schema_declared_integer_type(self) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[
+                McpTool(
+                    name="bedolaga_referrals_get",
+                    description="desc",
+                    input_schema={
+                        "type": "object",
+                        "properties": {"telegram_id": {"type": "integer"}},
+                    },
+                )
+            ],
+            tool_results={"bedolaga_referrals_get": "ok"},
+        )
+
+        await create_router([bedolaga]).call_tool(
+            "bedolaga_referrals_get",
+            {"telegram_id": "999999"},
+            telegram_user_id=CALLER,
+        )
+
+        assert bedolaga.last_arguments().get("telegram_id") == CALLER
+
+
+class TestUserIdIsNeverOverwritten:
+    """A Remnawave userId parameter must never receive the sender's Telegram ID."""
+
+    @pytest.mark.asyncio
+    async def test_should_leave_a_user_id_param_untouched(self) -> None:
+        remnawave = StubMcpClient(
+            server_name="remnawave",
+            tools=[
+                McpTool(
+                    name="users_get",
+                    description="desc",
+                    input_schema={
+                        "type": "object",
+                        "properties": {"userId": {"type": "string"}},
+                    },
+                )
+            ],
+            tool_results={"users_get": "ok"},
+        )
+
+        await create_router([remnawave]).call_tool(
+            "users_get",
+            {"userId": "abc-123"},
+            telegram_user_id=CALLER,
+        )
+
+        assert remnawave.last_arguments().get("userId") == "abc-123"
+
+    @pytest.mark.asyncio
+    async def test_should_not_put_the_sender_into_a_user_id_param_when_model_sends_both(
+        self,
+    ) -> None:
+        remnawave = StubMcpClient(
+            server_name="remnawave",
+            tools=[
+                McpTool(
+                    name="subscriptions_get_by_user_id",
+                    description="desc",
+                    input_schema={
+                        "type": "object",
+                        "properties": {"userId": {"type": "string"}},
+                    },
+                )
+            ],
+            tool_results={"subscriptions_get_by_user_id": "ok"},
+        )
+
+        await create_router([remnawave]).call_tool(
+            "subscriptions_get_by_user_id",
+            {"userId": "abc-123", "telegram_id": "999999"},
+            telegram_user_id=CALLER,
+        )
+
+        assert remnawave.last_arguments().get("userId") == "abc-123"
+
+
+class TestIdentityUnavailable:
+    """Identity is chosen by the caller key's sign; a cabinet caller is served on Bedolaga only."""
+
+    @pytest.mark.asyncio
+    async def test_should_serve_bedolaga_for_a_negative_caller_key_by_pinning_user_id(
+        self,
+    ) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name="bedolaga_user_get", description="desc")],
+            tool_results={"bedolaga_user_get": "ok"},
+        )
+
+        result = await create_router([bedolaga]).call_tool(
+            "bedolaga_user_get",
+            {"telegram_id": 999_999, "userId": 777},
+            telegram_user_id=NEGATIVE_CABINET_KEY,
+        )
+
+        assert result == "ok"
+        assert bedolaga.last_arguments() == {"user_id": -NEGATIVE_CABINET_KEY}
+
+    @pytest.mark.asyncio
+    async def test_should_inject_user_id_under_the_schema_declared_name(self) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[
+                McpTool(
+                    name="bedolaga_billing_get",
+                    description="desc",
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "telegramId": {"type": "integer"},
+                            "userId": {"type": "integer"},
+                        },
+                    },
+                )
+            ],
+            tool_results={"bedolaga_billing_get": "ok"},
+        )
+
+        await create_router([bedolaga]).call_tool(
+            "bedolaga_billing_get", {"limit": 10}, telegram_user_id=NEGATIVE_CABINET_KEY
+        )
+
+        assert bedolaga.last_arguments() == {"userId": -NEGATIVE_CABINET_KEY, "limit": 10}
+
+    @pytest.mark.asyncio
+    async def test_should_return_identity_unavailable_for_a_zero_caller_key(self) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name="bedolaga_user_get", description="desc")],
+            tool_results={"bedolaga_user_get": "must not be called"},
+        )
+
+        result = await create_router([bedolaga]).call_tool(
+            "bedolaga_user_get", {}, telegram_user_id=0
+        )
+
+        data = json.loads(result)
+        assert data["ok"] is False
+        assert data["error"]["code"] == "identity_unavailable"
+        assert bedolaga.calls == []
+
+    @pytest.mark.asyncio
+    async def test_should_not_call_remnawave_user_tools_for_a_negative_caller_key(self) -> None:
+        remnawave = StubMcpClient(
+            server_name="remnawave",
+            tools=[McpTool(name="users_get_by_telegram_id", description="desc")],
+            tool_results={"users_get_by_telegram_id": "must not be called"},
+        )
+
+        result = await create_router([remnawave]).call_tool(
+            "users_get_by_telegram_id", {}, telegram_user_id=NEGATIVE_CABINET_KEY
+        )
+
+        data = json.loads(result)
+        assert data["ok"] is False
+        assert data["error"]["code"] == "identity_unavailable"
+        assert remnawave.calls == []
+
+    @pytest.mark.asyncio
+    async def test_should_also_block_non_user_tools_for_a_negative_caller_key(self) -> None:
+        remnawave = StubMcpClient(
+            server_name="remnawave",
+            tools=[McpTool(name="nodes_list", description="desc")],
+            tool_results={"nodes_list": "must not be called"},
+        )
+
+        result = await create_router([remnawave]).call_tool(
+            "nodes_list", {}, telegram_user_id=NEGATIVE_CABINET_KEY
+        )
+
+        data = json.loads(result)
+        assert data["ok"] is False
+        assert data["error"]["code"] == "identity_unavailable"
+        assert remnawave.calls == []

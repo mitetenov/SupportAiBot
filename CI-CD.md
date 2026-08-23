@@ -1,8 +1,8 @@
 # CI/CD Pipeline — SupportAiBot
 
-Бот и MCP-сервер собираются и публикуются независимо, как два отдельных образа.
-Связи между их пайплайнами нет: `docker-compose.yml` сводит их вместе уже на
-сервере.
+Бот и два MCP-сервера собираются и публикуются независимо, как три отдельных
+образа. Связей между их пайплайнами нет: `docker-compose.yml` сводит их вместе
+уже на сервере.
 
 ```
 push → SupportAiBot (master)
@@ -11,6 +11,9 @@ push → SupportAiBot (master)
 
 push → mcp-remnawave (main)
   └─ build → GitHub Release (mcp-release.zip) + mitetenov/remnawave-mcp:latest + :v{version} + :{sha}
+
+push → bedolaga-mcp (main)
+  └─ build → mitetenov/bedolaga-mcp:{sha} + :{version}      (тега :latest нет)
 ```
 
 ## SupportAiBot
@@ -98,16 +101,56 @@ docker compose up -d --wait support-bot
 - После деплоя обеих версий перезапуск бота `docker compose restart support-bot` безопасен и не перезапускает MCP.
 - При работе на v3.2.0 аварийным восстановлением остаётся `docker compose up -d --force-recreate mcp-remnawave support-bot`, но для штатного деплоя оно больше не требуется.
 
+## bedolaga-mcp
+
+Живёт в [mitetenov/bedolaga-mcp](https://github.com/mitetenov/bedolaga-mcp),
+собирается своим CI (Python). Образ публикуется **только** `:{sha}` и
+`:{version}` — тега `:latest` нет, поэтому тег обязательно закрепляется в
+`.env` через `BEDOLAGA_MCP_TAG`.
+
+Теги образа: `:{sha}`, `:{version}` (без `:latest`).
+
+### Обновление и откат
+
+Порядок миграции на сервере:
+
+```bash
+cd /root/supportBot
+cp .env .env.pre-bedolaga-mcp
+sed -i 's/^BEDOLAGA_MCP_TAG=.*/BEDOLAGA_MCP_TAG=<новый тег>/' .env
+docker compose pull bedolaga-mcp
+docker compose up -d --wait bedolaga-mcp
+# проверьте health и список инструментов (внутренняя сеть), затем бот:
+docker compose pull support-bot
+docker compose up -d --wait support-bot
+```
+
+- Сначала обновляется образ Bedolaga MCP и проверяются его health
+  (`GET /health`) и список инструментов — только затем бот с новым
+  allowlist/промптом.
+- Откат supportBot (`BOT_TAG` на предыдущий тег) не требует отката
+  `mcp-remnawave`: образы и инструменты независимы, каждый сервис держит свой
+  тег. Связка «новый MCP + старый бот» допустима: старый allowlist просто не
+  увидит новые инструменты.
+- `bedolaga-mcp` живёт только во внутренней сети compose; host-порт не
+  публикуется.
+- **Rollback интеграции:** выключение `BEDOLAGA_MCP_ENABLED=false` в `.env` и
+  перезапуск бота возвращают его в Remnawave-only режим — Bedolaga MCP не
+  подключается, его инструменты исчезают из allowlist. База данных и финансовые
+  данные не меняются (MCP read-only), а webhook/poller тикеты
+  (`BEDOLAGA_ENABLED`) управляются отдельным флагом. Образ `bedolaga-mcp` можно
+  не удалять из compose — при выключенном флаге бот его не использует.
+
 ## Docker-образы
 
-| | Бот | MCP |
-|---|---|---|
-| Репозиторий | `mitetenov/supportbot` | `mitetenov/remnawave-mcp` |
-| Теги | `latest`, `:{version}`, `:{sha}` | `latest`, `:v{version}`, `:{sha}` |
-| Платформы | `linux/amd64`, `linux/arm64` | `linux/amd64` |
-| Кэш | GitHub Actions Cache (`type=gha, mode=max`) | нет |
+| | Бот | MCP (Remnawave) | MCP (Bedolaga) |
+|---|---|---|---|
+| Репозиторий | `mitetenov/supportbot` | `mitetenov/remnawave-mcp` | `mitetenov/bedolaga-mcp` |
+| Теги | `latest`, `:{version}`, `:{sha}` | `latest`, `:v{version}`, `:{sha}` | `:{version}`, `:{sha}` (без `:latest`) |
+| Платформы | `linux/amd64`, `linux/arm64` | `linux/amd64` | — |
+| Кэш | GitHub Actions Cache (`type=gha, mode=max`) | нет | нет |
 
-> MCP-образ собирается без `platforms:`, то есть только под архитектуру раннера —
+> Образ mcp-remnawave собирается без `platforms:`, то есть только под архитектуру раннера —
 > `linux/amd64`. На arm64-хосте он пойдёт через эмуляцию (или не запустится
 > вовсе), в отличие от образа бота. Если сервер на arm — в `ci.yml`
 > mcp-remnawave нужно дописать `platforms: linux/amd64,linux/arm64`.
@@ -116,6 +159,6 @@ docker compose up -d --wait support-bot
 
 | Secret | Где хранится | Назначение |
 |--------|-------------|------------|
-| `DOCKER_USERNAME` | SupportAiBot + mcp-remnawave | Логин Docker Hub |
-| `DOCKER_TOKEN` | SupportAiBot + mcp-remnawave | Токен Docker Hub |
+| `DOCKER_USERNAME` | SupportAiBot + mcp-remnawave + bedolaga-mcp | Логин Docker Hub |
+| `DOCKER_TOKEN` | SupportAiBot + mcp-remnawave + bedolaga-mcp | Токен Docker Hub |
 | `SERVER_HOST` / `SERVER_USER` / `SERVER_SSH_KEY` / `SERVER_PORT` | SupportAiBot | Доступ для ручного деплоя по SSH |

@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     remnawave_api_token: SecretStr = SecretStr("")
     remnawave_mcp_readonly: bool = False
 
+    # Bedolaga MCP — the personal MCP tools the bot exposes to Telegram support
+    # (separate from BEDOLAGA_ENABLED below, which governs the webhook/poller
+    # ticket handling and the direct Bedolaga Web API client).
+    bedolaga_mcp_enabled: bool = False
+    bedolaga_mcp_url: str = ""
+
     # Bedolaga tickets
     bedolaga_enabled: bool = False
     bedolaga_api_url: str = ""
@@ -274,7 +280,17 @@ class Settings(BaseSettings):
             "например: REMNAWAVE_MCP_URL=http://mcp-remnawave:3100",
         )
 
-        # 5. Validate Bedolaga
+        # 5. Validate Bedolaga MCP (independent client, separate from the tickets)
+        if self.bedolaga_mcp_enabled:
+            _require_text(
+                self.bedolaga_mcp_url,
+                "BEDOLAGA_MCP_ENABLED=true, но BEDOLAGA_MCP_URL не задан. "
+                "Укажите URL MCP-сервера Bedolaga, "
+                "например: BEDOLAGA_MCP_URL=http://bedolaga-mcp:3100 "
+                "или выключите MCP-интеграцию: BEDOLAGA_MCP_ENABLED=false",
+            )
+
+        # 6. Validate Bedolaga tickets
         if self.bedolaga_enabled:
             _require_text(
                 self.bedolaga_api_url,

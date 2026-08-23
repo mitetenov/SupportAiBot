@@ -9,6 +9,12 @@ services:
         condition: service_healthy
       mcp-remnawave:
         condition: service_healthy
+      # bedolaga-mcp всегда в стеке и должен быть здоров до старта бота:
+      # флаг BEDOLAGA_MCP_ENABLED (runtime, в .env) управляет только тем,
+      # использует ли бот этот MCP. После старта падение одного MCP не
+      # останавливает другого (см. README, «Два MCP»).
+      bedolaga-mcp:
+        condition: service_healthy
     networks:
       - internal
     healthcheck:
@@ -27,6 +33,25 @@ services:
       - internal
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3100/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Личный MCP Bedolaga: персональные инструменты для Telegram support.
+  # Держим только на внутренней сети — порт на host НЕ публикуем, бот ходит
+  # по http://bedolaga-mcp:3100. Тег закреплён: образ публикует :{sha} и
+  # :{version}, без :latest. Если MCP не нужен, уберите сервис и его запись
+  # в depends_on support-bot (BEDOLAGA_MCP_ENABLED=false бот и так не использует).
+  bedolaga-mcp:
+    image: mitetenov/bedolaga-mcp:${BEDOLAGA_MCP_TAG:-1.0.0}
+    container_name: bedolaga-mcp
+    restart: on-failure:5
+    env_file: .env
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3100/health')"]
       interval: 30s
       timeout: 5s
       retries: 3

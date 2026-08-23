@@ -28,6 +28,12 @@ class TestSupportPrompt:
     def test_system_should_still_allow_troubleshooting_for_already_connected_users(self) -> None:
         assert "Правило не отменяет диагностику" in SupportPrompt.SYSTEM
 
+    def test_bedolaga_tariff_fields_should_not_be_treated_as_panel_state(self) -> None:
+        assert "tariff_id" in SupportPrompt.SYSTEM
+        assert "tariff_name" in SupportPrompt.SYSTEM
+        assert "bot_record_status" in SupportPrompt.SYSTEM
+        assert "не подтверждают фактическую активность подписки" in SupportPrompt.SYSTEM
+
     def test_with_telegram_user_id_should_append_id(self) -> None:
         result = SupportPrompt.with_telegram_user_id(12345)
         assert result is not None
