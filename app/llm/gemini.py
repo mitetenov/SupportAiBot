@@ -27,6 +27,24 @@ logger = logging.getLogger(__name__)
 
 UNSUPPORTED_SCHEMA_FIELDS: set[str] = {"$schema", "additionalProperties", "propertyNames"}
 SCHEMA_ARRAY_FIELDS: set[str] = {"anyOf", "oneOf", "allOf"}
+GEMINI_25_THINKING_BUDGETS: dict[str, int] = {
+    "none": 0,
+    "minimal": 512,
+    "low": 1024,
+    "medium": 8192,
+    "high": 24576,
+    "xhigh": 24576,
+}
+
+
+def reasoning_api_version(model: str) -> str | None:
+    """Return the native Gemini reasoning configuration family for a model."""
+    normalized = model.strip().lower()
+    if normalized.startswith("gemini-3"):
+        return "3"
+    if normalized.startswith("gemini-2.5"):
+        return "2.5"
+    return None
 
 
 def sanitize_schema_params(schema: dict[str, Any] | None) -> dict[str, Any]:
@@ -106,9 +124,62 @@ class GeminiClient(AbstractLlmClient):
             settings.gemini_base_url or "https://generativelanguage.googleapis.com/v1beta"
         ).rstrip("/")
         self.api_key = reveal(settings.gemini_api_key)
+        self.reasoning_effort = settings.reasoning_effort
+        self.reasoning_version = reasoning_api_version(self.model)
         self._http_client = http_client
         self._own_client = False
         self.sanitized_tools = self._build_sanitized_tools()
+        self._log_reasoning_configuration()
+
+    def _log_reasoning_configuration(self) -> None:
+        if self.reasoning_version is None:
+            if self.reasoning_effort != "none":
+                logger.warning(
+                    "Gemini model %s does not support configurable thinking; "
+                    "REASONING_EFFORT=%s is ignored and requests are sent without thinking config",
+                    self.model,
+                    self.reasoning_effort,
+                )
+            return
+
+        if self.reasoning_version == "3" and self.reasoning_effort == "none":
+            logger.warning(
+                "Gemini 3 model %s cannot fully disable thinking; "
+                "REASONING_EFFORT=none is mapped to minimal",
+                self.model,
+            )
+            return
+        if (
+            self.reasoning_version == "2.5"
+            and "pro" in self.model.lower()
+            and self.reasoning_effort == "none"
+        ):
+            logger.warning(
+                "Gemini 2.5 Pro model %s cannot disable thinking; "
+                "REASONING_EFFORT=none is ignored and dynamic thinking remains enabled",
+                self.model,
+            )
+            return
+        logger.info(
+            "Gemini thinking %s for model %s (REASONING_EFFORT=%s, MCP tools compatible)",
+            "disabled" if self.reasoning_effort == "none" else "enabled",
+            self.model,
+            self.reasoning_effort,
+        )
+
+    def _thinking_config(self) -> dict[str, Any] | None:
+        if self.reasoning_version == "3":
+            native_level = self.reasoning_effort
+            if native_level == "none":
+                native_level = "minimal"
+            elif native_level == "xhigh":
+                native_level = "high"
+            return {"thinkingLevel": native_level}
+        if self.reasoning_version == "2.5":
+            if "pro" in self.model.lower() and self.reasoning_effort == "none":
+                return None
+            return {"thinkingBudget": GEMINI_25_THINKING_BUDGETS[self.reasoning_effort]}
+        return None
 
     @property
     def http_client(self) -> httpx.AsyncClient:
@@ -149,6 +220,10 @@ class GeminiClient(AbstractLlmClient):
         }
         if self.sanitized_tools:
             body["tools"] = [{"function_declarations": self.sanitized_tools}]
+
+        thinking_config = self._thinking_config()
+        if thinking_config is not None:
+            body["generationConfig"] = {"thinkingConfig": thinking_config}
 
         body["tool_config"] = {"function_calling_config": {"mode": "AUTO"}}
         return body
@@ -280,11 +355,17 @@ class GeminiClient(AbstractLlmClient):
                     fc = part["functionCall"]
                     fn_name = fc.get("name", "")
                     fn_args = fc.get("args") or {}
-                    thought_sig = fc.get("thought_signature")
+                    thought_sig = part.get(
+                        "thoughtSignature",
+                        part.get(
+                            "thought_signature",
+                            fc.get("thoughtSignature", fc.get("thought_signature")),
+                        ),
+                    )
                     function_calls.append(
                         ToolCall(
                             name=fn_name,
-                            id="",
+                            id=fc.get("id", ""),
                             arguments=fn_args,
                             thought_signature=thought_sig,
                         )
@@ -314,9 +395,12 @@ class GeminiClient(AbstractLlmClient):
                 model_parts.append({"text": response.text})
             for tc in response.tool_calls:
                 fc: dict[str, Any] = {"name": tc.name, "args": tc.arguments}
+                if tc.id:
+                    fc["id"] = tc.id
+                part: dict[str, Any] = {"functionCall": fc}
                 if tc.thought_signature is not None:
-                    fc["thought_signature"] = tc.thought_signature
-                model_parts.append({"functionCall": fc})
+                    part["thoughtSignature"] = tc.thought_signature
+                model_parts.append(part)
 
         conversation.append({"role": "model", "parts": model_parts})
 
@@ -335,12 +419,12 @@ class GeminiClient(AbstractLlmClient):
             "name": tool_call.name,
             "response": response_content,
         }
-        if tool_call.thought_signature is not None:
-            function_response["thought_signature"] = tool_call.thought_signature
+        if tool_call.id:
+            function_response["id"] = tool_call.id
 
         conversation.append(
             {
-                "role": "function",
+                "role": "user",
                 "parts": [{"functionResponse": function_response}],
             }
         )

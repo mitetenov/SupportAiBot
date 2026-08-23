@@ -12,6 +12,7 @@ from app.config import Settings, get_settings
 _SETTINGS_ENV_PREFIXES = (
     "TELEGRAM_",
     "LLM_",
+    "REASONING_",
     "EMBEDDING_",
     "DEEPSEEK_",
     "GEMINI_",
