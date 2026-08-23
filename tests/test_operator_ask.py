@@ -18,7 +18,7 @@ USER_ID = 100
 def _illustrated_context(image: str | None) -> FaqContext:
     return FaqContext(
         text="FAQ...",
-        results=[FaqResult("Где кнопка?", "Справа", 0.8, 0.03, image=image)],
+        results=[FaqResult("Где кнопка?", "Нажмите правую кнопку", 0.8, 0.03, image=image)],
         max_similarity=0.8,
         best_question="Где кнопка?",
     )
