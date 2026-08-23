@@ -56,7 +56,16 @@ REMWNAWAVE_WRITE_TOOLS: frozenset[str] = frozenset({"hwid_device_delete"})
 #: Bedolaga tools the model may call. Read-only by construction; the Remnawave
 #: readonly setting never applies to them, and there are no Bedolaga writes.
 BEDOLAGA_READ_TOOLS: frozenset[str] = frozenset(
-    {"bedolaga_user_get", "bedolaga_billing_get", "bedolaga_referrals_get"}
+    {
+        "bedolaga_user_get",
+        "bedolaga_billing_get",
+        "bedolaga_referrals_get",
+        "bedolaga_subscription_get",
+        "bedolaga_tickets_get",
+        "bedolaga_payment_status_get",
+        "bedolaga_promocode_check",
+        "bedolaga_gifts_get",
+    }
 )
 
 

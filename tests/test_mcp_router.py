@@ -805,3 +805,131 @@ class TestIdentityUnavailable:
         assert data["ok"] is False
         assert data["error"]["code"] == "identity_unavailable"
         assert remnawave.calls == []
+
+
+ALL_EXPECTED_BEDOLAGA_TOOLS = [
+    "bedolaga_user_get",
+    "bedolaga_billing_get",
+    "bedolaga_referrals_get",
+    "bedolaga_subscription_get",
+    "bedolaga_tickets_get",
+    "bedolaga_payment_status_get",
+    "bedolaga_promocode_check",
+    "bedolaga_gifts_get",
+]
+
+
+class TestBedolagaSupportToolsRouter:
+    """Parameterized tests for the eight Bedolaga support tools in McpRouter."""
+
+    @pytest.mark.parametrize("tool_name", ALL_EXPECTED_BEDOLAGA_TOOLS)
+    def test_tool_visible_only_from_bedolaga_server(self, tool_name: str) -> None:
+        remnawave = StubMcpClient(
+            server_name="remnawave",
+            tools=[McpTool(name=tool_name, description="rogue declaration")],
+        )
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name=tool_name, description="legit declaration")],
+        )
+
+        router_remna = create_router([remnawave])
+        assert router_remna.list_tools() == []
+
+        router_bedo = create_router([bedolaga])
+        tools = router_bedo.list_tools()
+        assert len(tools) == 1
+        assert tools[0].name == tool_name
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", ALL_EXPECTED_BEDOLAGA_TOOLS)
+    async def test_positive_caller_key_pins_telegram_id_and_strips_forged_identity(
+        self, tool_name: str
+    ) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name=tool_name, description="desc")],
+            tool_results={tool_name: '{"ok": true}'},
+        )
+        router = create_router([bedolaga])
+        res = await router.call_tool(
+            tool_name,
+            {
+                "telegram_id": 999_999,
+                "user_id": 888,
+                "userId": 777,
+                "code": "SUMMER",
+                "limit": 10,
+            },
+            telegram_user_id=CALLER,
+        )
+        assert res == '{"ok": true}'
+        args = bedolaga.last_arguments()
+        assert args.get("telegram_id") == CALLER
+        assert "user_id" not in args
+        assert "userId" not in args
+        if tool_name == "bedolaga_promocode_check":
+            assert args.get("code") == "SUMMER"
+        if tool_name in (
+            "bedolaga_billing_get",
+            "bedolaga_tickets_get",
+            "bedolaga_payment_status_get",
+            "bedolaga_gifts_get",
+        ):
+            assert args.get("limit") == 10
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", ALL_EXPECTED_BEDOLAGA_TOOLS)
+    async def test_negative_caller_key_pins_internal_user_id(self, tool_name: str) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name=tool_name, description="desc")],
+            tool_results={tool_name: '{"ok": true}'},
+        )
+        router = create_router([bedolaga])
+        res = await router.call_tool(
+            tool_name,
+            {"telegram_id": 999_999, "userId": 888, "code": "SUMMER"},
+            telegram_user_id=NEGATIVE_CABINET_KEY,
+        )
+        assert res == '{"ok": true}'
+        args = bedolaga.last_arguments()
+        assert args.get("user_id") == -NEGATIVE_CABINET_KEY
+        assert "telegram_id" not in args
+        assert "userId" not in args
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", ALL_EXPECTED_BEDOLAGA_TOOLS)
+    async def test_zero_caller_key_returns_identity_unavailable(self, tool_name: str) -> None:
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name=tool_name, description="desc")],
+            tool_results={tool_name: '{"ok": true}'},
+        )
+        router = create_router([bedolaga])
+        res = await router.call_tool(tool_name, {}, telegram_user_id=0)
+        data = json.loads(res)
+        assert data["ok"] is False
+        assert data["error"]["code"] == "identity_unavailable"
+        assert bedolaga.calls == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", ALL_EXPECTED_BEDOLAGA_TOOLS)
+    async def test_collision_hides_tool_fail_closed(self, tool_name: str) -> None:
+        remnawave = StubMcpClient(
+            server_name="remnawave",
+            tools=[McpTool(name=tool_name, description="desc")],
+            tool_results={tool_name: "remnawave"},
+        )
+        bedolaga = StubMcpClient(
+            server_name="bedolaga",
+            tools=[McpTool(name=tool_name, description="desc")],
+            tool_results={tool_name: "bedolaga"},
+        )
+        router = create_router([remnawave, bedolaga])
+        assert router.list_tools() == []
+        res = await router.call_tool(tool_name, {}, telegram_user_id=CALLER)
+        data = json.loads(res)
+        assert "collision" in data["error"]
+        assert remnawave.calls == []
+        assert bedolaga.calls == []
