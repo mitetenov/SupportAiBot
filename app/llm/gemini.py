@@ -56,21 +56,39 @@ def reasoning_api_version(model: str) -> str | None:
     return None
 
 
-def gemini_3_levels(model: str) -> frozenset[str]:
-    """Return native thinking levels documented for a Gemini 3 model."""
+def gemini_3_levels(model: str) -> frozenset[str] | None:
+    """Return documented native thinking levels, or ``None`` for an unknown model."""
     normalized = model.strip().lower()
     if "3.1-flash-lite-image" in normalized:
         return frozenset({"minimal", "high"})
     if "3.7-flash" in normalized or "3.1-pro" in normalized:
         return frozenset({"low", "medium", "high"})
-    return frozenset({"minimal", "low", "medium", "high"})
+    if "3-pro" in normalized:
+        return frozenset({"low", "high"})
+    if any(
+        family in normalized
+        for family in (
+            "3.6-flash",
+            "3.5-flash",
+            "3.5-flash-lite",
+            "3.1-flash-lite",
+            "3-flash",
+        )
+    ):
+        return frozenset({"minimal", "low", "medium", "high"})
+    return None
 
 
 def resolve_gemini_3_level(model: str, effort: str) -> str | None:
-    """Map a shared profile to a native Gemini 3 level, or the model default."""
+    """Map a shared profile to a native Gemini 3 level, failing closed."""
     allowed = gemini_3_levels(model)
+    if allowed is None:
+        raise ValueError(
+            f"Неизвестен thinking-контракт Gemini model {model}. "
+            "Укажите документированную модель Gemini 3."
+        )
     if effort == "none":
-        return "minimal" if "minimal" in allowed else None
+        return "minimal" if "minimal" in allowed else "low"
     native_level = "high" if effort in {"xhigh", "max"} else effort
     if native_level not in allowed:
         raise ValueError(
@@ -177,10 +195,12 @@ class GeminiClient(AbstractLlmClient):
             return
 
         if self.reasoning_version == "3" and self.reasoning_effort == "none":
+            native_level = resolve_gemini_3_level(self.model, self.reasoning_effort)
             logger.warning(
                 "Gemini 3 model %s cannot fully disable thinking; "
-                "REASONING_EFFORT=none is mapped to minimal",
+                "REASONING_EFFORT=none is mapped to %s",
                 self.model,
+                native_level,
             )
             return
         if (
@@ -273,9 +293,7 @@ class GeminiClient(AbstractLlmClient):
     ) -> list[dict[str, Any]]:
         contents: list[dict[str, Any]] = []
 
-        dynamic_context = f"Telegram ID: {telegram_user_id}"
-        if faq_context and faq_context.strip():
-            dynamic_context += f"\n\n{faq_context.strip()}"
+        dynamic_context = SupportPrompt.dynamic_context(faq_context, telegram_user_id)
 
         contents.append(
             {

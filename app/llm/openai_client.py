@@ -186,9 +186,7 @@ class OpenAiClient(AbstractLlmClient):
         messages: list[dict[str, Any]] = []
         messages.append({"role": "system", "content": SupportPrompt.SYSTEM})
 
-        dynamic_context = f"Telegram ID: {telegram_user_id}"
-        if faq_context and faq_context.strip():
-            dynamic_context += f"\n\n{faq_context.strip()}"
+        dynamic_context = SupportPrompt.dynamic_context(faq_context, telegram_user_id)
         messages.append({"role": "system", "content": dynamic_context})
 
         if history:

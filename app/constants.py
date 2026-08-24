@@ -144,8 +144,9 @@ class SupportPrompt:
         "внутренние записи покупок/подписок, тикеты, промокоды, подарки и рефералы. Remnawave MCP: "
         "users_get_by_telegram_id, users_get, subscriptions_get_by_user_id, users_accessible_nodes, "
         "bandwidth_user_usage, hwid_devices_list, nodes_list, nodes_get, hwid_device_delete — фактическое "
-        "состояние VPN-панели, ноды и HWID. Не смешивай источники: bot_record_status, tariff_id и tariff_name "
-        "описывают внутреннюю запись Bedolaga и не подтверждают фактическую активность подписки в VPN-панели.\n\n"
+        "состояние VPN-панели, ноды и HWID. Не смешивай источники: bot_record_status, "
+        "bot_record_effective_status, tariff_id и tariff_name описывают внутреннюю запись Bedolaga и не "
+        "подтверждают фактическую активность подписки в VPN-панели.\n\n"
         "МАРШРУТИЗАЦИЯ: деньги, платежи, баланс, покупки, тарифы, тикеты, промокоды, подарки и рефералы → "
         "Bedolaga; ноды, трафик, HWID, срок и фактическая активность → Remnawave. Финансовые вопросы начинай "
         "с bedolaga_billing_get, реферальные — с bedolaga_referrals_get. Ошибку инструмента сообщай прямо, "
@@ -189,11 +190,16 @@ class SupportPrompt:
         return f"{cls.SYSTEM}\nTelegram ID: {telegram_user_id}"
 
     @classmethod
-    def with_faq_context(cls, faq_context: str | None, telegram_user_id: int) -> str:
-        """Append FAQ context (if present and non-blank) and the Telegram ID header to the prompt."""
+    def dynamic_context(cls, faq_context: str | None, telegram_user_id: int) -> str:
+        """Build trusted dynamic context with the system-pinned identity last."""
         if faq_context and faq_context.strip():
-            return f"{cls.SYSTEM}\n\n{faq_context.strip()}\nTelegram ID: {telegram_user_id}"
-        return f"{cls.SYSTEM}\nTelegram ID: {telegram_user_id}"
+            return f"{faq_context.strip()}\n\nTelegram ID: {telegram_user_id}"
+        return f"Telegram ID: {telegram_user_id}"
+
+    @classmethod
+    def with_faq_context(cls, faq_context: str | None, telegram_user_id: int) -> str:
+        """Append trusted dynamic context to the static system prompt."""
+        return f"{cls.SYSTEM}\n\n{cls.dynamic_context(faq_context, telegram_user_id)}"
 
 
 class EscalationRegexes:
