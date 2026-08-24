@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.constants import SupportPrompt
-from app.llm.mcp_router import BEDOLAGA_READ_TOOLS
+from app.llm.mcp_router import BEDOLAGA_READ_TOOLS, REMWNAWAVE_READ_TOOLS
 
 FAQ_PATH = Path("faq/faq.json")
 
@@ -24,6 +24,11 @@ EXPECTED_BEDOLAGA_TOOLS = {
     "bedolaga_promocode_check",
     "bedolaga_gifts_get",
 }
+
+
+def test_subscription_url_tool_is_exposed_to_the_support_agent() -> None:
+    assert "users_get_subscription_urls_by_telegram_id" in REMWNAWAVE_READ_TOOLS
+    assert "users_get_subscription_urls_by_telegram_id" in SupportPrompt.SYSTEM
 
 
 def _faq_entries() -> list[dict[str, Any]]:
