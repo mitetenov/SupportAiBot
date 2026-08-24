@@ -6,13 +6,23 @@ from pathlib import Path
 from typing import Any
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import FSInputFile
 
-from app.bot.formatting import markdown_to_telegram_html
+from app.bot.formatting import markdown_to_telegram_html, split_telegram_html, strip_html_tags
 
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_LENGTH = 4096
+
+
+def _is_entity_parse_error(exc: Exception) -> bool:
+    """Check if exception is a Telegram API entity parse error."""
+    if isinstance(exc, TelegramBadRequest):
+        msg = str(exc).lower()
+        return "can't parse entities" in msg or "parse entities" in msg or "entity" in msg
+    msg = str(exc).lower()
+    return "can't parse entities" in msg or "parse entities" in msg
 
 
 class TelegramMessageSender:
@@ -83,11 +93,13 @@ class TelegramMessageSender:
         if text is None or not text.strip():
             return
 
-        for index, chunk in enumerate(self.split(text)):
-            formatted = markdown_to_telegram_html(chunk)
+        formatted = markdown_to_telegram_html(text)
+        chunks = self.split(formatted or "")
+
+        for index, chunk in enumerate(chunks):
             kwargs: dict[str, Any] = {
                 "chat_id": chat_id,
-                "text": formatted,
+                "text": chunk,
                 "parse_mode": "HTML",
             }
             if message_thread_id is not None:
@@ -100,17 +112,20 @@ class TelegramMessageSender:
             try:
                 await self.bot.send_message(**kwargs)
             except Exception as e:
-                logger.warning(
-                    "Failed to send HTML formatted message to %s (%s), falling back to plain text",
-                    chat_id,
-                    e,
-                )
-                try:
-                    kwargs["text"] = chunk
-                    kwargs["parse_mode"] = None
-                    await self.bot.send_message(**kwargs)
-                except Exception as plain_err:
-                    logger.error("Failed to send message to %s: %s", chat_id, plain_err)
+                if _is_entity_parse_error(e):
+                    logger.warning(
+                        "Telegram failed to parse HTML in message to %s (%s), falling back to plain text",
+                        chat_id,
+                        e,
+                    )
+                    try:
+                        kwargs["text"] = strip_html_tags(chunk)
+                        kwargs["parse_mode"] = None
+                        await self.bot.send_message(**kwargs)
+                    except Exception as plain_err:
+                        logger.error("Failed to send message to %s: %s", chat_id, plain_err)
+                else:
+                    logger.error("Failed to send message to %s: %s", chat_id, e)
 
     async def send_photo(
         self,
@@ -200,23 +215,5 @@ class TelegramMessageSender:
 
     @staticmethod
     def split(text: str) -> list[str]:
-        """Break text into Telegram-sized chunks, preferring newline boundaries."""
-        if not text:
-            return [""]
-        if len(text) <= MAX_MESSAGE_LENGTH:
-            return [text]
-
-        chunks: list[str] = []
-        offset = 0
-        while offset < len(text):
-            end = min(offset + MAX_MESSAGE_LENGTH, len(text))
-            if end < len(text):
-                break_at = text.rfind("\n", offset, end)
-                if break_at <= offset:
-                    break_at = end
-                end = break_at
-            chunks.append(text[offset:end])
-            offset = end
-            if offset < len(text) and text[offset] == "\n":
-                offset += 1
-        return chunks
+        """Break text into Telegram-sized chunks, preserving balanced HTML tags."""
+        return split_telegram_html(text, MAX_MESSAGE_LENGTH)

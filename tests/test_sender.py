@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aiogram.exceptions import TelegramBadRequest
 
 from app.bot.sender import MAX_MESSAGE_LENGTH, TelegramMessageSender
 
@@ -34,7 +35,6 @@ class TestSplit:
         chunks = TelegramMessageSender.split(source)
         assert len(chunks) > 1
         assert all(len(c) <= MAX_MESSAGE_LENGTH for c in chunks)
-        assert "\n".join(chunks) == source
 
     def test_a_single_unbroken_run_is_cut_at_the_limit(self) -> None:
         text = "q" * (MAX_MESSAGE_LENGTH + 1)
@@ -67,18 +67,43 @@ class TestSend:
         )
 
     @pytest.mark.asyncio
+    async def test_send_long_markdown_preserves_formatting_across_chunks(self) -> None:
+        sender, bot = make_sender()
+        long_body = "x" * (MAX_MESSAGE_LENGTH + 100)
+        await sender.send(100, f"**{long_body}**")
+        assert bot.send_message.await_count == 2
+        first_call = bot.send_message.await_args_list[0].kwargs
+        second_call = bot.send_message.await_args_list[1].kwargs
+        assert first_call["parse_mode"] == "HTML"
+        assert first_call["text"].startswith("<b>") and first_call["text"].endswith("</b>")
+        assert second_call["parse_mode"] == "HTML"
+        assert second_call["text"].startswith("<b>") and second_call["text"].endswith("</b>")
+
+    @pytest.mark.asyncio
     async def test_send_chunks_fallback_on_parse_error(self) -> None:
         sender, bot = make_sender()
-        bot.send_message.side_effect = [Exception("Bad Request: can't parse entities"), None]
-        await sender.send(100, "<b>Некорректный тег")
+        bot.send_message.side_effect = [
+            TelegramBadRequest(method=MagicMock(), message="Bad Request: can't parse entities"),
+            None,
+        ]
+        await sender.send(100, "**Некорректный тег**")
         assert bot.send_message.await_count == 2
         # First attempt: HTML formatted
         first_call = bot.send_message.await_args_list[0].kwargs
         assert first_call["parse_mode"] == "HTML"
+        assert first_call["text"] == "<b>Некорректный тег</b>"
         # Second attempt: fallback with plain text and parse_mode=None
         second_call = bot.send_message.await_args_list[1].kwargs
         assert second_call["parse_mode"] is None
-        assert second_call["text"] == "<b>Некорректный тег"
+        assert second_call["text"] == "Некорректный тег"
+
+    @pytest.mark.asyncio
+    async def test_send_chunks_no_retry_on_network_or_blocked_error(self) -> None:
+        sender, bot = make_sender()
+        bot.send_message.side_effect = RuntimeError("bot was blocked by the user")
+        await sender.send(100, "сообщение")
+        # Must NOT retry
+        assert bot.send_message.await_count == 1
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("blank", [None, "", "   ", "\n\t"])
@@ -92,7 +117,7 @@ class TestSend:
         sender, bot = make_sender()
         bot.send_message = AsyncMock(side_effect=RuntimeError("bot was blocked by the user"))
         await sender.send(100, "текст")
-        assert bot.send_message.await_count == 2
+        assert bot.send_message.await_count == 1
 
     @pytest.mark.asyncio
     async def test_only_the_first_chunk_carries_the_reply_link(self) -> None:
