@@ -54,7 +54,33 @@ class TestSend:
     async def test_short_send_keeps_the_plain_call_shape(self) -> None:
         sender, bot = make_sender()
         await sender.send(100, "готово")
-        bot.send_message.assert_awaited_once_with(chat_id=100, text="готово")
+        bot.send_message.assert_awaited_once_with(
+            chat_id=100, text="готово", parse_mode="HTML"
+        )
+
+    @pytest.mark.asyncio
+    async def test_send_chunks_with_html_formatting(self) -> None:
+        sender, bot = make_sender()
+        await sender.send(100, "**Важное сообщение**")
+        bot.send_message.assert_awaited_once_with(
+            chat_id=100,
+            text="<b>Важное сообщение</b>",
+            parse_mode="HTML",
+        )
+
+    @pytest.mark.asyncio
+    async def test_send_chunks_fallback_on_parse_error(self) -> None:
+        sender, bot = make_sender()
+        bot.send_message.side_effect = [Exception("Bad Request: can't parse entities"), None]
+        await sender.send(100, "<b>Некорректный тег")
+        assert bot.send_message.await_count == 2
+        # First attempt: HTML formatted
+        first_call = bot.send_message.await_args_list[0].kwargs
+        assert first_call["parse_mode"] == "HTML"
+        # Second attempt: fallback with plain text and parse_mode=None
+        second_call = bot.send_message.await_args_list[1].kwargs
+        assert second_call["parse_mode"] is None
+        assert second_call["text"] == "<b>Некорректный тег"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("blank", [None, "", "   ", "\n\t"])
@@ -68,7 +94,7 @@ class TestSend:
         sender, bot = make_sender()
         bot.send_message = AsyncMock(side_effect=RuntimeError("bot was blocked by the user"))
         await sender.send(100, "текст")
-        bot.send_message.assert_awaited_once()
+        assert bot.send_message.await_count == 2
 
     @pytest.mark.asyncio
     async def test_only_the_first_chunk_carries_the_reply_link(self) -> None:
@@ -84,7 +110,7 @@ class TestSend:
         sender, bot = make_sender()
         await sender.send_to_topic(-100123, 42, "в топик")
         bot.send_message.assert_awaited_once_with(
-            chat_id=-100123, message_thread_id=42, text="в топик"
+            chat_id=-100123, message_thread_id=42, text="в топик", parse_mode="HTML"
         )
 
 

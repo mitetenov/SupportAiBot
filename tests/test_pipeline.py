@@ -87,7 +87,9 @@ async def test_pipeline_normal_flow():
     await pipeline.handle(batch)
 
     llm_client.chat.assert_called_once_with("не работает впн", 100)
-    bot.send_message.assert_called_once_with(chat_id=100, text="Попробуйте обновить подписку")
+    bot.send_message.assert_called_once_with(
+        chat_id=100, text="Попробуйте обновить подписку", parse_mode="HTML"
+    )
     forwarder.forward_to_support.assert_called_once_with(
         100, [1], batch.user, "Попробуйте обновить подписку", False, illustration_message_id=None
     )
@@ -119,7 +121,9 @@ async def test_pipeline_strips_escalate_and_flags_admin():
     batch = make_batch("хочу возврат", user_id=100)
     await pipeline.handle(batch)
 
-    bot.send_message.assert_called_once_with(chat_id=100, text="Оформим возврат средств.")
+    bot.send_message.assert_called_once_with(
+        chat_id=100, text="Оформим возврат средств.", parse_mode="HTML"
+    )
     forwarder.forward_to_support.assert_called_once_with(
         100, [1], batch.user, "Оформим возврат средств.", True, illustration_message_id=None
     )
@@ -214,7 +218,9 @@ async def test_pipeline_handles_llm_processing_exception():
     batch = make_batch("сложный вопрос", user_id=100)
     await pipeline.handle(batch)
 
-    bot.send_message.assert_called_once_with(chat_id=100, text="Сервис временно недоступен")
+    bot.send_message.assert_called_once_with(
+        chat_id=100, text="Сервис временно недоступен", parse_mode="HTML"
+    )
     forwarder.forward_error_to_topic.assert_called_once()
 
 

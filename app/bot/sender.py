@@ -8,6 +8,8 @@ from typing import Any
 from aiogram import Bot
 from aiogram.types import FSInputFile
 
+from app.bot.formatting import markdown_to_telegram_html
+
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_LENGTH = 4096
@@ -82,7 +84,12 @@ class TelegramMessageSender:
             return
 
         for index, chunk in enumerate(self.split(text)):
-            kwargs: dict[str, Any] = {"chat_id": chat_id, "text": chunk}
+            formatted = markdown_to_telegram_html(chunk)
+            kwargs: dict[str, Any] = {
+                "chat_id": chat_id,
+                "text": formatted,
+                "parse_mode": "HTML",
+            }
             if message_thread_id is not None:
                 kwargs["message_thread_id"] = message_thread_id
             if reply_to_message_id is not None and index == 0:
@@ -93,7 +100,17 @@ class TelegramMessageSender:
             try:
                 await self.bot.send_message(**kwargs)
             except Exception as e:
-                logger.error("Failed to send message to %s: %s", chat_id, e)
+                logger.warning(
+                    "Failed to send HTML formatted message to %s (%s), falling back to plain text",
+                    chat_id,
+                    e,
+                )
+                try:
+                    kwargs["text"] = chunk
+                    kwargs["parse_mode"] = None
+                    await self.bot.send_message(**kwargs)
+                except Exception as plain_err:
+                    logger.error("Failed to send message to %s: %s", chat_id, plain_err)
 
     async def send_photo(
         self,
