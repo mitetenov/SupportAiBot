@@ -54,9 +54,7 @@ class TestSend:
     async def test_short_send_keeps_the_plain_call_shape(self) -> None:
         sender, bot = make_sender()
         await sender.send(100, "готово")
-        bot.send_message.assert_awaited_once_with(
-            chat_id=100, text="готово", parse_mode="HTML"
-        )
+        bot.send_message.assert_awaited_once_with(chat_id=100, text="готово", parse_mode="HTML")
 
     @pytest.mark.asyncio
     async def test_send_chunks_with_html_formatting(self) -> None:

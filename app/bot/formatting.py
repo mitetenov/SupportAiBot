@@ -14,7 +14,9 @@ _ITALIC_RE1 = re.compile(r"(?<!\w)\*([^*\n]+?)\*(?!\w)")
 _ITALIC_RE2 = re.compile(r"(?<!\w)_([^_\n]+?)_(?!\w)")
 _STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL)
 _LINK_RE = re.compile(r"\[([^\]\n]+)\]\(((?:https?://|tg://)[^\)\s]+)\)")
-_BLOCKQUOTE_RE = re.compile(r"(?:^[ \t]*(?:&gt;|>)[ \t]?(.*(?:\n[ \t]*(?:&gt;|>).*)*))", re.MULTILINE)
+_BLOCKQUOTE_RE = re.compile(
+    r"(?:^[ \t]*(?:&gt;|>)[ \t]?(.*(?:\n[ \t]*(?:&gt;|>).*)*))", re.MULTILINE
+)
 
 
 def markdown_to_telegram_html(text: str | None) -> str | None:
