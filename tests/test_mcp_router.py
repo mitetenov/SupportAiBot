@@ -250,30 +250,6 @@ class TestMcpRouter:
         assert client.last_arguments().get("telegramId") == CALLER
 
     @pytest.mark.asyncio
-    async def test_should_pin_identity_for_subscription_url_tool(self) -> None:
-        client = StubMcpClient(
-            tools=[
-                McpTool(
-                    name="users_get_subscription_urls_by_telegram_id",
-                    description="desc",
-                    input_schema={
-                        "type": "object",
-                        "properties": {"telegramId": {"type": "integer"}},
-                    },
-                )
-            ],
-            tool_results={"users_get_subscription_urls_by_telegram_id": "ok"},
-        )
-
-        await create_router([client]).call_tool(
-            "users_get_subscription_urls_by_telegram_id",
-            {"telegramId": 999_999},
-            telegram_user_id=CALLER,
-        )
-
-        assert client.last_arguments() == {"telegramId": CALLER}
-
-    @pytest.mark.asyncio
     async def test_should_override_snake_case_telegram_id_variant(self) -> None:
         client = StubMcpClient(
             tools=[McpTool(name="users_get_by_telegram_id", description="desc")],

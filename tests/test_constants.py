@@ -84,7 +84,7 @@ class TestSupportPrompt:
         assert "[ESCALATE]" in SupportPrompt.SYSTEM
 
     def test_system_should_send_installation_questions_to_ready_made_instruction(self) -> None:
-        assert "не объясняй установку вне готовой инструкции" in SupportPrompt.SYSTEM
+        assert "никогда не объясняй сам" in SupportPrompt.SYSTEM
         assert "«Подключиться»" in SupportPrompt.SYSTEM
         assert "«Подключить устройство»" in SupportPrompt.SYSTEM
 
