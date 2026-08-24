@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 VALID_LLM_PROVIDERS: list[str] = ["deepseek", "gemini", "openai"]
 VALID_EMBEDDING_PROVIDERS: list[str] = ["gemini", "openai"]
-VALID_REASONING_EFFORTS: list[str] = ["none", "minimal", "low", "medium", "high", "xhigh"]
+VALID_REASONING_EFFORTS: list[str] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 def reveal(value: SecretStr | str | None) -> str:

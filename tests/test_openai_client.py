@@ -153,6 +153,16 @@ class TestOpenAiClient:
         assert "reasoning" not in client.build_request_body([])
         assert "ignored" in caplog.text
 
+    def test_gpt_56_rejects_minimal(self, settings: Settings, openai_client: OpenAiClient):
+        settings.reasoning_effort = "minimal"
+        with pytest.raises(ValueError, match="не поддерживает"):
+            OpenAiClient(
+                settings=settings,
+                mcp_router=openai_client.mcp_router,
+                chat_history_service=openai_client.chat_history_service,
+                faq_embedding_service=openai_client.faq_embedding_service,
+            )
+
     def test_parse_text_response(self, openai_client: OpenAiClient):
         raw = """
         {

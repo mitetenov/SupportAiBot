@@ -32,6 +32,7 @@ DEEPSEEK_REASONING_EFFORT_MAP: dict[str, str] = {
     "medium": "high",
     "high": "high",
     "xhigh": "max",
+    "max": "max",
 }
 
 

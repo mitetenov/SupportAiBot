@@ -20,14 +20,14 @@ class TestStartupValidator:
     def test_should_normalize_reasoning_effort(
         self, valid_settings_dict: dict[str, object]
     ) -> None:
-        valid_settings_dict["reasoning_effort"] = " LOW "
+        valid_settings_dict["reasoning_effort"] = " MAX "
         settings = Settings(**valid_settings_dict)
-        assert settings.reasoning_effort == "low"
+        assert settings.reasoning_effort == "max"
 
     def test_should_reject_unknown_reasoning_effort(
         self, valid_settings_dict: dict[str, object]
     ) -> None:
-        valid_settings_dict["reasoning_effort"] = "extreme"
+        valid_settings_dict["reasoning_effort"] = "auto"
         with pytest.raises(ValidationError) as exc_info:
             Settings(**valid_settings_dict)
         assert "REASONING_EFFORT" in str(exc_info.value)
