@@ -25,11 +25,37 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+OPENAI_GPT_56_EFFORTS: frozenset[str] = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
+OPENAI_GPT_55_EFFORTS: frozenset[str] = frozenset({"none", "low", "medium", "high", "xhigh"})
+OPENAI_GPT_55_PRO_EFFORTS: frozenset[str] = frozenset({"medium", "high", "xhigh"})
+OPENAI_GPT_5_EFFORTS: frozenset[str] = frozenset({"minimal", "low", "medium", "high"})
+OPENAI_GPT_5_PRO_EFFORTS: frozenset[str] = frozenset({"high"})
+OPENAI_COMMON_REASONING_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high"})
+
+
+def supported_reasoning_efforts(model: str) -> frozenset[str] | None:
+    """Return the documented effort set for a known OpenAI model family."""
+    normalized = model.strip().lower()
+    if normalized.startswith("gpt-5.6"):
+        return OPENAI_GPT_56_EFFORTS
+    if normalized.startswith("gpt-5.5-pro"):
+        return OPENAI_GPT_55_PRO_EFFORTS
+    if normalized.startswith("gpt-5.5"):
+        return OPENAI_GPT_55_EFFORTS
+    if normalized.startswith("gpt-5-pro"):
+        return OPENAI_GPT_5_PRO_EFFORTS
+    if normalized == "gpt-5" or normalized.startswith(("gpt-5-", "gpt-5-mini", "gpt-5-nano")):
+        return OPENAI_GPT_5_EFFORTS
+    if normalized.startswith(("gpt-5.1", "gpt-5.2", "gpt-5.3", "gpt-5.4")):
+        return OPENAI_GPT_55_EFFORTS
+    if normalized.startswith(("o1", "o3", "o4")):
+        return OPENAI_COMMON_REASONING_EFFORTS
+    return None
+
 
 def supports_reasoning(model: str) -> bool:
     """Return whether an OpenAI model family accepts Responses reasoning config."""
-    normalized = model.strip().lower()
-    return normalized.startswith(("gpt-5", "o1", "o3", "o4"))
+    return supported_reasoning_efforts(model) is not None
 
 
 class OpenAiClient(AbstractLlmClient):
@@ -61,6 +87,12 @@ class OpenAiClient(AbstractLlmClient):
         self.temperature = settings.openai_temperature
         self.reasoning_effort = settings.reasoning_effort
         self.reasoning_supported = supports_reasoning(self.model)
+        allowed_efforts = supported_reasoning_efforts(self.model)
+        if allowed_efforts is not None and self.reasoning_effort not in allowed_efforts:
+            raise ValueError(
+                f"OpenAI model {self.model} не поддерживает REASONING_EFFORT={self.reasoning_effort}. "
+                f"Допустимые значения: {', '.join(sorted(allowed_efforts))}"
+            )
         self._http_client = http_client
         self._own_client = False
         self.tool_definitions = self._build_tool_definitions()
@@ -154,9 +186,7 @@ class OpenAiClient(AbstractLlmClient):
         messages: list[dict[str, Any]] = []
         messages.append({"role": "system", "content": SupportPrompt.SYSTEM})
 
-        dynamic_context = f"Telegram ID: {telegram_user_id}"
-        if faq_context and faq_context.strip():
-            dynamic_context += f"\n\n{faq_context.strip()}"
+        dynamic_context = SupportPrompt.dynamic_context(faq_context, telegram_user_id)
         messages.append({"role": "system", "content": dynamic_context})
 
         if history:

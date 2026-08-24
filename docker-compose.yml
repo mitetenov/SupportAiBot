@@ -44,10 +44,15 @@ services:
   # :{version}, без :latest. Если MCP не нужен, уберите сервис и его запись
   # в depends_on support-bot (BEDOLAGA_MCP_ENABLED=false бот и так не использует).
   bedolaga-mcp:
-    image: mitetenov/bedolaga-mcp:${BEDOLAGA_MCP_TAG:-1.0.0}
+    image: mitetenov/bedolaga-mcp:${BEDOLAGA_MCP_TAG:-1.1.0}
     container_name: bedolaga-mcp
     restart: on-failure:5
     env_file: .env
+    environment:
+      # The latest image validates these names when a tool creates its API client.
+      # Keep them explicit instead of relying on the legacy HOST/PORT fallback.
+      MCP_HTTP_HOST: 0.0.0.0
+      MCP_HTTP_PORT: 3100
     networks:
       - internal
     healthcheck:

@@ -27,13 +27,22 @@ logger = logging.getLogger(__name__)
 
 UNSUPPORTED_SCHEMA_FIELDS: set[str] = {"$schema", "additionalProperties", "propertyNames"}
 SCHEMA_ARRAY_FIELDS: set[str] = {"anyOf", "oneOf", "allOf"}
-GEMINI_25_THINKING_BUDGETS: dict[str, int] = {
+GEMINI_25_FLASH_BUDGETS: dict[str, int] = {
     "none": 0,
     "minimal": 512,
     "low": 1024,
     "medium": 8192,
     "high": 24576,
     "xhigh": 24576,
+    "max": 24576,
+}
+GEMINI_25_PRO_BUDGETS: dict[str, int] = {
+    "minimal": 128,
+    "low": 1024,
+    "medium": 8192,
+    "high": 24576,
+    "xhigh": 32768,
+    "max": 32768,
 }
 
 
@@ -45,6 +54,48 @@ def reasoning_api_version(model: str) -> str | None:
     if normalized.startswith("gemini-2.5"):
         return "2.5"
     return None
+
+
+def gemini_3_levels(model: str) -> frozenset[str] | None:
+    """Return documented native thinking levels, or ``None`` for an unknown model."""
+    normalized = model.strip().lower()
+    if "3.1-flash-lite-image" in normalized:
+        return frozenset({"minimal", "high"})
+    if "3.7-flash" in normalized or "3.1-pro" in normalized:
+        return frozenset({"low", "medium", "high"})
+    if "3-pro" in normalized:
+        return frozenset({"low", "high"})
+    if any(
+        family in normalized
+        for family in (
+            "3.6-flash",
+            "3.5-flash",
+            "3.5-flash-lite",
+            "3.1-flash-lite",
+            "3-flash",
+        )
+    ):
+        return frozenset({"minimal", "low", "medium", "high"})
+    return None
+
+
+def resolve_gemini_3_level(model: str, effort: str) -> str | None:
+    """Map a shared profile to a native Gemini 3 level, failing closed."""
+    allowed = gemini_3_levels(model)
+    if allowed is None:
+        raise ValueError(
+            f"Неизвестен thinking-контракт Gemini model {model}. "
+            "Укажите документированную модель Gemini 3."
+        )
+    if effort == "none":
+        return "minimal" if "minimal" in allowed else "low"
+    native_level = "high" if effort in {"xhigh", "max"} else effort
+    if native_level not in allowed:
+        raise ValueError(
+            f"Gemini model {model} не поддерживает REASONING_EFFORT={effort}. "
+            f"Допустимые нативные уровни: {', '.join(sorted(allowed))}"
+        )
+    return native_level
 
 
 def sanitize_schema_params(schema: dict[str, Any] | None) -> dict[str, Any]:
@@ -129,6 +180,7 @@ class GeminiClient(AbstractLlmClient):
         self._http_client = http_client
         self._own_client = False
         self.sanitized_tools = self._build_sanitized_tools()
+        self._thinking_config()
         self._log_reasoning_configuration()
 
     def _log_reasoning_configuration(self) -> None:
@@ -143,10 +195,12 @@ class GeminiClient(AbstractLlmClient):
             return
 
         if self.reasoning_version == "3" and self.reasoning_effort == "none":
+            native_level = resolve_gemini_3_level(self.model, self.reasoning_effort)
             logger.warning(
                 "Gemini 3 model %s cannot fully disable thinking; "
-                "REASONING_EFFORT=none is mapped to minimal",
+                "REASONING_EFFORT=none is mapped to %s",
                 self.model,
+                native_level,
             )
             return
         if (
@@ -169,16 +223,16 @@ class GeminiClient(AbstractLlmClient):
 
     def _thinking_config(self) -> dict[str, Any] | None:
         if self.reasoning_version == "3":
-            native_level = self.reasoning_effort
-            if native_level == "none":
-                native_level = "minimal"
-            elif native_level == "xhigh":
-                native_level = "high"
-            return {"thinkingLevel": native_level}
+            native_level = resolve_gemini_3_level(self.model, self.reasoning_effort)
+            return None if native_level is None else {"thinkingLevel": native_level}
         if self.reasoning_version == "2.5":
-            if "pro" in self.model.lower() and self.reasoning_effort == "none":
-                return None
-            return {"thinkingBudget": GEMINI_25_THINKING_BUDGETS[self.reasoning_effort]}
+            if "pro" in self.model.lower():
+                if self.reasoning_effort == "none":
+                    return None
+                budget = GEMINI_25_PRO_BUDGETS[self.reasoning_effort]
+            else:
+                budget = GEMINI_25_FLASH_BUDGETS[self.reasoning_effort]
+            return {"thinkingBudget": budget}
         return None
 
     @property
@@ -239,9 +293,7 @@ class GeminiClient(AbstractLlmClient):
     ) -> list[dict[str, Any]]:
         contents: list[dict[str, Any]] = []
 
-        dynamic_context = f"Telegram ID: {telegram_user_id}"
-        if faq_context and faq_context.strip():
-            dynamic_context += f"\n\n{faq_context.strip()}"
+        dynamic_context = SupportPrompt.dynamic_context(faq_context, telegram_user_id)
 
         contents.append(
             {

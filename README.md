@@ -79,12 +79,20 @@ LLM ──► McpRouter ──┬──► bedolaga-mcp ──► Bedolaga Bot A
 | Компонент | Версия |
 |---|---|
 | supportBot | `2.0.1` |
-| bedolaga-mcp | `1.0.0` |
+| bedolaga-mcp | `1.1.0` |
 | Bedolaga Bot API (upstream) | commit `49b05d5`, приложение `4.1.0` |
 | mcp-remnawave | `v3.2.1` |
 
 Контракт и decision table Bedolaga MCP описаны в `README.md` репозитория
 bedolaga-mcp.
+
+В версии `1.1.0` supportBot ожидает только следующие read-only инструменты
+Bedolaga: `bedolaga_user_get`, `bedolaga_billing_get`,
+`bedolaga_referrals_get`, `bedolaga_subscription_get`,
+`bedolaga_tickets_get`, `bedolaga_payment_status_get`,
+`bedolaga_promocode_check`, `bedolaga_gifts_get`. Старые имена
+`bedolaga_balance`, `bedolaga_transactions` и `bedolaga_subscription` в
+allowlist не входят.
 
 ### Частичная деградация
 
@@ -188,7 +196,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | Переменная | По умолчанию | Описание |
 |---|---|---|
 | `LLM_PROVIDER` | `openai` | `openai`, `gemini` или `deepseek` |
-| `REASONING_EFFORT` | `none` | Единый уровень размышлений: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`; для support рекомендуется `low` |
+| `REASONING_EFFORT` | `none` | Профиль reasoning: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `auto` не поддерживается |
 | `OPENAI_API_KEY` | — | Нужен при `LLM_PROVIDER=openai` |
 | `OPENAI_MODEL` | `gpt-5.6-luna` | Модель OpenAI |
 | `GEMINI_API_KEY` | — | Нужен при выборе Gemini или Gemini-эмбеддингов |
@@ -199,6 +207,12 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Модель поиска при `EMBEDDING_PROVIDER=openai` |
 
 Заполнять ключи неиспользуемых LLM-провайдеров не требуется.
+
+`REASONING_EFFORT` — общий профиль, который каждый клиент преобразует в
+нативную настройку выбранной модели. Известные несовместимые пары модель/профиль
+отклоняются при старте. OpenAI GPT-5.6 принимает `none`, `low`, `medium`,
+`high`, `xhigh`, `max`; Gemini преобразует `xhigh`/`max` в `high`, а DeepSeek
+преобразует `minimal`–`high` в `high` и `xhigh`/`max` в `max`.
 
 ### База данных и образы
 
@@ -211,7 +225,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `PGVECTOR_PORT` | `5432` | Порт базы данных |
 | `BOT_TAG` | `latest` | Тег образа бота |
 | `MCP_TAG` | `v3.2.1` | Тег образа интеграции с Remnawave |
-| `BEDOLAGA_MCP_TAG` | `1.0.0` | Тег образа bedolaga-mcp (только `:{sha}` / `:{version}`, без `:latest`) |
+| `BEDOLAGA_MCP_TAG` | `1.1.0` | Тег образа bedolaga-mcp (только `:{sha}` / `:{version}`, без `:latest`) |
 
 ## Использование в Telegram
 
@@ -254,6 +268,30 @@ FAQ находится в `faq/faq.json`. Запись может содержа
 
 Если для ответа указана иллюстрация, бот отправляет её пользователю после
 текста и показывает оператору в топике поддержки.
+
+### Проверка контракта агента
+
+Детерминированные проверки в `tests/test_agent_behavior_contract.py` и тестах
+LLM-клиентов фиксируют границы системного prompt, production-сборку контекста,
+FAQ и Bedolaga allowlist: маршрутизацию денег, запрет старых имён инструментов,
+продуктовые ограничения и устойчивость к инъекциям в FAQ-контекст. Запускайте
+их вместе с полным набором тестов перед обновлением prompt или MCP:
+
+```bash
+pytest -q tests/test_agent_behavior_contract.py
+```
+
+Живой eval `benchmarks/agent_behavior_eval.py` прогоняет выбранную в `.env`
+модель через production LLM-клиент и `McpRouter`, но подставляет только
+синтетические MCP-данные. Он проверяет выбор инструментов, pinned identity,
+эскалацию, платежный сценарий и границу Bedolaga/Remnawave. Eval отправляет
+system prompt и синтетические запросы внешнему API выбранного провайдера,
+поэтому требует явного флага подтверждения. Для стохастических моделей каждый
+сценарий выполняется несколько раз:
+
+```bash
+python -m benchmarks.agent_behavior_eval --runs 3 --threshold 0.8 --confirm-external-api
+```
 
 При использовании готового Docker-образа FAQ уже включён в него. После
 изменения FAQ или иллюстраций пересоберите образ и перезапустите бота:

@@ -32,6 +32,7 @@ class TestSupportPrompt:
         assert "tariff_id" in SupportPrompt.SYSTEM
         assert "tariff_name" in SupportPrompt.SYSTEM
         assert "bot_record_status" in SupportPrompt.SYSTEM
+        assert "bot_record_effective_status" in SupportPrompt.SYSTEM
         assert "не подтверждают фактическую активность подписки" in SupportPrompt.SYSTEM
 
     def test_with_telegram_user_id_should_append_id(self) -> None:
