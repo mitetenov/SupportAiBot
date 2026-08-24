@@ -79,12 +79,20 @@ LLM ──► McpRouter ──┬──► bedolaga-mcp ──► Bedolaga Bot A
 | Компонент | Версия |
 |---|---|
 | supportBot | `2.0.1` |
-| bedolaga-mcp | `1.0.0` |
+| bedolaga-mcp | `1.1.0` |
 | Bedolaga Bot API (upstream) | commit `49b05d5`, приложение `4.1.0` |
 | mcp-remnawave | `v3.2.1` |
 
 Контракт и decision table Bedolaga MCP описаны в `README.md` репозитория
 bedolaga-mcp.
+
+В версии `1.1.0` supportBot ожидает только следующие read-only инструменты
+Bedolaga: `bedolaga_user_get`, `bedolaga_billing_get`,
+`bedolaga_referrals_get`, `bedolaga_subscription_get`,
+`bedolaga_tickets_get`, `bedolaga_payment_status_get`,
+`bedolaga_promocode_check`, `bedolaga_gifts_get`. Старые имена
+`bedolaga_balance`, `bedolaga_transactions` и `bedolaga_subscription` в
+allowlist не входят.
 
 ### Частичная деградация
 
@@ -217,7 +225,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `PGVECTOR_PORT` | `5432` | Порт базы данных |
 | `BOT_TAG` | `latest` | Тег образа бота |
 | `MCP_TAG` | `v3.2.1` | Тег образа интеграции с Remnawave |
-| `BEDOLAGA_MCP_TAG` | `1.0.0` | Тег образа bedolaga-mcp (только `:{sha}` / `:{version}`, без `:latest`) |
+| `BEDOLAGA_MCP_TAG` | `1.1.0` | Тег образа bedolaga-mcp (только `:{sha}` / `:{version}`, без `:latest`) |
 
 ## Использование в Telegram
 
@@ -260,6 +268,18 @@ FAQ находится в `faq/faq.json`. Запись может содержа
 
 Если для ответа указана иллюстрация, бот отправляет её пользователю после
 текста и показывает оператору в топике поддержки.
+
+### Проверка контракта агента
+
+Детерминированные проверки в `tests/test_agent_behavior_contract.py` фиксируют
+границы системного prompt, FAQ и Bedolaga allowlist: маршрутизацию денег,
+запрет старых имён инструментов, продуктовые ограничения и устойчивость к
+инъекциям в FAQ-контекст. Запускайте их вместе с полным набором тестов перед
+обновлением prompt или MCP:
+
+```bash
+pytest -q tests/test_agent_behavior_contract.py
+```
 
 При использовании готового Docker-образа FAQ уже включён в него. После
 изменения FAQ или иллюстраций пересоберите образ и перезапустите бота:
