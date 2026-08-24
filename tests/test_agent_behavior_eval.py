@@ -58,4 +58,3 @@ def test_behavior_scorer_detects_contract_violations() -> None:
     assert any("response lacks" in violation for violation in result.violations)
     assert any("forbidden response text" in violation for violation in result.violations)
     assert any("escalation=True" in violation for violation in result.violations)
-

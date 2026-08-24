@@ -73,11 +73,7 @@ def test_faq_does_not_route_users_to_unsupported_manual_support_paths() -> None:
 
 
 def test_router_faq_does_not_offer_a_third_party_vless_configuration() -> None:
-    entry = next(
-        entry
-        for entry in _faq_entries()
-        if "роутер" in entry["question"].lower()
-    )
+    entry = next(entry for entry in _faq_entries() if "роутер" in entry["question"].lower())
     answer = entry["answer"].lower()
     assert "не поддерживается" in answer
     assert "скопируйте ссылку" not in answer

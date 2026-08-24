@@ -100,9 +100,7 @@ class MemoryHistory:
 
 
 class EmptyFaqService:
-    async def build_faq_context(
-        self, query: str, exclude: set[str] | None = None
-    ) -> FaqContext:
+    async def build_faq_context(self, query: str, exclude: set[str] | None = None) -> FaqContext:
         return FaqContext.EMPTY
 
 
