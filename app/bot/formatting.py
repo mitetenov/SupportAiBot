@@ -161,6 +161,15 @@ def split_telegram_html(text: str, max_length: int = MAX_MESSAGE_LENGTH) -> list
             is_closing = full_tag.startswith("</")
             pos = tag_match.end()
 
+            extra_len = len(full_tag) if is_closing else len(full_tag) + len(tag_name) + 3
+            if current_parts and (current_len + extra_len + _close_suffix_len() > max_length):
+                # Flush current chunk with closing tags before adding new tag
+                chunk_str = "".join(current_parts) + _close_suffix_str()
+                chunks.append(chunk_str)
+                prefix = _open_prefix_str()
+                current_parts = [prefix] if prefix else []
+                current_len = len(prefix)
+
             if is_closing:
                 # Pop matching tag from open_tags (from top of stack)
                 for i in range(len(open_tags) - 1, -1, -1):

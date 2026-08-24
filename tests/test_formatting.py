@@ -113,3 +113,12 @@ def test_split_telegram_html_nested_tags():
         # Verify tag balancing (opening and closing counts match)
         assert chunk.count("<blockquote>") == chunk.count("</blockquote>")
         assert chunk.count("<b>") == chunk.count("</b>")
+
+
+def test_split_telegram_html_tag_after_long_plain_text():
+    text = "x" * 4090 + "<b>foo</b>"
+    chunks = split_telegram_html(text, max_length=4096)
+    assert len(chunks) == 2
+    assert chunks[0] == "x" * 4090
+    assert chunks[1] == "<b>foo</b>"
+    assert all(len(c) <= 4096 for c in chunks)
