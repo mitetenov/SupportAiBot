@@ -19,9 +19,7 @@ from app.llm.gemini import GeminiClient, sanitize_schema_params
 from app.llm.mcp_client import (
     HttpMcpClient,
     McpClientInterface,
-    McpException,
     McpTool,
-    extract_json_from_sse,
 )
 from app.llm.mcp_router import McpRouter
 from app.llm.openai_client import OpenAiClient
@@ -85,7 +83,6 @@ __all__ = [
     "LlmReply",
     "LlmResponse",
     "McpClientInterface",
-    "McpException",
     "McpRouter",
     "McpTool",
     "OpenAiClient",
@@ -93,7 +90,6 @@ __all__ = [
     "SupportPrompt",
     "ToolCall",
     "create_llm_client",
-    "extract_json_from_sse",
     "is_rejection",
     "sanitize_schema_params",
 ]

@@ -1,72 +1,82 @@
-"""Unit tests for HttpMcpClient."""
+"""Unit tests for HttpMcpClient and render_tool_result with MCP SDK v2."""
 
 import asyncio
 import json
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
-import httpx
 import pytest
+from mcp.shared.exceptions import MCPError
+from mcp.types import CallToolResult, ImageContent, ListToolsResult, TextContent, Tool
 
 from app.llm.mcp_client import (
     HttpMcpClient,
     McpTool,
-    extract_json_from_sse,
-    looks_like_expired_session,
+    render_tool_result,
 )
 
 
-class TestExtractJsonFromSse:
-    """Test SSE parsing logic."""
+class MockSdkClient:
+    """Mock context-managed SDK v2 Client."""
 
-    def test_should_extract_plain_json(self) -> None:
-        input_data = '{"jsonrpc":"2.0","result":{"key":"value"},"id":1}'
-        assert extract_json_from_sse(input_data) == input_data
-
-    @pytest.mark.parametrize(
-        ("name", "input_data", "expected"),
-        [
-            (
-                "bare data line",
-                'data: {"jsonrpc":"2.0","result":{"key":"value"},"id":1}',
-                '{"jsonrpc":"2.0","result":{"key":"value"},"id":1}',
-            ),
-            (
-                "preceded by an event line",
-                'event: message\ndata: {"jsonrpc":"2.0","result":"hello","id":1}',
-                '{"jsonrpc":"2.0","result":"hello","id":1}',
-            ),
-            (
-                "only the first of several data lines",
-                'event: message\ndata: {"jsonrpc":"2.0","result":"first","id":1}\n\ndata: {"jsonrpc":"2.0","result":"second","id":2}',
-                '{"jsonrpc":"2.0","result":"first","id":1}',
-            ),
-        ],
-    )
-    def test_should_extract_the_first_data_line_from_an_sse_body(
-        self, name: str, input_data: str, expected: str
+    def __init__(
+        self,
+        protocol_version: str = "2026-07-28",
+        tools: list[Tool] | None = None,
+        tool_results: dict[str, Any] | None = None,
+        raise_on_enter: Exception | None = None,
+        raise_on_list_tools: Exception | None = None,
+        raise_on_call: Exception | None = None,
+        pages: list[ListToolsResult] | None = None,
     ) -> None:
-        assert extract_json_from_sse(input_data) == expected
+        self._protocol_version = protocol_version
+        self._tools = tools or []
+        self._tool_results = tool_results or {}
+        self._raise_on_enter = raise_on_enter
+        self._raise_on_list_tools = raise_on_list_tools
+        self._raise_on_call = raise_on_call
+        self._pages = pages
+        self._page_idx = 0
+        self.closed = False
+        self.entered = False
+        self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    def test_should_return_empty_body_as_is(self) -> None:
-        assert extract_json_from_sse("") == ""
+    async def __aenter__(self) -> MockSdkClient:
+        if self._raise_on_enter:
+            raise self._raise_on_enter
+        self.entered = True
+        return self
 
-    def test_should_handle_sse_data_with_spaces(self) -> None:
-        input_data = 'data:   {"jsonrpc":"2.0","result":"spaces","id":1}'
-        assert extract_json_from_sse(input_data) == '  {"jsonrpc":"2.0","result":"spaces","id":1}'
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.closed = True
 
-    def test_should_handle_crlf_sse_data(self) -> None:
-        input_data = 'data: {"jsonrpc":"2.0","result":"crlf","id":1}\r\n'
-        assert extract_json_from_sse(input_data) == '{"jsonrpc":"2.0","result":"crlf","id":1}\r'
+    def protocol_version(self) -> str:
+        return self._protocol_version
+
+    async def list_tools(self, cursor: str | None = None) -> ListToolsResult:
+        if self._raise_on_list_tools:
+            raise self._raise_on_list_tools
+        if self._pages is not None:
+            res = self._pages[self._page_idx]
+            self._page_idx += 1
+            return res
+        return ListToolsResult(tools=self._tools, next_cursor=None)
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any] | None = None, **kwargs: Any
+    ) -> CallToolResult:
+        self.calls.append((name, arguments or {}))
+        if self._raise_on_call:
+            err = self._raise_on_call
+            self._raise_on_call = None
+            raise err
+        if name in self._tool_results:
+            return self._tool_results[name]
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps({"ok": True}))])
 
 
-class TestHttpMcpClient:
-    """Test HttpMcpClient initialization, session tracking, and tool execution."""
-
-    @pytest.fixture
-    def admin_notifier(self) -> MagicMock:
-        notifier = MagicMock()
-        notifier.notify_error = MagicMock()
-        return notifier
+class TestMcpTool:
+    """Test McpTool descriptor dataclass."""
 
     def test_mcp_tool_dataclass_defaults(self) -> None:
         tool = McpTool(name="test_tool")
@@ -81,615 +91,414 @@ class TestHttpMcpClient:
         assert tool.description == "Get a user"
         assert tool.input_schema == schema
 
-    def test_should_return_empty_list_before_init(self) -> None:
+    def test_mcp_tool_dataclass_none_schema(self) -> None:
+        tool = McpTool(name="get_user", input_schema=None)  # type: ignore[arg-type]
+        assert tool.input_schema == {}
+
+
+class TestRenderToolResult:
+    """Test tool result serialization and normalization."""
+
+    def test_is_error_with_text_content(self) -> None:
+        res = CallToolResult(
+            content=[TextContent(type="text", text="Invalid user ID")],
+            is_error=True,
+        )
+        rendered = render_tool_result(res)
+        data = json.loads(rendered)
+        assert data == {"error": "Invalid user ID"}
+
+    def test_is_error_without_content(self) -> None:
+        res = CallToolResult(content=[], is_error=True)
+        rendered = render_tool_result(res)
+        data = json.loads(rendered)
+        assert data == {"error": "Tool execution failed"}
+
+    def test_structured_content_takes_precedence(self) -> None:
+        res = CallToolResult(
+            content=[TextContent(type="text", text="ignored text")],
+            structured_content={"status": "active", "days_left": 10},
+        )
+        rendered = render_tool_result(res)
+        data = json.loads(rendered)
+        assert data == {"status": "active", "days_left": 10}
+
+    def test_single_text_content_returns_verbatim_string(self) -> None:
+        json_text = '{"users": [{"id": 1, "name": "Alice"}]}'
+        res = CallToolResult(content=[TextContent(type="text", text=json_text)])
+        rendered = render_tool_result(res)
+        assert rendered == json_text
+
+    def test_multiple_content_blocks_serialized_as_json_array(self) -> None:
+        res = CallToolResult(
+            content=[
+                TextContent(type="text", text="Part 1"),
+                TextContent(type="text", text="Part 2"),
+            ]
+        )
+        rendered = render_tool_result(res)
+        data = json.loads(rendered)
+        assert isinstance(data, list)
+        assert len(data) == 2
+        assert data[0]["type"] == "text"
+        assert data[0]["text"] == "Part 1"
+        assert data[1]["type"] == "text"
+        assert data[1]["text"] == "Part 2"
+
+    def test_non_text_content_serialized_as_json_array(self) -> None:
+        res = CallToolResult(
+            content=[
+                ImageContent(type="image", data="base64data", mime_type="image/png"),
+            ]
+        )
+        rendered = render_tool_result(res)
+        data = json.loads(rendered)
+        assert isinstance(data, list)
+        assert data[0]["type"] == "image"
+        assert data[0]["data"] == "base64data"
+
+
+class TestHttpMcpClient:
+    """Test HttpMcpClient lifecycle, tools listing, and execution."""
+
+    @pytest.fixture
+    def admin_notifier(self) -> MagicMock:
+        notifier = MagicMock()
+        notifier.notify_error = AsyncMock()
+        return notifier
+
+    def test_initial_state_before_init(self) -> None:
         client = HttpMcpClient(server_name="remnawave", base_url="http://localhost:3100")
         assert client.list_tools() == []
         assert client.initialized is False
-        assert client.session_id is None
+        assert client.protocol_version is None
+        assert client.server_name == "remnawave"
 
     @pytest.mark.asyncio
-    async def test_should_return_error_when_calling_tool_before_init(self) -> None:
+    async def test_call_tool_before_init_returns_error_json(self) -> None:
         client = HttpMcpClient(server_name="remnawave", base_url="http://localhost:3100")
         result = await client.call_tool("test_tool", {})
         data = json.loads(result)
         assert "error" in data
         assert "not initialized" in data["error"]
 
-    def test_should_set_initialized_flag_to_false_on_shutdown(self) -> None:
-        client = HttpMcpClient(server_name="remnawave", base_url="http://localhost:3100")
-        client.initialized = True
-        client.session_id = "test-session-123"
-        client.shutdown()
-        assert client.initialized is False
-        assert client.session_id is None
-
     @pytest.mark.asyncio
-    async def test_successful_initialize_and_load_tools(self, admin_notifier: MagicMock) -> None:
-        calls: list[httpx.Request] = []
+    async def test_successful_init_and_tool_loading(self, admin_notifier: MagicMock) -> None:
+        mock_tool = Tool(
+            name="users_get_by_telegram_id",
+            description="Get user by tg id",
+            input_schema={"type": "object", "properties": {"telegramId": {"type": "number"}}},
+        )
+        sdk_client = MockSdkClient(protocol_version="2026-07-28", tools=[mock_tool])
 
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            calls.append(request)
-            body = json.loads(request.content.decode("utf-8"))
-            method = body.get("method")
-
-            if method == "initialize":
-                return httpx.Response(
-                    200,
-                    headers={"Mcp-Session-Id": "sess-12345"},
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {
-                            "protocolVersion": "2025-11-25",
-                            "capabilities": {"tools": {}},
-                            "serverInfo": {"name": "mcp-remnawave", "version": "1.0.0"},
-                        },
-                    },
-                )
-            if method == "notifications/initialized":
-                assert request.headers.get("mcp-session-id") == "sess-12345"
-                return httpx.Response(200, json={})
-            if method == "tools/list":
-                assert request.headers.get("mcp-session-id") == "sess-12345"
-                return httpx.Response(
-                    200,
-                    text='data: {"jsonrpc":"2.0","id":'
-                    + str(body["id"])
-                    + ',"result":{"tools":[{"name":"users_get_by_telegram_id","description":"Get user by tg id","inputSchema":{"type":"object","properties":{"telegramId":{"type":"number"}}}}]}}\n\n',
-                )
-            return httpx.Response(404)
-
-        transport = httpx.MockTransport(handle_request)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test-mcp:3100"
-        ) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave",
-                base_url="http://test-mcp:3100",
-                http_client=http_client,
-                admin_notifier=admin_notifier,
-            )
-            success = await client.init()
-            assert success is True
-            assert client.initialized is True
-            assert client.session_id == "sess-12345"
-            assert client.protocol_version == "2025-11-25"
-
-            tools = client.list_tools()
-            assert len(tools) == 1
-            assert tools[0].name == "users_get_by_telegram_id"
-            assert tools[0].description == "Get user by tg id"
-            assert tools[0].input_schema == {
-                "type": "object",
-                "properties": {"telegramId": {"type": "number"}},
-            }
-
-            # Check shutdown notification
-            client.shutdown()
-            assert client.initialized is False
-            assert client.session_id is None
-            admin_notifier.notify_error.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_follow_up_requests_carry_the_negotiated_protocol_version(self) -> None:
-        seen: list[httpx.Request] = []
-
-        def handle(request: httpx.Request) -> httpx.Response:
-            seen.append(request)
-            body = json.loads(request.content)
-            if body.get("method") == "initialize":
-                return httpx.Response(
-                    200,
-                    headers={"Mcp-Session-Id": "sess-version"},
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {"protocolVersion": "2025-11-25"},
-                    },
-                )
-            if body.get("method") == "tools/list":
-                return httpx.Response(
-                    200,
-                    json={"jsonrpc": "2.0", "id": body["id"], "result": {"tools": []}},
-                )
-            return httpx.Response(202)
-
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
-            )
-            assert await client.init() is True
-
-        assert client.protocol_version == "2025-11-25"
-        assert all(
-            request.headers.get("mcp-protocol-version") == "2025-11-25" for request in seen[1:]
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            admin_notifier=admin_notifier,
+            client_factory=lambda _url: sdk_client,
         )
 
-    @pytest.mark.asyncio
-    async def test_close_terminates_the_session_with_delete(self) -> None:
-        seen: list[httpx.Request] = []
+        success = await client.init()
+        assert success is True
+        assert client.initialized is True
+        assert client.protocol_version == "2026-07-28"
 
-        def handle(request: httpx.Request) -> httpx.Response:
-            seen.append(request)
-            if request.method == "DELETE":
-                return httpx.Response(200)
-            body = json.loads(request.content)
-            if body.get("method") == "initialize":
-                return httpx.Response(
-                    200,
-                    headers={"Mcp-Session-Id": "sess-close"},
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {"protocolVersion": "2025-11-25"},
-                    },
-                )
-            if body.get("method") == "tools/list":
-                return httpx.Response(
-                    200,
-                    json={"jsonrpc": "2.0", "id": body["id"], "result": {"tools": []}},
-                )
-            return httpx.Response(202)
-
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
-            )
-            await client.init()
-            await client.close()
-
-        deletes = [request for request in seen if request.method == "DELETE"]
-        assert len(deletes) == 1
-        assert deletes[0].headers["mcp-session-id"] == "sess-close"
-        assert deletes[0].headers["mcp-protocol-version"] == "2025-11-25"
-        posted_methods = [
-            json.loads(request.content).get("method")
-            for request in seen
-            if request.method == "POST"
-        ]
-        assert "notifications/cancelled" not in posted_methods
-        assert client.session_id is None
-        assert client.protocol_version is None
+        tools = client.list_tools()
+        assert len(tools) == 1
+        assert tools[0].name == "users_get_by_telegram_id"
+        assert tools[0].description == "Get user by tg id"
+        assert tools[0].input_schema == {
+            "type": "object",
+            "properties": {"telegramId": {"type": "number"}},
+        }
+        admin_notifier.notify_error.assert_not_called()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("delete_status", [404, 405])
-    async def test_close_tolerates_an_absent_or_non_terminable_session(
-        self, delete_status: int
+    async def test_pagination_in_list_tools(self) -> None:
+        page1 = ListToolsResult(
+            tools=[Tool(name="tool_1", description="Tool 1", input_schema={})],
+            next_cursor="cursor-page-2",
+        )
+        page2 = ListToolsResult(
+            tools=[Tool(name="tool_2", description="Tool 2", input_schema={})],
+            next_cursor=None,
+        )
+        sdk_client = MockSdkClient(pages=[page1, page2])
+
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            client_factory=lambda _url: sdk_client,
+        )
+
+        assert await client.init() is True
+        tools = client.list_tools()
+        assert len(tools) == 2
+        assert [t.name for t in tools] == ["tool_1", "tool_2"]
+
+    @pytest.mark.asyncio
+    async def test_init_failure_cleans_up_and_notifies_admins(
+        self, admin_notifier: MagicMock
     ) -> None:
-        def handle(request: httpx.Request) -> httpx.Response:
-            if request.method == "DELETE":
-                return httpx.Response(delete_status)
-            body = json.loads(request.content)
-            if body.get("method") == "initialize":
-                return httpx.Response(
-                    200,
-                    headers={"Mcp-Session-Id": "sess-old-server"},
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {"protocolVersion": "2025-11-25"},
-                    },
-                )
-            if body.get("method") == "tools/list":
-                return httpx.Response(
-                    200,
-                    json={"jsonrpc": "2.0", "id": body["id"], "result": {"tools": []}},
-                )
-            return httpx.Response(202)
+        sdk_client = MockSdkClient(raise_on_enter=ConnectionRefusedError("Connection refused"))
 
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
-            )
-            await client.init()
-            await client.close()
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            admin_notifier=admin_notifier,
+            client_factory=lambda _url: sdk_client,
+        )
 
+        success = await client.init()
+        assert success is False
         assert client.initialized is False
+        assert client.list_tools() == []
+        admin_notifier.notify_error.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_close_terminates_session_when_init_failed_during_tool_loading(self) -> None:
-        seen: list[httpx.Request] = []
-
-        def handle(request: httpx.Request) -> httpx.Response:
-            seen.append(request)
-            if request.method == "DELETE":
-                return httpx.Response(200)
-            body = json.loads(request.content)
-            if body.get("method") == "initialize":
-                return httpx.Response(
-                    200,
-                    headers={"Mcp-Session-Id": "sess-partial-init"},
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {"protocolVersion": "2025-11-25"},
-                    },
-                )
-            if body.get("method") == "tools/list":
-                return httpx.Response(500, text="Internal Server Error")
-            return httpx.Response(202)
-
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
-            )
-            assert await client.init() is False
-            assert client.initialized is False
-            assert client.session_id == "sess-partial-init"
-
-            await client.close()
-
-        deletes = [request for request in seen if request.method == "DELETE"]
-        assert len(deletes) == 1
-        assert deletes[0].headers["mcp-session-id"] == "sess-partial-init"
-        assert deletes[0].headers["mcp-protocol-version"] == "2025-11-25"
-        assert client.session_id is None
-
-    @pytest.mark.asyncio
-    async def test_already_initialized_without_session_id_is_not_retried_blindly(self) -> None:
-        initialize_calls = 0
-
-        def handle(_request: httpx.Request) -> httpx.Response:
-            nonlocal initialize_calls
-            initialize_calls += 1
-            return httpx.Response(
-                400,
-                json={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32000, "message": "Server already initialized"},
-                    "id": None,
-                },
-            )
-
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
-            )
-            assert await client.init() is False
-
-        assert initialize_calls == 1
-
-    @pytest.mark.asyncio
-    async def test_handle_already_initialized_with_session_id(
+    async def test_init_failure_during_list_tools_cleans_up(
         self, admin_notifier: MagicMock
     ) -> None:
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content.decode("utf-8"))
-            method = body.get("method")
+        sdk_client = MockSdkClient(raise_on_list_tools=RuntimeError("Protocol error in list_tools"))
 
-            if method == "initialize":
-                return httpx.Response(
-                    400,
-                    headers={"Mcp-Session-Id": "existing-session-abc"},
-                    json={
-                        "jsonrpc": "2.0",
-                        "error": {"code": -32000, "message": "Server already initialized"},
-                        "id": None,
-                    },
-                )
-            if method == "tools/list":
-                return httpx.Response(
-                    200,
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {"tools": []},
-                    },
-                )
-            return httpx.Response(200, json={})
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            admin_notifier=admin_notifier,
+            client_factory=lambda _url: sdk_client,
+        )
 
-        transport = httpx.MockTransport(handle_request)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test-mcp:3100"
-        ) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave",
-                base_url="http://test-mcp:3100",
-                http_client=http_client,
-                admin_notifier=admin_notifier,
-            )
-            success = await client.init()
-            assert success is True
-            assert client.session_id == "existing-session-abc"
-            assert client.initialized is True
+        success = await client.init()
+        assert success is False
+        assert client.initialized is False
+        assert client.list_tools() == []
+        admin_notifier.notify_error.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_handle_already_initialized_without_session_id(
+    async def test_call_tool_success(self) -> None:
+        sdk_client = MockSdkClient(
+            tools=[Tool(name="nodes_list", description="", input_schema={})],
+            tool_results={
+                "nodes_list": CallToolResult(
+                    content=[TextContent(type="text", text='{"nodes": [{"id": 1}]}')]
+                )
+            },
+        )
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            client_factory=lambda _url: sdk_client,
+        )
+        assert await client.init() is True
+
+        res = await client.call_tool("nodes_list", {})
+        data = json.loads(res)
+        assert data == {"nodes": [{"id": 1}]}
+
+    @pytest.mark.asyncio
+    async def test_call_tool_is_error_notifies_admin_without_reconnect(
         self, admin_notifier: MagicMock
     ) -> None:
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(
-                400,
-                json={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32000, "message": "Server already initialized"},
-                    "id": None,
-                },
-            )
+        sdk_client = MockSdkClient(
+            tools=[Tool(name="failing_tool", description="", input_schema={})],
+            tool_results={
+                "failing_tool": CallToolResult(
+                    content=[TextContent(type="text", text="Upstream panel 500")],
+                    is_error=True,
+                )
+            },
+        )
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            admin_notifier=admin_notifier,
+            client_factory=lambda _url: sdk_client,
+        )
+        assert await client.init() is True
 
-        transport = httpx.MockTransport(handle_request)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test-mcp:3100"
-        ) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave",
-                base_url="http://test-mcp:3100",
-                http_client=http_client,
-                admin_notifier=admin_notifier,
-            )
-            success = await client.init()
-            assert success is False
-            assert client.session_id is None
-            assert client.initialized is False
+        res = await client.call_tool("failing_tool", {})
+        data = json.loads(res)
+        assert data == {"error": "Upstream panel 500"}
+        admin_notifier.notify_error.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_handle_initialization_error(self, admin_notifier: MagicMock) -> None:
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(500, text="Internal Server Error")
+    async def test_call_tool_bedolaga_ok_false_is_not_treated_as_transport_error(
+        self, admin_notifier: MagicMock
+    ) -> None:
+        sdk_client = MockSdkClient(
+            tools=[Tool(name="bedolaga_subscription_get", description="", input_schema={})],
+            tool_results={
+                "bedolaga_subscription_get": CallToolResult(
+                    content=[TextContent(type="text", text='{"ok": false, "reason": "not_found"}')]
+                )
+            },
+        )
+        client = HttpMcpClient(
+            server_name="bedolaga",
+            base_url="http://bedolaga-mcp:3100",
+            admin_notifier=admin_notifier,
+            client_factory=lambda _url: sdk_client,
+        )
+        assert await client.init() is True
 
-        transport = httpx.MockTransport(handle_request)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test-mcp:3100"
-        ) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave",
-                base_url="http://test-mcp:3100",
-                http_client=http_client,
-                admin_notifier=admin_notifier,
-            )
-            success = await client.init()
-            assert success is False
-            assert client.initialized is False
-            admin_notifier.notify_error.assert_called_once()
+        res = await client.call_tool("bedolaga_subscription_get", {"telegram_id": 123})
+        data = json.loads(res)
+        assert data == {"ok": False, "reason": "not_found"}
+        admin_notifier.notify_error.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_call_tool_success_and_error(self, admin_notifier: MagicMock) -> None:
-        def handle_request(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content.decode("utf-8"))
-            method = body.get("method")
+    async def test_close_is_idempotent(self) -> None:
+        sdk_client = MockSdkClient(
+            tools=[Tool(name="nodes_list", description="", input_schema={})]
+        )
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            client_factory=lambda _url: sdk_client,
+        )
+        assert await client.init() is True
+        assert sdk_client.entered is True
+        assert sdk_client.closed is False
 
-            if method == "initialize":
-                return httpx.Response(
-                    200,
-                    headers={"Mcp-Session-Id": "sess-call-test"},
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {"protocolVersion": "2025-11-25"},
-                    },
-                )
-            if method == "notifications/initialized":
-                return httpx.Response(200, json={})
-            if method == "tools/list":
-                return httpx.Response(
-                    200,
-                    json={"jsonrpc": "2.0", "id": body["id"], "result": {"tools": []}},
-                )
-            if method == "tools/call":
-                params = body.get("params", {})
-                if params.get("name") == "nodes_list":
-                    return httpx.Response(
-                        200,
-                        json={
-                            "jsonrpc": "2.0",
-                            "id": body["id"],
-                            "result": {"nodes": [{"id": 1, "name": "Node 1"}]},
-                        },
-                    )
-                if params.get("name") == "failing_tool":
-                    return httpx.Response(
-                        200,
-                        json={
-                            "jsonrpc": "2.0",
-                            "id": body["id"],
-                            "error": {"code": -32603, "message": "Internal error in tool"},
-                        },
-                    )
-            return httpx.Response(404)
+        await client.close()
+        assert sdk_client.closed is True
+        assert client.initialized is False
+        assert client.protocol_version is None
+        assert client.list_tools() == []
 
-        transport = httpx.MockTransport(handle_request)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test-mcp:3100"
-        ) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave",
-                base_url="http://test-mcp:3100",
-                http_client=http_client,
-                admin_notifier=admin_notifier,
-            )
-            await client.init()
-
-            # Success call
-            res = await client.call_tool("nodes_list", {})
-            data = json.loads(res)
-            assert data == {"nodes": [{"id": 1, "name": "Node 1"}]}
-
-            # Error response from server
-            res_err = await client.call_tool("failing_tool", {})
-            err_data = json.loads(res_err)
-            assert "error" in err_data
-            admin_notifier.notify_error.assert_called()
+        # Second close is a safe no-op
+        await client.close()
 
 
 class TestSessionRecovery:
-    """The MCP server can restart under a running bot; the bot must not stay blind.
+    """Test automatic recovery on broken session or transport loss."""
 
-    mcp-remnawave keeps one session and forgets it when it restarts. Every
-    tools/call after that came back as an error and the model answered without
-    the user's subscription data — for as long as the bot stayed up.
-    """
+    @pytest.mark.asyncio
+    async def test_session_loss_triggers_reconnect_and_call_replay(self) -> None:
+        clients_created: list[MockSdkClient] = []
 
-    @staticmethod
-    def _server() -> tuple[httpx.MockTransport, dict]:
-        """An MCP server whose session can be killed mid-test.
-
-        ``state["dead"]`` is the set of session ids the server has forgotten —
-        exactly what a restarted mcp-remnawave looks like to a running bot.
-        """
-        state: dict = {"sessions": 0, "calls": 0, "dead": set()}
-
-        def handle(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content.decode("utf-8"))
-            method = body.get("method")
-
-            if method == "initialize":
-                state["sessions"] += 1
-                return httpx.Response(
-                    200,
-                    headers={"Mcp-Session-Id": f"sess-{state['sessions']}"},
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {"protocolVersion": "2025-11-25"},
+        def client_factory(_url: str) -> MockSdkClient:
+            idx = len(clients_created)
+            if idx == 0:
+                # First client raises MCPError "Session not found" on call
+                c = MockSdkClient(
+                    tools=[Tool(name="nodes_list", description="", input_schema={})],
+                    raise_on_call=MCPError(-32000, "Session not found"),
+                )
+            else:
+                # Replacement client succeeds
+                c = MockSdkClient(
+                    tools=[Tool(name="nodes_list", description="", input_schema={})],
+                    tool_results={
+                        "nodes_list": CallToolResult(
+                            content=[TextContent(type="text", text='{"ok": true}')]
+                        )
                     },
                 )
-            if method == "notifications/initialized":
-                return httpx.Response(200, json={})
+            clients_created.append(c)
+            return c
 
-            if request.headers.get("Mcp-Session-Id") in state["dead"]:
-                return httpx.Response(404, text="Session not found")
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            client_factory=client_factory,
+        )
+        assert await client.init() is True
+        assert len(clients_created) == 1
 
-            if method == "tools/list":
-                return httpx.Response(
-                    200,
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {"tools": [{"name": "nodes_list"}]},
+        result = await client.call_tool("nodes_list", {})
+        data = json.loads(result)
+        assert data == {"ok": True}
+        assert len(clients_created) == 2
+        assert clients_created[0].closed is True
+
+    @pytest.mark.asyncio
+    async def test_concurrent_failures_trigger_only_one_reconnect(self) -> None:
+        clients_created: list[MockSdkClient] = []
+
+        def client_factory(_url: str) -> MockSdkClient:
+            idx = len(clients_created)
+            if idx == 0:
+                c = MockSdkClient(
+                    tools=[Tool(name="nodes_list", description="", input_schema={})],
+                    raise_on_call=MCPError(-32000, "Session not found"),
+                )
+            else:
+                c = MockSdkClient(
+                    tools=[Tool(name="nodes_list", description="", input_schema={})],
+                    tool_results={
+                        "nodes_list": CallToolResult(
+                            content=[TextContent(type="text", text='{"ok": true}')]
+                        )
                     },
                 )
-            if method == "tools/call":
-                state["calls"] += 1
-                return httpx.Response(
-                    200,
-                    json={"jsonrpc": "2.0", "id": body["id"], "result": {"ok": True}},
-                )
-            return httpx.Response(500, text="unexpected")
+            clients_created.append(c)
+            return c
 
-        return httpx.MockTransport(handle), state
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            client_factory=client_factory,
+        )
+        assert await client.init() is True
 
-    @pytest.mark.asyncio
-    async def test_a_forgotten_session_is_renegotiated_and_the_call_replayed(self) -> None:
-        transport, state = self._server()
+        results = await asyncio.gather(
+            client.call_tool("nodes_list", {}),
+            client.call_tool("nodes_list", {}),
+            client.call_tool("nodes_list", {}),
+        )
 
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
-            )
-            assert await client.init() is True
-
-            state["dead"].add("sess-1")  # the MCP server restarts
-            result = json.loads(await client.call_tool("nodes_list", {}))
-
-        assert result == {"ok": True}, "the call was not replayed after reconnecting"
-        assert state["sessions"] == 2, "a new session was not negotiated"
-        assert client.session_id == "sess-2"
-
-    @pytest.mark.asyncio
-    async def test_a_healthy_session_is_left_alone(self) -> None:
-        transport, state = self._server()
-
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
-            )
-            await client.init()
-
-            await client.call_tool("nodes_list", {})
-
-        assert state["sessions"] == 1, "a working session was thrown away"
-
-    @pytest.mark.asyncio
-    async def test_gives_up_with_an_error_when_the_new_session_is_dead_too(self) -> None:
-        transport, state = self._server()
-
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
-            )
-            await client.init()
-
-            state["dead"].update({"sess-1", "sess-2"})
-            result = json.loads(await client.call_tool("nodes_list", {}))
-
-        assert "error" in result
-
-    @pytest.mark.asyncio
-    async def test_concurrent_calls_negotiate_only_one_new_session(self) -> None:
-        transport, state = self._server()
-
-        async with httpx.AsyncClient(transport=transport) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
-            )
-            await client.init()
-
-            state["dead"].add("sess-1")
-            results = await asyncio.gather(*(client.call_tool("nodes_list", {}) for _ in range(3)))
-
-        assert state["sessions"] == 2, "each in-flight call re-initialised on its own"
+        assert len(clients_created) == 2, "Only 1 reconnection should have occurred"
         assert all(json.loads(r) == {"ok": True} for r in results)
 
     @pytest.mark.asyncio
-    async def test_a_tool_error_is_not_mistaken_for_an_expired_session(self) -> None:
-        def handle(request: httpx.Request) -> httpx.Response:
-            body = json.loads(request.content.decode("utf-8"))
-            if body.get("method") == "initialize":
-                return httpx.Response(
-                    200,
-                    headers={"Mcp-Session-Id": "sess-1"},
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": body["id"],
-                        "result": {"protocolVersion": "2025-11-25"},
-                    },
+    async def test_failed_reconnect_returns_error_json(self) -> None:
+        clients_created: list[MockSdkClient] = []
+
+        def client_factory(_url: str) -> MockSdkClient:
+            idx = len(clients_created)
+            if idx == 0:
+                c = MockSdkClient(
+                    tools=[Tool(name="nodes_list", description="", input_schema={})],
+                    raise_on_call=MCPError(-32000, "Session not found"),
                 )
-            if body.get("method") == "tools/list":
-                return httpx.Response(
-                    200, json={"jsonrpc": "2.0", "id": body["id"], "result": {"tools": []}}
-                )
-            if body.get("method") == "tools/call":
-                return httpx.Response(400, text="Invalid arguments for nodes_get")
-            return httpx.Response(200, json={})
+            else:
+                c = MockSdkClient(raise_on_enter=ConnectionRefusedError("Server down"))
+            clients_created.append(c)
+            return c
 
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http_client:
-            client = HttpMcpClient(
-                server_name="remnawave", base_url="http://mcp.test", http_client=http_client
-            )
-            await client.init()
-
-            result = json.loads(await client.call_tool("nodes_get", {}))
-
-        assert "error" in result
-        assert client.session_id == "sess-1", "a bad request must not drop the session"
-
-
-class TestExpiredSessionDetection:
-    def test_404_means_the_session_is_gone(self) -> None:
-        assert looks_like_expired_session(httpx.Response(404, text="Session not found")) is True
-
-    def test_400_about_a_session_counts(self) -> None:
-        assert looks_like_expired_session(httpx.Response(400, text="No valid session ID")) is True
-
-    def test_the_wording_mcp_remnawave_actually_uses_counts(self) -> None:
-        """The message a restarted mcp-remnawave really sends, captured live.
-
-        It never mentions the session, so a predicate looking only for that word
-        left the client holding a dead session forever — which is the whole
-        failure this detection exists to catch.
-        """
-        body = '{"jsonrpc":"2.0","error":{"code":-32000,"message":"Bad Request: Server not initialized"},"id":null}'
-        assert looks_like_expired_session(httpx.Response(400, text=body)) is True
-
-    def test_already_initialized_is_not_an_expired_session(self) -> None:
-        """The handshake's own 400 must not be read as a dead session."""
-        assert (
-            looks_like_expired_session(httpx.Response(400, text="Server already initialized"))
-            is False
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            client_factory=client_factory,
         )
+        assert await client.init() is True
 
-    def test_an_ordinary_bad_request_does_not(self) -> None:
-        assert looks_like_expired_session(httpx.Response(400, text="Invalid arguments")) is False
+        result = await client.call_tool("nodes_list", {})
+        data = json.loads(result)
+        assert "error" in data
+        assert "not recovered" in data["error"]
 
-    def test_a_server_error_does_not(self) -> None:
-        assert looks_like_expired_session(httpx.Response(500, text="boom")) is False
+    @pytest.mark.asyncio
+    async def test_non_recoverable_error_does_not_trigger_reconnect(self) -> None:
+        clients_created: list[MockSdkClient] = []
+
+        def client_factory(_url: str) -> MockSdkClient:
+            c = MockSdkClient(
+                tools=[Tool(name="nodes_get", description="", input_schema={})],
+                raise_on_call=MCPError(-32602, "Invalid arguments"),
+            )
+            clients_created.append(c)
+            return c
+
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            client_factory=client_factory,
+        )
+        assert await client.init() is True
+
+        result = await client.call_tool("nodes_get", {"invalid": True})
+        data = json.loads(result)
+        assert "error" in data
+        assert len(clients_created) == 1, "Non-recoverable error must not reconnect"

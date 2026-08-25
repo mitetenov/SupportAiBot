@@ -6,10 +6,9 @@ them.
 """
 
 import asyncio
-import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
 import pytest
 
 from app.bot.admin_notifier import AdminNotifier
@@ -23,92 +22,49 @@ from app.llm.mcp_client import HttpMcpClient, McpTool
 MCP_URL = "http://mcp-remnawave:3100"
 
 
-def mcp_transport(seen: list[httpx.Request]) -> httpx.MockTransport:
-    def handle(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        if request.method == "DELETE":
-            return httpx.Response(200)
-        body = json.loads(request.content)
-        method = body.get("method")
-        if method == "initialize":
-            return httpx.Response(
-                200,
-                headers={"Mcp-Session-Id": "sess-1"},
-                json={
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "result": {"ok": True, "protocolVersion": "2025-11-25"},
-                },
-            )
-        if method == "tools/list":
-            return httpx.Response(
-                200,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": body["id"],
-                    "result": {
-                        "tools": [
-                            {
-                                "name": "nodes_list",
-                                "description": "List nodes",
-                                "inputSchema": {"type": "object"},
-                            }
-                        ]
-                    },
-                },
-            )
-        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body.get("id", 0), "result": {}})
-
-    return httpx.MockTransport(handle)
-
-
 class TestMcpWiringMatchesProduction:
-    """main() hands the MCP client the application-wide httpx client.
+    """main() constructs HttpMcpClient with server_name, base_url and admin_notifier.
 
-    That client has no base_url and none of the MCP protocol headers, which used
-    to make every request fail before it left the process, leaving the model with
-    zero tools while the bot started up as if nothing were wrong.
+    The client uses the official SDK v2 Client and initializes independently.
     """
 
     @pytest.mark.asyncio
-    async def test_initializes_with_a_shared_client_that_has_no_base_url(self) -> None:
-        seen: list[httpx.Request] = []
-        async with httpx.AsyncClient(
-            transport=mcp_transport(seen), timeout=httpx.Timeout(30.0)
-        ) as shared:
-            client = HttpMcpClient(server_name="remnawave", base_url=MCP_URL, http_client=shared)
+    async def test_initializes_with_sdk_client_factory(self) -> None:
+        mock_tool = MagicMock()
+        mock_tool.name = "nodes_list"
+        mock_tool.description = "List nodes"
+        mock_tool.input_schema = {"type": "object"}
 
-            assert await client.init() is True
-            assert [t.name for t in client.list_tools()] == ["nodes_list"]
+        class FakeSdkClient:
+            def __init__(self, url: str) -> None:
+                self.url = url
+                self.closed = False
 
-    @pytest.mark.asyncio
-    async def test_every_request_carries_the_absolute_url_and_protocol_headers(self) -> None:
-        seen: list[httpx.Request] = []
-        async with httpx.AsyncClient(
-            transport=mcp_transport(seen), timeout=httpx.Timeout(30.0)
-        ) as shared:
-            client = HttpMcpClient(server_name="remnawave", base_url=MCP_URL, http_client=shared)
-            await client.init()
+            async def __aenter__(self) -> FakeSdkClient:
+                return self
 
-        assert seen, "no request was made"
-        for request in seen:
-            assert str(request.url) == MCP_URL
-            assert request.headers["accept"] == "application/json, text/event-stream"
+            async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+                self.closed = True
 
-    @pytest.mark.asyncio
-    async def test_session_id_is_propagated_after_the_handshake(self) -> None:
-        seen: list[httpx.Request] = []
-        async with httpx.AsyncClient(
-            transport=mcp_transport(seen), timeout=httpx.Timeout(30.0)
-        ) as shared:
-            await HttpMcpClient(
-                server_name="remnawave", base_url=MCP_URL, http_client=shared
-            ).init()
+            def protocol_version(self) -> str:
+                return "2026-07-28"
 
-        follow_ups = seen[1:]
-        assert follow_ups
-        assert all(r.headers.get("mcp-session-id") == "sess-1" for r in follow_ups)
-        assert all(r.headers.get("mcp-protocol-version") == "2025-11-25" for r in follow_ups)
+            async def list_tools(self, cursor: str | None = None) -> Any:
+                res = MagicMock()
+                res.tools = [mock_tool]
+                res.next_cursor = None
+                return res
+
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url=MCP_URL,
+            client_factory=lambda url: FakeSdkClient(url),
+        )
+
+        assert await client.init() is True
+        assert [t.name for t in client.list_tools()] == ["nodes_list"]
+        assert client.protocol_version == "2026-07-28"
+        await client.close()
 
 
 class TestAdminNotificationIsAwaited:
@@ -120,17 +76,23 @@ class TestAdminNotificationIsAwaited:
         bot.send_message = AsyncMock()
         notifier = AdminNotifier(bot=bot, support_group_chat_id=-100123)
 
-        def explode(_request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("connection refused")
+        class ExplodingSdkClient:
+            def __init__(self, _url: str) -> None:
+                pass
 
-        async with httpx.AsyncClient(transport=httpx.MockTransport(explode)) as shared:
-            client = HttpMcpClient(
-                server_name="remnawave",
-                base_url=MCP_URL,
-                http_client=shared,
-                admin_notifier=notifier,
-            )
-            assert await client.init() is False
+            async def __aenter__(self) -> ExplodingSdkClient:
+                raise ConnectionRefusedError("connection refused")
+
+            async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+                pass
+
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url=MCP_URL,
+            admin_notifier=notifier,
+            client_factory=lambda url: ExplodingSdkClient(url),
+        )
+        assert await client.init() is False
 
         bot.send_message.assert_awaited_once()
         text = bot.send_message.await_args.kwargs["text"]
@@ -142,17 +104,23 @@ class TestAdminNotificationIsAwaited:
         notifier = MagicMock()
         notifier.notify_error = AsyncMock(side_effect=RuntimeError("telegram down"))
 
-        def explode(_request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("connection refused")
+        class ExplodingSdkClient:
+            def __init__(self, _url: str) -> None:
+                pass
 
-        async with httpx.AsyncClient(transport=httpx.MockTransport(explode)) as shared:
-            client = HttpMcpClient(
-                server_name="remnawave",
-                base_url=MCP_URL,
-                http_client=shared,
-                admin_notifier=notifier,
-            )
-            assert await client.init() is False
+            async def __aenter__(self) -> ExplodingSdkClient:
+                raise ConnectionRefusedError("connection refused")
+
+            async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+                pass
+
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url=MCP_URL,
+            admin_notifier=notifier,
+            client_factory=lambda url: ExplodingSdkClient(url),
+        )
+        assert await client.init() is False
 
 
 class TestUserReplyFailureStillReachesSupport:
