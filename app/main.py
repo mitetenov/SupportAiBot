@@ -105,6 +105,7 @@ async def main() -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    logging.getLogger("mcp").setLevel(logging.WARNING)
     logger.info("Starting VPN Support Bot...")
 
     settings = get_settings()
@@ -151,23 +152,21 @@ async def main() -> None:
             bot=bot,
             support_group_chat_id=settings.telegram_support_group_chat_id,
         )
-        # Each MCP server gets its own HttpMcpClient with its own session, tool
-        # cache and recovery lock, so a failure of one never disables the other
-        # and the operator always sees which MCP is down. The Remnawave client
-        # is created unconditionally; the Bedolaga MCP client is opt-in via
-        # BEDOLAGA_MCP_ENABLED — not BEDOLAGA_ENABLED, which governs the
+        # Each MCP server gets its own HttpMcpClient with its own independent SDK
+        # client/tool cache/recovery lock, so a failure of one never disables the other
+        # and the operator always sees which MCP is down; modern clients are sessionless.
+        # The Remnawave client is created unconditionally; the Bedolaga MCP client is
+        # opt-in via BEDOLAGA_MCP_ENABLED — not BEDOLAGA_ENABLED, which governs the
         # webhook/poller ticket handling and stays untouched.
         mcp_clients_by_server["remnawave"] = HttpMcpClient(
             server_name="remnawave",
             base_url=settings.remnawave_mcp_url,
-            http_client=http_client,
             admin_notifier=admin_notifier,
         )
         if settings.bedolaga_mcp_enabled:
             mcp_clients_by_server["bedolaga"] = HttpMcpClient(
                 server_name="bedolaga",
                 base_url=settings.bedolaga_mcp_url,
-                http_client=http_client,
                 admin_notifier=admin_notifier,
             )
 
@@ -409,7 +408,14 @@ async def main() -> None:
         if typing_indicator is not None:
             typing_indicator.shutdown()
         for mcp_client in mcp_clients_by_server.values():
-            await mcp_client.close()
+            try:
+                await mcp_client.close()
+            except Exception as e:
+                logger.warning(
+                    "Error closing MCP client %s: %s",
+                    getattr(mcp_client, "server_name", "unknown"),
+                    e,
+                )
         await http_client.aclose()
         if bot.session:
             await bot.session.close()

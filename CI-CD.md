@@ -83,23 +83,24 @@ push → bedolaga-mcp (main)
 Dockerfile SupportAiBot его не скачивает, MCP запускается отдельным сервисом
 `mcp-remnawave` из compose.
 
-### Обновление MCP 3.2.0 → 3.2.1
+### Обновление до MCP SDK v2 (MCP 3.3.0 / Bedolaga 1.2.0)
 
 Порядок миграции на сервере:
 
 ```bash
 cd /root/supportBot
-cp .env .env.pre-mcp-3.2.1
-sed -i 's/^MCP_TAG=.*/MCP_TAG=v3.2.1/' .env
-docker compose pull mcp-remnawave
-docker compose up -d --wait mcp-remnawave
+cp .env .env.pre-mcp-sdk-v2
+sed -i 's/^MCP_TAG=.*/MCP_TAG=v3.3.0/' .env
+sed -i 's/^BEDOLAGA_MCP_TAG=.*/BEDOLAGA_MCP_TAG=1.2.0/' .env
+docker compose pull mcp-remnawave bedolaga-mcp
+docker compose up -d --wait mcp-remnawave bedolaga-mcp
 docker compose pull support-bot
-docker compose up -d --wait support-bot
+docker compose up -d --wait --no-deps support-bot
 ```
 
-- Однократное обновление MCP очищает старую singleton-сессию.
+- Новые MCP-серверы разворачиваются первыми; благодаря дуальной поддержке протоколов они бесшовно обслуживают как старый клиент, так и новый SDK v2 клиент.
 - После деплоя обеих версий перезапуск бота `docker compose restart support-bot` безопасен и не перезапускает MCP.
-- При работе на v3.2.0 аварийным восстановлением остаётся `docker compose up -d --force-recreate mcp-remnawave support-bot`, но для штатного деплоя оно больше не требуется.
+- При независимом откате любого компонента fallback отрабатывает автоматически.
 
 ## bedolaga-mcp
 

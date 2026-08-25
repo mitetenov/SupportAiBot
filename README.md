@@ -76,17 +76,17 @@ LLM ──► McpRouter ──┬──► bedolaga-mcp ──► Bedolaga Bot A
 
 ### Версионная совместимость
 
-| Компонент | Версия |
-|---|---|
-| supportBot | `2.0.1` |
-| bedolaga-mcp | `1.1.0` |
-| Bedolaga Bot API (upstream) | commit `49b05d5`, приложение `4.1.0` |
-| mcp-remnawave | `v3.2.1` |
+| Компонент | Версия | Протокол |
+|---|---|---|
+| supportBot | `2.0.1` (Python MCP SDK `2.0.0`, режим `auto`) | `2026-07-28` (fallback до `2025-11-25`) |
+| bedolaga-mcp | `1.2.0` (Python MCP SDK `2.0.0`) | `2026-07-28` / legacy sessionful |
+| Bedolaga Bot API (upstream) | commit `49b05d5`, приложение `4.1.0` | — |
+| mcp-remnawave | `v3.3.0` (TypeScript MCP SDK `2.0.0`) | `2026-07-28` / legacy sessionful |
 
 Контракт и decision table Bedolaga MCP описаны в `README.md` репозитория
 bedolaga-mcp.
 
-В версии `1.1.0` supportBot ожидает только следующие read-only инструменты
+В версии `1.2.0` supportBot ожидает только следующие read-only инструменты
 Bedolaga: `bedolaga_user_get`, `bedolaga_billing_get`,
 `bedolaga_referrals_get`, `bedolaga_subscription_get`,
 `bedolaga_tickets_get`, `bedolaga_payment_status_get`,
@@ -108,27 +108,28 @@ allowlist не входят.
 
 Каждый MCP — отдельный образ со своим тегом:
 
-- `mitetenov/remnawave-mcp:${MCP_TAG}`
-- `mitetenov/bedolaga-mcp:${BEDOLAGA_MCP_TAG}` — публикуется только `:{sha}` и
-  `:{version}`, тега `:latest` нет.
+- `mitetenov/remnawave-mcp:${MCP_TAG}` (по умолчанию `v3.3.0`)
+- `mitetenov/bedolaga-mcp:${BEDOLAGA_MCP_TAG}` (по умолчанию `1.2.0`, публикуется только `:{sha}` и `:{version}`, тега `:latest` нет).
 
-Порядок обновления Bedolaga MCP:
+Порядок сервер-first обновления стека:
 
 ```bash
 cd /root/supportBot
-cp .env .env.pre-bedolaga-mcp
-sed -i 's/^BEDOLAGA_MCP_TAG=.*/BEDOLAGA_MCP_TAG=<новый тег>/' .env
-docker compose pull bedolaga-mcp
-docker compose up -d --wait bedolaga-mcp
-# проверьте health и список инструментов (внутренняя сеть), затем бот:
+cp .env .env.pre-mcp-sdk-v2
+# Задайте в .env: MCP_TAG=v3.3.0, BEDOLAGA_MCP_TAG=1.2.0 и новый BOT_TAG
+docker compose pull mcp-remnawave bedolaga-mcp
+docker compose up -d --wait mcp-remnawave bedolaga-mcp
 docker compose pull support-bot
-docker compose up -d --wait support-bot
+docker compose up -d --wait --no-deps support-bot
 ```
 
-Сначала разворачивается новый образ Bedolaga MCP и проверяется его health и
-набор инструментов, затем — новый supportBot с обновлённым allowlist/промптом.
-Откат supportBot (`BOT_TAG` на предыдущий тег) не требует отката Remnawave MCP:
-образ Remnawave и его инструменты живут отдельно.
+Сначала разворачиваются новые образы MCP-серверов (они обслуживают старый клиент через legacy path), затем — новый supportBot.
+
+**Сценарии независимого отката:**
+
+1. **Сбой только бота:** вернуть предыдущий `BOT_TAG` в `.env` и выполнить `docker compose up -d --wait --no-deps support-bot`. MCP-серверы v2 остаются нетронутыми.
+2. **Сбой одного из MCP-серверов:** вернуть тег этого сервера на предыдущую версию (`v3.2.1` для Remnawave или `1.1.0` для Bedolaga). Новый MCP-клиент supportBot автоматически откатится на legacy initialize handshake.
+3. **Полный откат:** восстановить `.env.pre-mcp-sdk-v2` и пересоздать только три затронутых сервиса (`mcp-remnawave`, `bedolaga-mcp`, `support-bot`). База данных PostgreSQL и тома данных не затрагиваются.
 
 **Rollback интеграции целиком:** выключение `BEDOLAGA_MCP_ENABLED=false`
 возвращает бота в Remnawave-only режим — Bedolaga MCP не подключается, его
@@ -224,8 +225,8 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `PGVECTOR_HOST` | `pgvector` | Адрес базы данных |
 | `PGVECTOR_PORT` | `5432` | Порт базы данных |
 | `BOT_TAG` | `latest` | Тег образа бота |
-| `MCP_TAG` | `v3.2.1` | Тег образа интеграции с Remnawave |
-| `BEDOLAGA_MCP_TAG` | `1.1.0` | Тег образа bedolaga-mcp (только `:{sha}` / `:{version}`, без `:latest`) |
+| `MCP_TAG` | `v3.3.0` | Тег образа интеграции с Remnawave |
+| `BEDOLAGA_MCP_TAG` | `1.2.0` | Тег образа bedolaga-mcp (только `:{sha}` / `:{version}`, без `:latest`) |
 
 ## Использование в Telegram
 
