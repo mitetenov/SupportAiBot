@@ -502,3 +502,89 @@ class TestSessionRecovery:
         data = json.loads(result)
         assert "error" in data
         assert len(clients_created) == 1, "Non-recoverable error must not reconnect"
+
+    @pytest.mark.asyncio
+    async def test_cross_task_reconnect_does_not_fail_with_task_affinity_error(self) -> None:
+        """AnyIO context manager must not be exited from a different task than entered."""
+        clients_created: list[MockSdkClient] = []
+
+        def client_factory(_url: str) -> MockSdkClient:
+            idx = len(clients_created)
+            if idx == 0:
+                c = MockSdkClient(
+                    tools=[Tool(name="nodes_list", description="", input_schema={})],
+                    raise_on_call=ConnectionResetError("Connection reset by peer"),
+                )
+            else:
+                c = MockSdkClient(
+                    tools=[Tool(name="nodes_list", description="", input_schema={})],
+                    tool_results={
+                        "nodes_list": CallToolResult(
+                            content=[TextContent(type="text", text='{"ok": true}')]
+                        )
+                    },
+                )
+            clients_created.append(c)
+            return c
+
+        client = HttpMcpClient(
+            server_name="remnawave",
+            base_url="http://test-mcp:3100",
+            client_factory=client_factory,
+        )
+
+        # Task 1: Startup task initializes client
+        init_task = asyncio.create_task(client.init())
+        assert await init_task is True
+
+        # Task 2: Worker / Telegram message task calls tool and triggers reconnect
+        async def worker_call() -> str:
+            return await client.call_tool("nodes_list", {})
+
+        worker_task = asyncio.create_task(worker_call())
+        result_str = await worker_task
+        data = json.loads(result_str)
+        assert data == {"ok": True}
+        assert len(clients_created) == 2
+
+        await client.close()
+
+
+class TestErrorRecoveryFilter:
+    """Test precision of _is_recoverable_error."""
+
+    def test_programmatic_and_logic_errors_are_not_recoverable(self) -> None:
+        from app.llm.mcp_client import _is_recoverable_error
+
+        assert _is_recoverable_error(TypeError("unhashable type")) is False
+        assert _is_recoverable_error(ValueError("invalid literal")) is False
+        assert _is_recoverable_error(KeyError("missing_key")) is False
+        assert _is_recoverable_error(AttributeError("no attribute")) is False
+        assert _is_recoverable_error(IndexError("list index out of range")) is False
+        assert _is_recoverable_error(json.JSONDecodeError("msg", "doc", 0)) is False
+        assert _is_recoverable_error(MCPError(-32601, "Method not found")) is False
+        assert _is_recoverable_error(MCPError(-32602, "Invalid params")) is False
+
+    def test_transport_and_session_errors_are_recoverable(self) -> None:
+        import httpx
+
+        from app.llm.mcp_client import _is_recoverable_error
+
+        assert _is_recoverable_error(ConnectionResetError("reset")) is True
+        assert _is_recoverable_error(ConnectionRefusedError("refused")) is True
+        assert _is_recoverable_error(BrokenPipeError("broken")) is True
+        assert _is_recoverable_error(TimeoutError("timed out")) is True
+        assert _is_recoverable_error(EOFError("eof")) is True
+        assert _is_recoverable_error(httpx.ConnectError("cannot connect")) is True
+        assert _is_recoverable_error(httpx.ReadTimeout("read timeout")) is True
+        assert _is_recoverable_error(MCPError(-32000, "Session not found")) is True
+        assert _is_recoverable_error(MCPError(-32000, "Bad Request: Server not initialized")) is True
+        assert _is_recoverable_error(RuntimeError("Connection closed unexpectedly")) is True
+
+
+class TestMcpLoggingLevel:
+    def test_mcp_logger_is_warning_or_above(self) -> None:
+        import logging
+
+        assert logging.getLogger("mcp").level >= logging.WARNING
+

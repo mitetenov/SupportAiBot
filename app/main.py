@@ -105,6 +105,7 @@ async def main() -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    logging.getLogger("mcp").setLevel(logging.WARNING)
     logger.info("Starting VPN Support Bot...")
 
     settings = get_settings()
