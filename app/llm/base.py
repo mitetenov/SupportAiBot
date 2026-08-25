@@ -129,7 +129,8 @@ class AbstractLlmClient(ABC, LlmClient):
         r"^(а|и|но|ну)\s"
         r"|^(да|нет|ага|угу|ок|окей|понял|поняла)\b"
         r"|\b(это|этот|эта|туда|там|тут|оно|его|её|нём|ним|такое)\b"
-        r"|^(айфон|iphone|андроид|android|винда|windows|макбук|мак|mac|linux|tv|телевизор)\b",
+        r"|^(айфон|iphone|айпад|ipad|ios|ipados|андроид|android|винда|windows"
+        r"|макбук|мак|mac|макос|macos|linux|tv|телевизор)\b",
         re.IGNORECASE | re.UNICODE,
     )
 
