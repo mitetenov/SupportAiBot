@@ -411,7 +411,9 @@ async def main() -> None:
                 await mcp_client.close()
             except Exception as e:
                 logger.warning(
-                    "Error closing MCP client %s: %s", getattr(mcp_client, "server_name", "unknown"), e
+                    "Error closing MCP client %s: %s",
+                    getattr(mcp_client, "server_name", "unknown"),
+                    e,
                 )
         await http_client.aclose()
         if bot.session:

@@ -348,9 +348,7 @@ class TestHttpMcpClient:
 
     @pytest.mark.asyncio
     async def test_close_is_idempotent(self) -> None:
-        sdk_client = MockSdkClient(
-            tools=[Tool(name="nodes_list", description="", input_schema={})]
-        )
+        sdk_client = MockSdkClient(tools=[Tool(name="nodes_list", description="", input_schema={})])
         client = HttpMcpClient(
             server_name="remnawave",
             base_url="http://test-mcp:3100",
@@ -578,7 +576,9 @@ class TestErrorRecoveryFilter:
         assert _is_recoverable_error(httpx.ConnectError("cannot connect")) is True
         assert _is_recoverable_error(httpx.ReadTimeout("read timeout")) is True
         assert _is_recoverable_error(MCPError(-32000, "Session not found")) is True
-        assert _is_recoverable_error(MCPError(-32000, "Bad Request: Server not initialized")) is True
+        assert (
+            _is_recoverable_error(MCPError(-32000, "Bad Request: Server not initialized")) is True
+        )
         assert _is_recoverable_error(RuntimeError("Connection closed unexpectedly")) is True
 
 
@@ -587,4 +587,3 @@ class TestMcpLoggingLevel:
         import logging
 
         assert logging.getLogger("mcp").level >= logging.WARNING
-

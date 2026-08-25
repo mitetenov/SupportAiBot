@@ -343,9 +343,7 @@ class HttpMcpClient(McpClientInterface):
                     else:
                         schema_dict = {}
                     desc = getattr(t, "description", "") or ""
-                    tools.append(
-                        McpTool(name=t.name, description=desc, input_schema=schema_dict)
-                    )
+                    tools.append(McpTool(name=t.name, description=desc, input_schema=schema_dict))
                 next_cursor = getattr(res, "next_cursor", None)
                 if not next_cursor:
                     break
@@ -397,9 +395,7 @@ class HttpMcpClient(McpClientInterface):
         self._session_generation += 1
 
         if not recovered:
-            logger.error(
-                "%s could not re-establish connection at %s", self._label, self.base_url
-            )
+            logger.error("%s could not re-establish connection at %s", self._label, self.base_url)
             return False
 
         current_tools = {tool.name for tool in self._cached_tools}
@@ -500,9 +496,7 @@ class HttpMcpClient(McpClientInterface):
                     if self._session_generation == generation:
                         try:
                             recovered = bool(
-                                await self._submit_owner_command(
-                                    "recover", generation=generation
-                                )
+                                await self._submit_owner_command("recover", generation=generation)
                             )
                         except Exception:
                             recovered = False
@@ -530,9 +524,7 @@ class HttpMcpClient(McpClientInterface):
                     await self._notify_admins(
                         f"{self._label} tool call failed after reconnect: {tool_name}", retry_e
                     )
-                    return json.dumps(
-                        {"error": str(retry_e) if str(retry_e) else "unknown error"}
-                    )
+                    return json.dumps({"error": str(retry_e) if str(retry_e) else "unknown error"})
         finally:
             await self._finish_tool_call()
 
