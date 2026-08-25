@@ -17,6 +17,7 @@ from aiogram.types import (
 
 from app.bot.command_handler import SupportCommandHandler
 from app.bot.conversation_state import ConversationState
+from app.bot.photo_downloader import PhotoDownloadResult
 from app.bot.router import setup_router
 from app.bot.sender import TelegramMessageSender
 from app.constants import get_message
@@ -46,6 +47,15 @@ class MockDatabaseSessionManager:
         async def get_mock(model, key):
             if model == DbUser:
                 return self.users.get(key)
+            if model == TopicMapping:
+                return next(
+                    (
+                        mapping
+                        for mapping in self.topic_mappings_by_topic.values()
+                        if mapping.user_id == key
+                    ),
+                    None,
+                )
             return None
 
         async def execute_mock(stmt, params=None):
@@ -298,6 +308,49 @@ async def test_router_forwards_user_message_to_buffer(mock_db):
     user_id_arg, buffered_msg_arg, sink_arg = buffer.submit.call_args[0]
     assert user_id_arg == 100
     assert buffered_msg_arg.text == "Обычный вопрос"
+
+
+@pytest.mark.asyncio
+async def test_direct_user_message_immediately_clears_an_active_ticket(mock_db):
+    mapping = TopicMapping(
+        user_id=100,
+        topic_id=42,
+        user_name="testuser",
+        active_ticket_id=17,
+    )
+    mock_db.topic_mappings_by_topic[42] = mapping
+    bot = MagicMock()
+    buffer = MagicMock()
+
+    router = setup_router(
+        sender=TelegramMessageSender(bot),
+        llm_client=MagicMock(),
+        forwarder=MagicMock(),
+        db_manager=mock_db,
+        chat_history_service=ChatHistoryService(),
+        knowledge_gap_service=MagicMock(),
+        command_handler=MagicMock(is_command=MagicMock(return_value=False)),
+        photo_downloader=MagicMock(),
+        message_buffer=buffer,
+        pipeline=MagicMock(),
+        conversation_state=ConversationState(),
+        operator_ask=MagicMock(),
+        support_group_chat_id=-100123,
+    )
+    dp = Dispatcher()
+    dp.include_router(router)
+    message = Message(
+        message_id=10,
+        date=123456,
+        chat=Chat(id=100, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="Test"),
+        text="Новый прямой вопрос",
+    )
+
+    await dp.feed_update(bot, Update(update_id=2, message=message))
+
+    assert mapping.active_ticket_id is None
+    buffer.submit.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -603,3 +656,142 @@ async def test_router_refuses_to_confirm_delivery_for_a_cabinet_only_topic(mock_
 
     # Nothing was delivered, so the bot must keep answering the ticket.
     assert not conv_state.is_operator_recently_active(-55)
+
+
+@pytest.mark.asyncio
+async def test_router_sends_operator_text_to_the_active_ticket(mock_db):
+    mock_db.topic_mappings_by_topic[42] = TopicMapping(
+        user_id=-55,
+        topic_id=42,
+        user_name="Кабинет #55",
+        active_ticket_id=17,
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    ticket_relay = MagicMock()
+    ticket_relay.reply_text = AsyncMock(return_value=True)
+
+    router = setup_router(
+        sender=TelegramMessageSender(bot),
+        llm_client=MagicMock(),
+        forwarder=MagicMock(),
+        db_manager=mock_db,
+        chat_history_service=ChatHistoryService(),
+        knowledge_gap_service=MagicMock(),
+        command_handler=MagicMock(),
+        photo_downloader=MagicMock(),
+        message_buffer=MagicMock(),
+        pipeline=MagicMock(),
+        conversation_state=ConversationState(),
+        operator_ask=MagicMock(),
+        support_group_chat_id=-100123,
+        ticket_relay=ticket_relay,
+    )
+    dp = Dispatcher()
+    dp.include_router(router)
+
+    await dp.feed_update(bot, _operator_message("Проверяю оплату"))
+
+    ticket_relay.reply_text.assert_awaited_once_with(17, -55, "Проверяю оплату")
+    bot.send_message.assert_awaited_once()
+    sent = bot.send_message.await_args.kwargs
+    assert sent["chat_id"] == -100123
+    assert sent["reply_to_message_id"] == 501
+    assert sent["text"] == get_message("support.ticket.sent", 17)
+
+
+@pytest.mark.asyncio
+async def test_router_uploads_operator_photo_to_the_active_ticket(mock_db):
+    mock_db.topic_mappings_by_topic[42] = TopicMapping(
+        user_id=100,
+        topic_id=42,
+        user_name="testuser",
+        active_ticket_id=17,
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    downloader = MagicMock()
+    downloader.download = AsyncMock(return_value=PhotoDownloadResult.ok("Zm9v", "image/png"))
+    ticket_relay = MagicMock()
+    ticket_relay.reply_photo = AsyncMock(return_value=True)
+
+    router = setup_router(
+        sender=TelegramMessageSender(bot),
+        llm_client=MagicMock(),
+        forwarder=MagicMock(),
+        db_manager=mock_db,
+        chat_history_service=ChatHistoryService(),
+        knowledge_gap_service=MagicMock(),
+        command_handler=MagicMock(),
+        photo_downloader=downloader,
+        message_buffer=MagicMock(),
+        pipeline=MagicMock(),
+        conversation_state=ConversationState(),
+        operator_ask=MagicMock(),
+        support_group_chat_id=-100123,
+        ticket_relay=ticket_relay,
+    )
+    dp = Dispatcher()
+    dp.include_router(router)
+    photo = [PhotoSize(file_id="f1", file_unique_id="u1", width=100, height=100)]
+    message = Message(
+        message_id=601,
+        date=123456,
+        chat=Chat(id=-100123, type="supergroup"),
+        from_user=User(id=777, is_bot=False, first_name="Operator"),
+        message_thread_id=42,
+        photo=photo,
+        caption="Вот скриншот",
+    )
+
+    await dp.feed_update(bot, Update(update_id=10, message=message))
+
+    downloader.download.assert_awaited_once()
+    assert downloader.download.await_args.args[0][-1].file_id == "f1"
+    ticket_relay.reply_photo.assert_awaited_once_with(
+        17,
+        100,
+        "Zm9v",
+        "image/png",
+        "Вот скриншот",
+    )
+    assert bot.send_message.await_args.kwargs["text"] == get_message("support.ticket.sent", 17)
+
+
+@pytest.mark.asyncio
+async def test_router_does_not_claim_a_failed_ticket_delivery(mock_db):
+    mock_db.topic_mappings_by_topic[42] = TopicMapping(
+        user_id=100,
+        topic_id=42,
+        user_name="testuser",
+        active_ticket_id=17,
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    ticket_relay = MagicMock()
+    ticket_relay.reply_text = AsyncMock(return_value=False)
+
+    router = setup_router(
+        sender=TelegramMessageSender(bot),
+        llm_client=MagicMock(),
+        forwarder=MagicMock(),
+        db_manager=mock_db,
+        chat_history_service=ChatHistoryService(),
+        knowledge_gap_service=MagicMock(),
+        command_handler=MagicMock(),
+        photo_downloader=MagicMock(),
+        message_buffer=MagicMock(),
+        pipeline=MagicMock(),
+        conversation_state=ConversationState(),
+        operator_ask=MagicMock(),
+        support_group_chat_id=-100123,
+        ticket_relay=ticket_relay,
+    )
+    dp = Dispatcher()
+    dp.include_router(router)
+
+    await dp.feed_update(bot, _operator_message("Ответ"))
+
+    assert bot.send_message.await_args.kwargs["text"] == get_message(
+        "support.ticket.delivery.failed", 17
+    )

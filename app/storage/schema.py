@@ -86,6 +86,11 @@ NULLABLE_UTC_TIMESTAMP_COLUMNS: tuple[tuple[str, str], ...] = (
     ("bedolaga_ticket_state", "last_human_reply_at"),
 )
 
+# A support topic alternates between direct Telegram turns and mirrored
+# Bedolaga turns. Existing installations need this nullable pointer added at
+# runtime because create_all never changes an existing table.
+NULLABLE_BIGINT_COLUMNS: tuple[tuple[str, str], ...] = (("topic_mappings", "active_ticket_id"),)
+
 NAIVE_TIMESTAMP = "timestamp without time zone"
 
 
@@ -220,6 +225,25 @@ async def sync_legacy_schema(engine: AsyncEngine) -> list[str]:
     applied: list[str] = []
 
     async with engine.begin() as conn:
+        for table_name, column_name in NULLABLE_BIGINT_COLUMNS:
+            exists = await conn.execute(_TABLE_EXISTS_SQL, {"table_name": table_name})
+            if exists.fetchone() is None:
+                continue
+
+            result = await conn.execute(
+                _COLUMN_TYPE_SQL, {"table_name": table_name, "column_name": column_name}
+            )
+            if result.fetchone() is not None:
+                continue
+
+            try:
+                await conn.execute(
+                    text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} BIGINT NULL")
+                )
+                applied.append(f"{table_name}.{column_name}: added")
+            except Exception as e:
+                logger.warning("Could not reconcile %s.%s: %s", table_name, column_name, e)
+
         for table_name, column_name in BEDOLAGA_STATE_COLUMNS:
             exists = await conn.execute(_TABLE_EXISTS_SQL, {"table_name": table_name})
             if exists.fetchone() is None:

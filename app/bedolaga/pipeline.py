@@ -204,6 +204,7 @@ class TicketAnswerer:
                     user_key,
                     get_message("bedolaga.suppressed", ticket.id, ticket.title, question),
                     escalate=True,
+                    source_message=last,
                 )
             return
 
@@ -315,6 +316,8 @@ class TicketAnswerer:
             user_key,
             get_message("bedolaga.mirror", ticket.id, ticket.title, question, truncated_answer),
             escalate=escalate,
+            source_message=last,
+            attachment=attachment,
         )
 
         if question.strip():
@@ -501,9 +504,18 @@ class TicketAnswerer:
             user_key,
             get_message("bedolaga.nothing.mirror", ticket.id, ticket.title),
             escalate=True,
+            source_message=last,
         )
 
-    async def mirror(self, ticket: Ticket, user_key: int, text: str, escalate: bool) -> None:
+    async def mirror(
+        self,
+        ticket: Ticket,
+        user_key: int,
+        text: str,
+        escalate: bool,
+        source_message: TicketMessage | None = None,
+        attachment: ImageAttachment | None = None,
+    ) -> None:
         """Put this ticket turn into the user's forum topic.
 
         The answer is already delivered — by Bedolaga, into the ticket — so a
@@ -511,12 +523,24 @@ class TicketAnswerer:
         their reply. Every failure here stays here.
         """
         try:
+            mirrored_photo = attachment
+            if (
+                mirrored_photo is None
+                and source_message is not None
+                and source_message.has_media
+                and (source_message.media_type or "") == "photo"
+            ):
+                mirrored_photo = await self.client.download_media(ticket.id, source_message.id)
+
             await self.forwarder.forward_to_support(
                 user_chat_id=user_key,
                 user_message_ids=None,
                 user=self.stand_in(ticket, user_key),
                 bot_response=text,
                 needs_escalation=escalate,
+                ticket_id=ticket.id,
+                photo_base64=(mirrored_photo.base64_image if mirrored_photo is not None else None),
+                photo_mime_type=(mirrored_photo.mime_type if mirrored_photo is not None else None),
             )
         except Exception as e:
             logger.warning("Could not mirror Bedolaga ticket %d to the topic: %s", ticket.id, e)

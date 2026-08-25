@@ -9,6 +9,7 @@ from aiohttp import web
 from app.bedolaga.client import BedolagaClient
 from app.bedolaga.pipeline import TicketAnswerer
 from app.bedolaga.poller import TicketPoller
+from app.bedolaga.relay import TicketOperatorRelay
 from app.bedolaga.state import TicketStateStore
 from app.bedolaga.webhook import BedolagaWebhookEndpoint
 from app.bot.admin_notifier import AdminNotifier
@@ -23,7 +24,7 @@ from app.storage.database import DatabaseSessionManager
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["TicketSupport", "create_ticket_support"]
+__all__ = ["TicketOperatorRelay", "TicketSupport", "create_ticket_support"]
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class TicketSupport:
     answerer: TicketAnswerer
     poller: TicketPoller
     endpoint: BedolagaWebhookEndpoint
+    operator_relay: TicketOperatorRelay
     webhook_path: str
     poll_interval_seconds: float
 
@@ -69,10 +71,11 @@ def create_ticket_support(
         api_key=reveal(settings.bedolaga_api_key),
         http_client=http_client,
     )
+    state = TicketStateStore(db_manager)
     answerer = TicketAnswerer(
         client=client,
         llm_client=llm_client,
-        state=TicketStateStore(db_manager),
+        state=state,
         rate_limiter=rate_limiter,
         admin_notifier=admin_notifier,
         forwarder=forwarder,
@@ -89,6 +92,11 @@ def create_ticket_support(
     return TicketSupport(
         answerer=answerer,
         poller=TicketPoller(client=client, answerer=answerer),
+        operator_relay=TicketOperatorRelay(
+            client=client,
+            state=state,
+            conversation_state=conversation_state,
+        ),
         endpoint=BedolagaWebhookEndpoint(
             answerer=answerer,
             secret=reveal(settings.bedolaga_webhook_secret),

@@ -7,7 +7,7 @@ import pytest
 
 from app.bot.forwarder import SupportGroupForwarder
 from app.bot.sender import TelegramMessageSender
-from app.storage.models import MessageMapping
+from app.storage.models import MessageMapping, TopicMapping
 
 
 class DummyUser:
@@ -32,16 +32,23 @@ class DummyCopyMessageResult:
 class MockDatabaseSessionManager:
     def __init__(self):
         self.message_mappings: list[MessageMapping] = []
+        self.topic_mappings: dict[int, TopicMapping] = {}
 
     @asynccontextmanager
     async def session(self):
         session_mock = MagicMock()
+
+        async def get_mock(model, key):
+            if model is TopicMapping:
+                return self.topic_mappings.get(key)
+            return None
 
         def add_mock(obj):
             if isinstance(obj, MessageMapping):
                 self.message_mappings.append(obj)
 
         session_mock.add = add_mock
+        session_mock.get = AsyncMock(side_effect=get_mock)
         session_mock.commit = AsyncMock()
         session_mock.rollback = AsyncMock()
         session_mock.close = AsyncMock()
@@ -287,3 +294,53 @@ async def test_no_illustration_means_nothing_extra_is_copied(mock_db):
     )
 
     assert bot.copy_message.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_ticket_photo_marks_topic_and_a_direct_turn_clears_it(mock_db):
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    bot.send_photo = AsyncMock(return_value=MagicMock(message_id=300))
+    bot.copy_message = AsyncMock(return_value=DummyCopyMessageResult(301))
+
+    topic_manager = MagicMock()
+    topic_manager.resolve_topic_id = AsyncMock(return_value=42)
+    mock_db.topic_mappings[1] = TopicMapping(
+        user_id=1,
+        topic_id=42,
+        user_name="johndoe",
+    )
+
+    forwarder = SupportGroupForwarder(
+        sender=TelegramMessageSender(bot),
+        topic_manager=topic_manager,
+        db_manager=mock_db,
+        support_group_chat_id=-100123,
+    )
+
+    await forwarder.forward_to_support(
+        user_chat_id=1,
+        user_message_ids=None,
+        user=DummyUser(1, username="johndoe"),
+        bot_response="Тикет",
+        needs_escalation=False,
+        ticket_id=17,
+        photo_base64="Zm9v",
+        photo_mime_type="image/png",
+    )
+
+    assert mock_db.topic_mappings[1].active_ticket_id == 17
+    photo = bot.send_photo.await_args.kwargs
+    assert photo["chat_id"] == -100123
+    assert photo["message_thread_id"] == 42
+    assert "#17" in photo["caption"]
+
+    await forwarder.forward_to_support(
+        user_chat_id=1,
+        user_message_ids=[100],
+        user=DummyUser(1, username="johndoe"),
+        bot_response="Telegram",
+        needs_escalation=False,
+    )
+
+    assert mock_db.topic_mappings[1].active_ticket_id is None

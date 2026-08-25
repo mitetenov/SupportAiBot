@@ -79,6 +79,10 @@ class TestStorageModelsSchema:
         assert isinstance(columns["user_name"].type, String)
         assert columns["user_name"].nullable is True
 
+        assert "active_ticket_id" in columns
+        assert isinstance(columns["active_ticket_id"].type, BigInteger)
+        assert columns["active_ticket_id"].nullable is True
+
         assert "created_at" in columns
         assert isinstance(columns["created_at"].type, DateTime)
 
