@@ -1,5 +1,7 @@
-"""Single outbound path to Telegram: chunking, and errors that never escape."""
+"""Single outbound path to Telegram: chunking, media, and errors that never escape."""
 
+import base64
+import binascii
 import logging
 from collections.abc import Sequence
 from pathlib import Path
@@ -7,7 +9,7 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import FSInputFile
+from aiogram.types import BufferedInputFile, FSInputFile
 
 from app.bot.formatting import markdown_to_telegram_html, split_telegram_html, strip_html_tags
 
@@ -163,6 +165,45 @@ class TelegramMessageSender:
 
         if cached is None:
             self._remember_file_id(key, result)
+        return getattr(result, "message_id", None)
+
+    async def send_photo_bytes(
+        self,
+        chat_id: int,
+        base64_image: str,
+        mime_type: str,
+        message_thread_id: int | None = None,
+        caption: str | None = None,
+    ) -> int | None:
+        """Upload an in-memory picture, returning its Telegram message ID."""
+        try:
+            content = base64.b64decode(base64_image, validate=True)
+        except ValueError, binascii.Error:
+            logger.warning("Refusing an invalid base64 picture for chat %s", chat_id)
+            return None
+        if not content:
+            logger.warning("Refusing an empty picture for chat %s", chat_id)
+            return None
+
+        extension = {
+            "image/png": "png",
+            "image/webp": "webp",
+            "image/gif": "gif",
+        }.get(mime_type.lower(), "jpg")
+        kwargs: dict[str, Any] = {
+            "chat_id": chat_id,
+            "photo": BufferedInputFile(content, filename=f"ticket-photo.{extension}"),
+        }
+        if message_thread_id is not None:
+            kwargs["message_thread_id"] = message_thread_id
+        if caption:
+            kwargs["caption"] = caption
+
+        try:
+            result = await self.bot.send_photo(**kwargs)
+        except Exception as e:
+            logger.warning("Failed to upload ticket photo to %s: %s", chat_id, e)
+            return None
         return getattr(result, "message_id", None)
 
     def _remember_file_id(self, key: str, result: Any) -> None:

@@ -1,5 +1,6 @@
 """Unit tests for BedolagaClient — the only code that talks to the panel API."""
 
+import base64
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -232,6 +233,67 @@ class TestReply:
 
         assert await client.reply(17, "текст") is None
         assert post.await_count == 1
+
+
+class TestReplyWithPhoto:
+    """The panel uploads bytes under its own Telegram token before attaching them."""
+
+    async def test_uploads_then_attaches_a_photo_to_the_ticket(self) -> None:
+        post = AsyncMock(
+            side_effect=[
+                _response(201, {"media_type": "photo", "file_id": "panel-file-id"}),
+                _response(201, REPLY_BODY),
+            ]
+        )
+        client, _ = _client(post=post)
+
+        result = await client.reply_with_photo(
+            17,
+            "Вот настройки",
+            base64.b64encode(b"image-bytes").decode("ascii"),
+            "image/png",
+        )
+
+        assert result == PostedTicketReply(message_id=101)
+        upload = post.await_args_list[0]
+        assert upload.args[0] == "http://bedolaga:8080/upload"
+        assert upload.kwargs["headers"] == {"X-API-Key": API_KEY}
+        assert upload.kwargs["files"]["file"] == (
+            "support-photo.png",
+            b"image-bytes",
+            "image/png",
+        )
+        assert upload.kwargs["data"] == {"media_type": "photo"}
+
+        reply = post.await_args_list[1]
+        assert reply.args[0] == "http://bedolaga:8080/tickets/17/reply"
+        assert reply.kwargs["json"] == {
+            "message_text": "Вот настройки",
+            "media_type": "photo",
+            "media_file_id": "panel-file-id",
+            "media_caption": "Вот настройки",
+        }
+
+    async def test_does_not_post_a_reply_when_upload_fails(self) -> None:
+        post = AsyncMock(return_value=_response(500, {}))
+        client, _ = _client(post=post)
+
+        result = await client.reply_with_photo(
+            17,
+            "",
+            base64.b64encode(b"image-bytes").decode("ascii"),
+            "image/jpeg",
+        )
+
+        assert result is None
+        assert post.await_count == 1
+
+    async def test_rejects_invalid_base64_before_calling_the_panel(self) -> None:
+        post = AsyncMock()
+        client, _ = _client(post=post)
+
+        assert await client.reply_with_photo(17, "", "not-base64!", "image/jpeg") is None
+        post.assert_not_awaited()
 
 
 class TestSetPriority:

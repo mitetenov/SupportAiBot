@@ -56,6 +56,8 @@ class TestCreateTicketSupport:
         )
         assert support is not None
         assert support.poller.client is support.answerer.client
+        assert support.operator_relay.client is support.answerer.client
+        assert support.operator_relay.state is support.answerer.state
 
     def test_mounts_the_webhook_route(self) -> None:
         support = _create(

@@ -8,7 +8,7 @@ from app.bot.sender import TelegramMessageSender
 from app.bot.topic_manager import TopicManager
 from app.constants import get_message
 from app.storage.database import DatabaseSessionManager
-from app.storage.models import MessageMapping
+from app.storage.models import MessageMapping, TopicMapping
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,10 @@ class SupportGroupForwarder:
         bot_response: str,
         needs_escalation: bool,
         illustration_message_id: int | None = None,
-    ) -> None:
+        ticket_id: int | None = None,
+        photo_base64: str | None = None,
+        photo_mime_type: str | None = None,
+    ) -> int | None:
         """Copies batch messages into user topic and appends bot response.
 
         ``illustration_message_id`` is a picture the bot has already sent to the
@@ -55,12 +58,19 @@ class SupportGroupForwarder:
 
         if topic_id is None:
             logger.warning("Cannot forward to support group: no topic for user %s", user_id)
-            return
+            return None
 
         if not user_message_ids:
+            await self._set_active_ticket(user_id, topic_id, ticket_id)
+            await self._forward_ticket_photo(
+                topic_id,
+                ticket_id,
+                photo_base64,
+                photo_mime_type,
+            )
             await self._send_bot_response(topic_id, user_name, bot_response, needs_escalation)
             await self._forward_illustration(user_chat_id, illustration_message_id, topic_id)
-            return
+            return topic_id
 
         # Recreate topic on first failure only
         ok = await self._forward_user_message(user_chat_id, user_message_ids[0], topic_id)
@@ -71,17 +81,58 @@ class SupportGroupForwarder:
             topic_id = await self.topic_manager.recreate_stale_topic(user_id, user_name, topic_id)
             if topic_id is None:
                 logger.error("Failed to recreate topic for user %s", user_id)
-                return
+                return None
             ok = await self._forward_user_message(user_chat_id, user_message_ids[0], topic_id)
             if not ok:
                 logger.error("Still failed to forward after topic recreation for user %s", user_id)
-                return
+                return None
 
         for msg_id in user_message_ids[1:]:
             await self._forward_user_message(user_chat_id, msg_id, topic_id)
 
         await self._send_bot_response(topic_id, user_name, bot_response, needs_escalation)
         await self._forward_illustration(user_chat_id, illustration_message_id, topic_id)
+        await self._set_active_ticket(user_id, topic_id, ticket_id)
+        return topic_id
+
+    async def _forward_ticket_photo(
+        self,
+        topic_id: int,
+        ticket_id: int | None,
+        photo_base64: str | None,
+        photo_mime_type: str | None,
+    ) -> None:
+        """Upload a ticket screenshot into the operator topic when available."""
+        if ticket_id is None or photo_base64 is None or photo_mime_type is None:
+            return
+        await self.sender.send_photo_bytes(
+            self.support_group_chat_id,
+            photo_base64,
+            photo_mime_type,
+            message_thread_id=topic_id,
+            caption=get_message("bedolaga.photo.caption", ticket_id),
+        )
+
+    async def _set_active_ticket(
+        self,
+        user_id: int,
+        topic_id: int,
+        ticket_id: int | None,
+    ) -> None:
+        """Mark whether the visible topic turn belongs to Telegram or a ticket."""
+        try:
+            async with self.db_manager.session() as session:
+                mapping = await session.get(TopicMapping, user_id)
+                if mapping is None or mapping.topic_id != topic_id:
+                    logger.warning(
+                        "Could not mark active source for topic %d and user %d",
+                        topic_id,
+                        user_id,
+                    )
+                    return
+                mapping.active_ticket_id = ticket_id
+        except Exception as e:
+            logger.warning("Failed to mark active ticket for topic %d: %s", topic_id, e)
 
     async def _forward_illustration(
         self,
@@ -165,6 +216,8 @@ class SupportGroupForwarder:
         if topic_id is None:
             logger.warning("Cannot forward error to support group: no topic for user %s", user_id)
             return
+
+        await self._set_active_ticket(int(user_id), topic_id, None)
 
         admin_tag = f"@{self.admin_username} " if self.admin_username else ""
 

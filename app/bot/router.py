@@ -8,6 +8,7 @@ from aiogram import F, Router
 from aiogram.types import Message, MessageReactionUpdated
 from sqlalchemy import select
 
+from app.bedolaga.relay import TicketOperatorRelay
 from app.bot.buffer import BufferedMessage, UserMessageBuffer
 from app.bot.command_handler import SupportCommandHandler
 from app.bot.conversation_state import ConversationState
@@ -61,6 +62,7 @@ def setup_router(
     conversation_state: ConversationState,
     operator_ask: OperatorAskCommand,
     support_group_chat_id: int,
+    ticket_relay: TicketOperatorRelay | None = None,
 ) -> Router:
     """Build and configure the primary aiogram Router."""
     router = Router(name="vpn_support_bot")
@@ -118,33 +120,34 @@ def setup_router(
             logger.debug("No user mapping found for support topic %d", topic_id)
             return
 
+        # Deliberately not falling back to the caption: a photo with a caption is
+        # still media, and copying it delivers both halves. Reading the caption as
+        # the operator's message would drop the image.
+        text = (message.text or "").strip()
         user_id = mapping.user_id
+
+        # /ask asks the model on the operator's behalf: the answer goes to the
+        # user from the bot, and the topic gets a copy, so neither the plain
+        # delivery below nor its confirmation applies here.
+        ask_query = OperatorAskCommand.parse(text) if user_id > 0 else None
+        if ask_query is not None:
+            await operator_ask.handle(topic_id, user_id, ask_query)
+            return
+
+        ticket_id = getattr(mapping, "active_ticket_id", None)
+        if ticket_id is not None:
+            await _deliver_operator_to_ticket(message, topic_id, user_id, int(ticket_id), text)
+            return
+
         if user_id < 0:
-            # A Bedolaga cabinet account has no Telegram id, so its topic is
-            # keyed by the synthetic negative id the ticket pipeline invents.
-            # There is no chat behind it: every send fails, and the sender
-            # swallows the failure, so the operator would read "отправлено"
-            # for a message that went nowhere. Nothing is recorded either —
-            # the bot must keep answering the ticket on the next sweep.
+            # Legacy cabinet topics may predate active_ticket_id. Never claim a
+            # direct Telegram delivery for their synthetic negative key.
             await sender.send_reply(
                 support_group_chat_id,
                 message.message_id,
                 get_message("support.cabinet_only.no_delivery"),
                 message_thread_id=topic_id,
             )
-            return
-
-        # Deliberately not falling back to the caption: a photo with a caption is
-        # still media, and copying it delivers both halves. Reading the caption as
-        # the operator's message would drop the image.
-        text = (message.text or "").strip()
-
-        # /ask asks the model on the operator's behalf: the answer goes to the
-        # user from the bot, and the topic gets a copy, so neither the plain
-        # delivery below nor its confirmation applies here.
-        ask_query = OperatorAskCommand.parse(text)
-        if ask_query is not None:
-            await operator_ask.handle(topic_id, user_id, ask_query)
             return
 
         if not text:
@@ -167,6 +170,50 @@ def setup_router(
         )
 
         conversation_state.record_operator_reply(user_id)
+
+    async def _deliver_operator_to_ticket(
+        message: Message,
+        topic_id: int,
+        user_key: int,
+        ticket_id: int,
+        text: str,
+    ) -> None:
+        """Deliver one topic message through Bedolaga's service API."""
+        delivered = False
+        unsupported = False
+
+        if ticket_relay is not None and text:
+            delivered = await ticket_relay.reply_text(ticket_id, user_key, text)
+        elif ticket_relay is not None and message.photo:
+            result = await photo_downloader.download(message.photo)
+            if (
+                result.is_success()
+                and result.base64_image is not None
+                and result.mime_type is not None
+            ):
+                delivered = await ticket_relay.reply_photo(
+                    ticket_id,
+                    user_key,
+                    result.base64_image,
+                    result.mime_type,
+                    (message.caption or "").strip(),
+                )
+        elif ticket_relay is not None:
+            unsupported = True
+
+        if delivered:
+            response = get_message("support.ticket.sent", ticket_id)
+        elif unsupported:
+            response = get_message("support.ticket.photo.only")
+        else:
+            response = get_message("support.ticket.delivery.failed", ticket_id)
+
+        await sender.send_reply(
+            support_group_chat_id,
+            message.message_id,
+            response,
+            message_thread_id=topic_id,
+        )
 
     async def _deliver_operator_text(
         message: Message, topic_id: int, user_id: int, text: str
@@ -192,6 +239,16 @@ def setup_router(
 
         await sender.send(user_id, get_message("support.operator.prefix", text))
 
+    async def _mark_direct_telegram_source(user_id: int) -> None:
+        """Clear a stale ticket target as soon as a user writes directly."""
+        try:
+            async with db_manager.session() as session:
+                mapping = await session.get(TopicMapping, user_id)
+                if mapping is not None:
+                    mapping.active_ticket_id = None
+        except Exception as e:
+            logger.warning("Failed to switch user %d topic back to Telegram: %s", user_id, e)
+
     # 3. Direct user messages
     @router.message()
     async def handle_user_message(message: Message) -> None:
@@ -205,6 +262,7 @@ def setup_router(
 
         user_id = user.id
         await ensure_user_info(db_manager, user)
+        await _mark_direct_telegram_source(user_id)
 
         text = (message.text or "").strip()
 

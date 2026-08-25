@@ -37,6 +37,10 @@ class TopicMapping(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     topic_id: Mapped[int] = mapped_column(Integer, nullable=False)
     user_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: The Bedolaga ticket currently mirrored into this topic. A direct
+    #: Telegram turn clears it, so an operator reply cannot accidentally land
+    #: in a stale cabinet ticket.
+    active_ticket_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),

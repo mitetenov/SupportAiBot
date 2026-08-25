@@ -429,17 +429,25 @@ class TestScreenshots:
         parts["llm_client"].chat_with_image.assert_not_awaited()
         parts["llm_client"].chat.assert_awaited_once()
 
-    async def test_ignores_media_a_text_only_model_cannot_read(self) -> None:
+    async def test_still_mirrors_media_a_text_only_model_cannot_read(self) -> None:
         answerer, parts = _answerer(ticket=self._photo_ticket())
-        parts["client"].download_media = AsyncMock()
+        from app.bedolaga.types import ImageAttachment
+
+        parts["client"].download_media = AsyncMock(
+            return_value=ImageAttachment(base64_image="Zm9v", mime_type="image/png")
+        )
         parts["llm_client"].supports_images = MagicMock(return_value=False)
         answerer.client = parts["client"]
         answerer.llm_client = parts["llm_client"]
 
         await answerer.handle(TICKET_ID)
 
-        parts["client"].download_media.assert_not_awaited()
+        parts["client"].download_media.assert_awaited_once_with(TICKET_ID, 100)
         parts["llm_client"].chat.assert_awaited_once()
+        kwargs = parts["forwarder"].forward_to_support.await_args.kwargs
+        assert kwargs["photo_base64"] == "Zm9v"
+        assert kwargs["photo_mime_type"] == "image/png"
+        assert kwargs["ticket_id"] == TICKET_ID
 
 
 class TestNothingToAnswer:

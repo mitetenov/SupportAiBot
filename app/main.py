@@ -335,6 +335,7 @@ async def main() -> None:
             conversation_state=conversation_state,
             operator_ask=operator_ask,
             support_group_chat_id=settings.telegram_support_group_chat_id,
+            ticket_relay=(ticket_support.operator_relay if ticket_support is not None else None),
         )
 
         dp = Dispatcher()

@@ -88,6 +88,14 @@ MESSAGES: dict[str, str] = {
         "отправить сюда ответ пользователю технически некуда, ваше сообщение не "
         "доставлено. Ответьте в самом тикете в панели Bedolaga."
     ),
+    "support.ticket.sent": "Отправлено в тикет #{0}.",
+    "support.ticket.delivery.failed": (
+        "Не удалось отправить сообщение в тикет #{0}. Сообщение не доставлено; "
+        "повторите попытку или ответьте через кабинет Bedolaga."
+    ),
+    "support.ticket.photo.only": (
+        "В тикет из этого топика сейчас можно переслать текст или фото. Это вложение не доставлено."
+    ),
     # Operator /ask command
     "support.ask.usage": "Использование: /ask <вопрос>. Ответ ИИ уйдёт пользователю от лица бота.",
     "support.ask.header": "Ответ ИИ отправлен пользователю:\n\n{0}",
@@ -110,6 +118,7 @@ MESSAGES: dict[str, str] = {
     "bedolaga.suppressed": "🎫 Тикет #{0} · {1}\n\nВопрос:\n{2}\n\n(бот молчит: с пользователем работает оператор)",
     "bedolaga.error.context": "Не удалось обработать тикет Bedolaga #{0}",
     "bedolaga.reply.failed": "Не удалось отправить ответ в тикет Bedolaga #{0}",
+    "bedolaga.photo.caption": "🎫 Фото из тикета #{0}",
     # Admin notifications
     "admin.error.prefix": "[ОШИБКА БОТА]",
     "admin.error.suppressed": "(повторов подавлено с прошлого раза: {0})",

@@ -1,6 +1,7 @@
 """The only code in this bot that talks to the Bedolaga Web API."""
 
 import base64
+import binascii
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -38,6 +39,14 @@ class PostedTicketReply:
     """A reply the panel accepted, with its message id when the contract supplied it."""
 
     message_id: int | None
+
+
+@dataclass(frozen=True)
+class UploadedMedia:
+    """Media stored by Bedolaga's Telegram bot and ready for a ticket reply."""
+
+    media_type: str
+    file_id: str
 
 
 class BedolagaClient:
@@ -160,11 +169,97 @@ class BedolagaClient:
         ticket, and if the reply did land its last message is now an admin one,
         so `awaits_answer` is False and nothing is answered twice.
         """
+        return await self._post_reply(
+            ticket_id,
+            {"message_text": text[:MAX_REPLY_LENGTH]},
+        )
+
+    async def reply_with_photo(
+        self,
+        ticket_id: int,
+        text: str,
+        base64_image: str,
+        mime_type: str,
+    ) -> PostedTicketReply | None:
+        """Upload a Telegram photo through Bedolaga, then attach it to a reply."""
+        media = await self.upload_photo(base64_image, mime_type)
+        if media is None:
+            return None
+
+        caption = text[:MAX_REPLY_LENGTH]
+        return await self._post_reply(
+            ticket_id,
+            {
+                "message_text": caption or None,
+                "media_type": media.media_type,
+                "media_file_id": media.file_id,
+                "media_caption": caption or None,
+            },
+        )
+
+    async def upload_photo(
+        self,
+        base64_image: str,
+        mime_type: str,
+    ) -> UploadedMedia | None:
+        """Store bytes under Bedolaga's bot token and return its transferable file id."""
+        try:
+            content = base64.b64decode(base64_image, validate=True)
+        except ValueError, binascii.Error:
+            logger.warning("Bedolaga: refusing invalid base64 photo upload")
+            return None
+        if not content or len(content) > MAX_MEDIA_BYTES:
+            logger.warning("Bedolaga: refusing photo upload of %d bytes", len(content))
+            return None
+
+        extension = {
+            "image/png": "png",
+            "image/webp": "webp",
+            "image/gif": "gif",
+        }.get(mime_type.lower(), "jpg")
+        try:
+            response = await self.http_client.post(
+                f"{self.base_url}/upload",
+                headers=self.headers,
+                files={"file": (f"support-photo.{extension}", content, mime_type)},
+                data={"media_type": "photo"},
+            )
+        except httpx.HTTPError as e:
+            logger.error("Bedolaga: uploading a ticket photo failed: %s", e)
+            return None
+
+        if response.status_code not in (200, 201):
+            logger.error(
+                "Bedolaga: uploading a ticket photo returned %d: %s",
+                response.status_code,
+                response.text[:200],
+            )
+            return None
+
+        try:
+            payload = response.json() or {}
+            file_id = str(payload["file_id"]).strip()
+            if not file_id:
+                raise ValueError("empty file_id")
+            return UploadedMedia(
+                media_type=str(payload.get("media_type") or "photo"),
+                file_id=file_id,
+            )
+        except (ValueError, KeyError, TypeError) as e:
+            logger.warning("Bedolaga: photo upload returned no file id: %s", e)
+            return None
+
+    async def _post_reply(
+        self,
+        ticket_id: int,
+        payload: dict[str, Any],
+    ) -> PostedTicketReply | None:
+        """Post one non-idempotent ticket reply without transport retries."""
         try:
             response = await self.http_client.post(
                 f"{self.base_url}/tickets/{ticket_id}/reply",
                 headers=self.headers,
-                json={"message_text": text[:MAX_REPLY_LENGTH]},
+                json=payload,
             )
         except httpx.HTTPError as e:
             logger.error("Bedolaga: replying to ticket %d failed: %s", ticket_id, e)

@@ -1,5 +1,6 @@
 """Unit tests for TelegramMessageSender: chunking, blank handling, error containment."""
 
+import base64
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -206,3 +207,31 @@ class TestSendPhoto:
         bot.send_photo = AsyncMock(side_effect=RuntimeError("flood wait"))
 
         assert await sender.send_photo(100, picture) is None
+
+    @pytest.mark.asyncio
+    async def test_uploads_in_memory_ticket_photo_to_a_topic(self) -> None:
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock(return_value=MagicMock(message_id=601))
+
+        result = await sender.send_photo_bytes(
+            -100123,
+            base64.b64encode(b"png-bytes").decode("ascii"),
+            "image/png",
+            message_thread_id=42,
+            caption="Тикет #17",
+        )
+
+        assert result == 601
+        sent = bot.send_photo.await_args.kwargs
+        assert sent["chat_id"] == -100123
+        assert sent["message_thread_id"] == 42
+        assert sent["caption"] == "Тикет #17"
+        assert sent["photo"].filename == "ticket-photo.png"
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_in_memory_photo(self) -> None:
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock()
+
+        assert await sender.send_photo_bytes(1, "bad!", "image/jpeg") is None
+        bot.send_photo.assert_not_awaited()
