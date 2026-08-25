@@ -120,6 +120,51 @@ class TestGapsOperatorsAnsweredByHand:
         assert "Proxy" in SupportPrompt.SYSTEM
 
 
+class TestNaPlatformDiagnosis:
+    """The n/a recovery path depends on the device OS."""
+
+    @staticmethod
+    def answer_for(entries: list[dict[str, Any]], question_start: str) -> str:
+        entry = next(e for e in entries if e["question"].startswith(question_start))
+        return str(entry["answer"])
+
+    def test_generic_answer_asks_for_the_os_before_recommending_an_app(
+        self, entries: list[dict[str, Any]]
+    ) -> None:
+        answer = self.answer_for(entries, "Серверы показывают n/a")
+        for platform in ("iOS", "iPadOS", "macOS", "Windows", "Android"):
+            assert platform in answer
+        assert "обновите приложение Happ до последней версии или установите" not in answer
+
+    def test_apple_platforms_are_sent_to_incy(self, entries: list[dict[str, Any]]) -> None:
+        answer = self.answer_for(entries, "Все серверы n/a на iPhone")
+        for platform in ("iOS", "iPadOS", "macOS"):
+            assert platform in answer
+        assert "установите Incy" in answer
+        assert "@PeipivoSalesBot" in answer
+        assert "https://lk.peipivo.top" in answer
+        assert "обновите Happ" not in answer
+
+    def test_windows_and_android_update_then_reinstall_happ(
+        self, entries: list[dict[str, Any]]
+    ) -> None:
+        answer = self.answer_for(entries, "Все серверы n/a на Windows")
+        assert "Windows" in answer
+        assert "Android" in answer
+        assert "обновите Happ до последней версии" in answer
+        assert "Если обновлений нет, удалите Happ и установите его заново" in answer
+        assert "@PeipivoSalesBot" in answer
+        assert "https://lk.peipivo.top" in answer
+        assert "Incy" not in answer
+
+    def test_system_prompt_enforces_the_same_os_split(self) -> None:
+        prompt = SupportPrompt.SYSTEM
+        assert "если ОС не указана, спроси её" in prompt
+        assert "Для iOS, iPadOS и macOS предложи установить Incy" in prompt
+        assert "Для Windows и Android предложи обновить Happ" in prompt
+        assert "если обновлений нет" in prompt
+
+
 class TestIllustratedEntries:
     """An entry may name a screenshot; the file has to actually ship with it."""
 
