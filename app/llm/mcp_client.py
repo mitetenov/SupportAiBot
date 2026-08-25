@@ -201,8 +201,9 @@ class HttpMcpClient(McpClientInterface):
     """Client for a single MCP server over HTTP using official Python MCP SDK v2.
 
     To strictly avoid AnyIO task-affinity violations ("Attempted to exit cancel scope
-    in a different task"), an internal owner task runs all context manager
-    entries, tool calls, session recovery, and context exits through an async command queue.
+    in a different task"), an internal owner task runs context manager entries,
+    session recovery, and context exits through an async command queue. Tool calls
+    use the active SDK client directly so independent requests are not serialized.
     """
 
     def __init__(
@@ -225,6 +226,13 @@ class HttpMcpClient(McpClientInterface):
 
         self._queue: asyncio.Queue[_McpCommand] | None = None
         self._worker_task: asyncio.Task[None] | None = None
+        self._recovery_lock = asyncio.Lock()
+        self._close_lock = asyncio.Lock()
+        self._call_state_lock = asyncio.Lock()
+        self._no_active_calls = asyncio.Event()
+        self._no_active_calls.set()
+        self._active_calls = 0
+        self._closing = False
 
     @property
     def server_name(self) -> str:
@@ -253,54 +261,58 @@ class HttpMcpClient(McpClientInterface):
     def _ensure_worker(self) -> None:
         if self._worker_task is None or self._worker_task.done():
             self._queue = asyncio.Queue()
+            queue = self._queue
             self._worker_task = asyncio.create_task(
-                self._worker_loop(), name=f"mcp-worker-{self.server_name}"
+                self._worker_loop(queue), name=f"mcp-worker-{self.server_name}"
             )
 
-    async def _worker_loop(self) -> None:
-        """Dedicated owner task that executes all AnyIO-managed operations."""
-        assert self._queue is not None
-        while True:
-            try:
-                cmd = await self._queue.get()
-            except asyncio.CancelledError:
-                break
-
-            if cmd.action == "close":
-                await self._close_stack_internal()
-                if not cmd.future.done():
-                    cmd.future.set_result(None)
-                self._queue.task_done()
-                break
-
-            if cmd.action == "init":
+    async def _worker_loop(self, queue: asyncio.Queue[_McpCommand]) -> None:
+        """Own the SDK context while allowing calls to run concurrently."""
+        try:
+            while True:
                 try:
-                    success = await self._init_internal()
+                    cmd = await queue.get()
+                except asyncio.CancelledError:
+                    break
+
+                try:
+                    if cmd.action == "close":
+                        await self._close_stack_internal()
+                        if not cmd.future.done():
+                            cmd.future.set_result(None)
+                        break
+
+                    if cmd.action == "init":
+                        success = await self._init_internal()
+                    elif cmd.action == "recover":
+                        success = await self._recover_session_internal(
+                            int(cmd.payload["generation"])
+                        )
+                    else:
+                        raise RuntimeError(f"Unknown MCP owner command: {cmd.action}")
+
                     if not cmd.future.done():
                         cmd.future.set_result(success)
                 except Exception as e:
                     if not cmd.future.done():
                         cmd.future.set_exception(e)
                 finally:
-                    self._queue.task_done()
+                    queue.task_done()
+        finally:
+            await self._close_stack_internal()
 
-            elif cmd.action == "call_tool":
-                try:
-                    tool_name = cmd.payload["tool_name"]
-                    arguments = cmd.payload.get("arguments")
-                    res = await self._call_tool_internal(tool_name, arguments)
-                    if not cmd.future.done():
-                        cmd.future.set_result(res)
-                except Exception as e:
-                    if not cmd.future.done():
-                        cmd.future.set_result(
-                            json.dumps({"error": str(e) if str(e) else "unknown error"})
-                        )
-                finally:
-                    self._queue.task_done()
+    async def _submit_owner_command(self, action: str, **payload: Any) -> Any:
+        if self._closing and action != "close":
+            raise RuntimeError(f"{self._label} client is closing")
+        queue = self._queue
+        worker = self._worker_task
+        if queue is None or worker is None or worker.done():
+            raise RuntimeError(f"{self._label} client owner is not running")
 
-        # Clean up if loop terminates
-        await self._close_stack_internal()
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[Any] = loop.create_future()
+        await queue.put(_McpCommand(action=action, future=future, payload=payload))
+        return await future
 
     async def _init_internal(self) -> bool:
         await self._close_stack_internal()
@@ -400,10 +412,12 @@ class HttpMcpClient(McpClientInterface):
             )
         return True
 
-    async def _invoke_tool(self, tool_name: str, arguments: dict[str, Any] | None) -> str:
-        if self._client is None:
+    async def _invoke_tool(
+        self, client: Any, tool_name: str, arguments: dict[str, Any] | None
+    ) -> str:
+        if client is None:
             raise RuntimeError(f"{self._label} client is not connected")
-        result = await self._client.call_tool(
+        result = await client.call_tool(
             name=tool_name,
             arguments=arguments if arguments is not None else {},
         )
@@ -419,44 +433,6 @@ class HttpMcpClient(McpClientInterface):
                 RuntimeError(f"Tool {tool_name} returned error: {err_msg}"),
             )
         return rendered
-
-    async def _call_tool_internal(
-        self, tool_name: str, arguments: dict[str, Any] | None
-    ) -> str:
-        if not self._initialized or self._client is None:
-            return json.dumps({"error": f"{self._label} client not initialized"})
-
-        generation = self._session_generation
-        try:
-            return await self._invoke_tool(tool_name, arguments)
-        except Exception as e:
-            if not _is_recoverable_error(e):
-                logger.error(
-                    "%s failed to call tool: %s: %s", self._label, tool_name, e, exc_info=True
-                )
-                await self._notify_admins(f"{self._label} tool call failed: {tool_name}", e)
-                return json.dumps({"error": str(e) if str(e) else "unknown error"})
-
-            # Try recovery inside the owner task
-            if not await self._recover_session_internal(generation):
-                return json.dumps(
-                    {"error": f"{self._label} session lost and not recovered: {tool_name}"}
-                )
-
-            try:
-                return await self._invoke_tool(tool_name, arguments)
-            except Exception as retry_e:
-                logger.error(
-                    "%s tool %s failed after reconnect: %s",
-                    self._label,
-                    tool_name,
-                    retry_e,
-                    exc_info=True,
-                )
-                await self._notify_admins(
-                    f"{self._label} tool call failed after reconnect: {tool_name}", retry_e
-                )
-                return json.dumps({"error": str(retry_e) if str(retry_e) else "unknown error"})
 
     async def _close_stack_internal(self) -> None:
         stack = self._exit_stack
@@ -475,50 +451,120 @@ class HttpMcpClient(McpClientInterface):
 
     async def init(self) -> bool:
         """Connect to MCP server, negotiate protocol, and load tool definitions."""
-        self._ensure_worker()
-        assert self._queue is not None
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[bool] = loop.create_future()
-        await self._queue.put(_McpCommand(action="init", future=future))
-        return await future
+        async with self._close_lock:
+            await self._no_active_calls.wait()
+            async with self._call_state_lock:
+                self._closing = False
+            self._ensure_worker()
+            return bool(await self._submit_owner_command("init"))
+
+    async def _start_tool_call(self) -> tuple[bool, int, Any]:
+        async with self._call_state_lock:
+            if (
+                self._closing
+                or not self._initialized
+                or self._client is None
+                or self._worker_task is None
+                or self._worker_task.done()
+            ):
+                return False, 0, None
+
+            self._active_calls += 1
+            self._no_active_calls.clear()
+            return True, self._session_generation, self._client
+
+    async def _finish_tool_call(self) -> None:
+        async with self._call_state_lock:
+            self._active_calls -= 1
+            if self._active_calls == 0:
+                self._no_active_calls.set()
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None = None) -> str:
         """Execute a tool with given arguments and return JSON string result."""
-        if not self._initialized or self._worker_task is None or self._worker_task.done():
+        started, generation, active_client = await self._start_tool_call()
+        if not started:
             return json.dumps({"error": f"{self._label} client not initialized"})
 
-        assert self._queue is not None
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future[str] = loop.create_future()
-        await self._queue.put(
-            _McpCommand(
-                action="call_tool",
-                future=future,
-                payload={"tool_name": tool_name, "arguments": arguments},
-            )
-        )
-        return await future
+        try:
+            try:
+                return await self._invoke_tool(active_client, tool_name, arguments)
+            except Exception as e:
+                if not _is_recoverable_error(e):
+                    logger.error(
+                        "%s failed to call tool: %s: %s", self._label, tool_name, e, exc_info=True
+                    )
+                    await self._notify_admins(f"{self._label} tool call failed: {tool_name}", e)
+                    return json.dumps({"error": str(e) if str(e) else "unknown error"})
+
+                async with self._recovery_lock:
+                    if self._session_generation == generation:
+                        try:
+                            recovered = bool(
+                                await self._submit_owner_command(
+                                    "recover", generation=generation
+                                )
+                            )
+                        except Exception:
+                            recovered = False
+                    else:
+                        recovered = self._initialized
+
+                if not recovered:
+                    return json.dumps(
+                        {"error": f"{self._label} session lost and not recovered: {tool_name}"}
+                    )
+
+                retry_client = self._client
+                if retry_client is None:
+                    return json.dumps({"error": f"{self._label} client not initialized"})
+                try:
+                    return await self._invoke_tool(retry_client, tool_name, arguments)
+                except Exception as retry_e:
+                    logger.error(
+                        "%s tool %s failed after reconnect: %s",
+                        self._label,
+                        tool_name,
+                        retry_e,
+                        exc_info=True,
+                    )
+                    await self._notify_admins(
+                        f"{self._label} tool call failed after reconnect: {tool_name}", retry_e
+                    )
+                    return json.dumps(
+                        {"error": str(retry_e) if str(retry_e) else "unknown error"}
+                    )
+        finally:
+            await self._finish_tool_call()
 
     async def close(self) -> None:
         """Close the owned MCP client context and release resources idempotently."""
-        worker = self._worker_task
-        queue = self._queue
-        self._worker_task = None
-        self._queue = None
-        if worker is not None and not worker.done() and queue is not None:
-            loop = asyncio.get_running_loop()
-            future: asyncio.Future[None] = loop.create_future()
-            await queue.put(_McpCommand(action="close", future=future))
+        async with self._close_lock:
+            async with self._call_state_lock:
+                self._closing = True
+            await self._no_active_calls.wait()
+            worker = self._worker_task
+            queue = self._queue
             try:
-                await future
-            except Exception:
-                pass
-            try:
-                await worker
-            except Exception:
-                pass
-        self._initialized = False
-        self._client = None
-        self._cached_tools = []
-        self._protocol_version = None
+                if worker is not None and not worker.done() and queue is not None:
+                    loop = asyncio.get_running_loop()
+                    future: asyncio.Future[None] = loop.create_future()
+                    await queue.put(_McpCommand(action="close", future=future))
+                    try:
+                        await future
+                    except Exception:
+                        pass
 
+                if worker is not None:
+                    try:
+                        await worker
+                    except Exception:
+                        pass
+            finally:
+                self._worker_task = None
+                self._queue = None
+                self._exit_stack = None
+                self._initialized = False
+                self._client = None
+                self._cached_tools = []
+                self._protocol_version = None
+                self._closing = False
