@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from aiogram.exceptions import TelegramBadRequest
 
+from app.bedolaga.types import TicketMedia
 from app.bot.sender import MAX_MESSAGE_LENGTH, TelegramMessageSender
 
 
@@ -235,3 +236,235 @@ class TestSendPhoto:
 
         assert await sender.send_photo_bytes(1, "bad!", "image/jpeg") is None
         bot.send_photo.assert_not_awaited()
+
+
+class TestSendTicketMedia:
+
+    """Streaming ticket media from Bedolaga to Telegram operator topics."""
+
+    @pytest.mark.asyncio
+    async def test_photo_sends_via_send_photo(self) -> None:
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock(return_value=MagicMock(message_id=701))
+
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/test.jpg",
+            filename="screenshot.jpg",
+            mime_type="image/jpeg",
+            download_headers={"X-API-Key": "secret-key"},
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+            message_thread_id=42,
+            caption="Ticket #17",
+        )
+
+        assert result == 701
+        bot.send_photo.assert_awaited_once()
+        sent = bot.send_photo.await_args.kwargs
+        assert sent["chat_id"] == -100123
+        assert sent["message_thread_id"] == 42
+        assert sent["caption"] == "Ticket #17"
+        input_file = sent["photo"]
+        assert input_file.url == "https://bedolaga/media/test.jpg"
+        assert input_file.filename == "screenshot.jpg"
+        assert input_file.headers == {"X-API-Key": "secret-key"}
+        assert input_file.timeout == 120
+
+    @pytest.mark.asyncio
+    async def test_mp4_video_sends_via_send_video_with_streaming(self) -> None:
+        sender, bot = make_sender()
+        bot.send_video = AsyncMock(return_value=MagicMock(message_id=702))
+
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/test.mp4",
+            filename="record.mp4",
+            mime_type="video/mp4",
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+            message_thread_id=42,
+            caption="Ticket #17",
+        )
+
+        assert result == 702
+        bot.send_video.assert_awaited_once()
+        sent = bot.send_video.await_args.kwargs
+        assert sent["chat_id"] == -100123
+        assert sent["message_thread_id"] == 42
+        assert sent["caption"] == "Ticket #17"
+        assert sent["supports_streaming"] is True
+        assert sent["video"].filename == "record.mp4"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("media_type", "filename", "mime_type"),
+        [
+            ("document", "client.log", "text/plain"),
+            ("document", "report.pdf", "application/pdf"),
+            ("voice", "voice.ogg", "audio/ogg"),
+            ("audio", "sound.mp3", "audio/mpeg"),
+            ("animation", "demo.gif", "image/gif"),
+            ("video", "video.avi", "video/x-msvideo"),
+            ("unknown_type", "file.bin", None),
+        ],
+    )
+    async def test_documents_and_non_mp4_send_via_send_document(
+        self, media_type: str, filename: str, mime_type: str | None
+    ) -> None:
+        sender, bot = make_sender()
+        bot.send_document = AsyncMock(return_value=MagicMock(message_id=703))
+
+        media = TicketMedia(
+            media_type=media_type,
+            media_url="https://bedolaga/media/test",
+            filename=filename,
+            mime_type=mime_type,
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+            message_thread_id=42,
+        )
+
+        assert result == 703
+        bot.send_document.assert_awaited_once()
+        sent = bot.send_document.await_args.kwargs
+        assert sent["chat_id"] == -100123
+        assert sent["message_thread_id"] == 42
+        assert sent["document"].filename == filename
+
+    @pytest.mark.asyncio
+    async def test_video_falls_back_to_send_document_on_telegram_bad_request(self) -> None:
+        sender, bot = make_sender()
+        bot.send_video = AsyncMock(
+            side_effect=TelegramBadRequest(
+                method=MagicMock(), message="Bad Request: failed to get HTTP URL content"
+            )
+        )
+        bot.send_document = AsyncMock(return_value=MagicMock(message_id=704))
+
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/test.mp4",
+            filename="record.mp4",
+            mime_type="video/mp4",
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+            message_thread_id=42,
+            caption="Ticket #17",
+        )
+
+        assert result == 704
+        assert bot.send_video.await_count == 1
+        assert bot.send_document.await_count == 1
+        sent_doc = bot.send_document.await_args.kwargs
+        assert sent_doc["chat_id"] == -100123
+        assert sent_doc["message_thread_id"] == 42
+        assert sent_doc["caption"] == "Ticket #17"
+        assert sent_doc["document"].filename == "record.mp4"
+
+    @pytest.mark.asyncio
+    async def test_video_does_not_retry_on_network_or_other_exception(self) -> None:
+        sender, bot = make_sender()
+        bot.send_video = AsyncMock(side_effect=RuntimeError("connection timeout"))
+        bot.send_document = AsyncMock()
+
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/test.mp4",
+            filename="record.mp4",
+            mime_type="video/mp4",
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+        )
+
+        assert result is None
+        assert bot.send_video.await_count == 1
+        bot.send_document.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rejects_known_oversized_file_before_bot_call(self) -> None:
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock()
+        bot.send_video = AsyncMock()
+        bot.send_document = AsyncMock()
+
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/large.mp4",
+            filename="large.mp4",
+            file_size=50 * 1024 * 1024 + 1,
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+        )
+
+        assert result is None
+        bot.send_photo.assert_not_awaited()
+        bot.send_video.assert_not_awaited()
+        bot.send_document.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_allows_exact_50mb_and_unknown_size(self) -> None:
+        sender, bot = make_sender()
+        bot.send_document = AsyncMock(return_value=MagicMock(message_id=705))
+
+        media_exact = TicketMedia(
+            media_type="document",
+            media_url="https://bedolaga/media/exact.bin",
+            filename="exact.bin",
+            file_size=50 * 1024 * 1024,
+        )
+        assert await sender.send_ticket_media(100, media_exact) == 705
+
+        media_unknown = TicketMedia(
+            media_type="document",
+            media_url="https://bedolaga/media/unknown.bin",
+            filename="unknown.bin",
+            file_size=None,
+        )
+        assert await sender.send_ticket_media(100, media_unknown) == 705
+
+    @pytest.mark.asyncio
+    async def test_returns_none_and_swallows_telegram_exception(self) -> None:
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock(side_effect=RuntimeError("telegram is down"))
+
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/photo.jpg",
+            filename="photo.jpg",
+        )
+
+        result = await sender.send_ticket_media(100, media)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_message_has_no_message_id(self) -> None:
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock(return_value=object())
+
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/photo.jpg",
+            filename="photo.jpg",
+        )
+
+        result = await sender.send_ticket_media(100, media)
+        assert result is None

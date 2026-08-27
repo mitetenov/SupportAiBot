@@ -5,17 +5,34 @@ import binascii
 import logging
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BufferedInputFile, FSInputFile
+from aiogram.types import BufferedInputFile, FSInputFile, URLInputFile
 
+from app.bedolaga.types import TicketMedia
 from app.bot.formatting import markdown_to_telegram_html, split_telegram_html, strip_html_tags
 
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_LENGTH = 4096
+MAX_TELEGRAM_MEDIA_BYTES: int = 50 * 1024 * 1024
+TICKET_MEDIA_DOWNLOAD_TIMEOUT_SECONDS: int = 120
+
+
+def _ticket_media_method(media: TicketMedia) -> Literal["photo", "video", "document"]:
+    """Select the Telegram Bot API method for streaming ticket media."""
+    if media.media_type == "photo":
+        return "photo"
+    if media.media_type in ("video", "video_note"):
+        if (
+            media.mime_type == "video/mp4"
+            or media.filename.lower().endswith(".mp4")
+            or media.mime_type is None
+        ):
+            return "video"
+    return "document"
 
 
 def _is_entity_parse_error(exc: Exception) -> bool:
@@ -28,6 +45,7 @@ def _is_entity_parse_error(exc: Exception) -> bool:
 
 
 class TelegramMessageSender:
+
     """Every outbound message goes through here.
 
     Two things callers must not have to think about:
@@ -206,7 +224,75 @@ class TelegramMessageSender:
             return None
         return getattr(result, "message_id", None)
 
+    async def send_ticket_media(
+        self,
+        chat_id: int,
+        media: TicketMedia,
+        message_thread_id: int | None = None,
+        caption: str | None = None,
+    ) -> int | None:
+        """Stream ticket media directly to Telegram via URLInputFile."""
+        if media.file_size is not None and media.file_size > MAX_TELEGRAM_MEDIA_BYTES:
+            logger.warning(
+                "Rejecting oversized ticket media %s (%d bytes, limit %d bytes)",
+                media.filename,
+                media.file_size,
+                MAX_TELEGRAM_MEDIA_BYTES,
+            )
+            return None
+
+        def _create_input_file() -> URLInputFile:
+            return URLInputFile(
+                media.media_url,
+                headers=dict(media.download_headers),
+                filename=media.filename,
+                timeout=TICKET_MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
+            )
+
+        method = _ticket_media_method(media)
+        kwargs: dict[str, Any] = {"chat_id": chat_id}
+        if message_thread_id is not None:
+            kwargs["message_thread_id"] = message_thread_id
+        if caption:
+            kwargs["caption"] = caption
+
+        try:
+            if method == "photo":
+                result = await self.bot.send_photo(photo=_create_input_file(), **kwargs)
+            elif method == "video":
+                try:
+                    result = await self.bot.send_video(
+                        video=_create_input_file(),
+                        supports_streaming=True,
+                        **kwargs,
+                    )
+                except TelegramBadRequest as e:
+                    logger.warning(
+                        "Telegram rejected video %s for chat %s (%s), falling back to send_document",
+                        media.filename,
+                        chat_id,
+                        e,
+                    )
+                    result = await self.bot.send_document(
+                        document=_create_input_file(),
+                        **kwargs,
+                    )
+            else:
+                result = await self.bot.send_document(document=_create_input_file(), **kwargs)
+
+            return getattr(result, "message_id", None)
+        except Exception as e:
+            logger.warning(
+                "Failed to send ticket media %s (type %s) to %s: %s",
+                media.filename,
+                media.media_type,
+                chat_id,
+                e,
+            )
+            return None
+
     def _remember_file_id(self, key: str, result: Any) -> None:
+
         """Keep the file_id Telegram assigned to a freshly uploaded picture."""
         sizes = getattr(result, "photo", None) or []
         file_id = getattr(sizes[-1], "file_id", None) if sizes else None
