@@ -94,6 +94,52 @@ class SupportGroupForwarder:
         await self._set_active_ticket(user_id, topic_id, ticket_id)
         return topic_id
 
+    async def forward_ticket_media(
+        self,
+        user_chat_id: int,
+        user: Any,
+        ticket_id: int,
+        ticket_media: TicketMedia | None = None,
+        media_fetch_failed: bool = False,
+    ) -> int | None:
+        """Stream a ticket attachment into the operator topic, or report failure.
+
+        Returns the topic_id if resolved, or None if no topic could be found or created.
+        """
+        user_id = getattr(user, "id", user_chat_id)
+        user_name = self.resolve_user_name(user)
+        topic_id = await self.topic_manager.resolve_topic_id(user_id, user_name)
+
+        if topic_id is None:
+            logger.warning(
+                "Cannot forward ticket media to support group: no topic for user %s", user_id
+            )
+            return None
+
+        await self._set_active_ticket(user_id, topic_id, ticket_id)
+
+        if media_fetch_failed or ticket_media is None:
+            await self.sender.send_to_topic(
+                self.support_group_chat_id,
+                topic_id,
+                get_message("bedolaga.media.forward.failed", ticket_id),
+            )
+            return topic_id
+
+        msg_id = await self.sender.send_ticket_media(
+            chat_id=self.support_group_chat_id,
+            media=ticket_media,
+            message_thread_id=topic_id,
+            caption=get_message("bedolaga.media.caption", ticket_id),
+        )
+        if msg_id is None:
+            await self.sender.send_to_topic(
+                self.support_group_chat_id,
+                topic_id,
+                get_message("bedolaga.media.forward.failed", ticket_id),
+            )
+        return topic_id
+
     async def _forward_ticket_media(
         self,
         topic_id: int,

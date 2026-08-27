@@ -155,3 +155,39 @@ class TestRecordHumanReply:
         merged = db.session_obj.merge.await_args.args[0]
         assert merged.last_human_reply_message_id == 108
         assert merged.last_human_reply_at is not None
+
+
+class TestRecordMirroredMedia:
+    """Recording media forwarding to operator topic."""
+
+    async def test_fresh_ticket_record_mirrored_media(self) -> None:
+        db = _FakeDbManager(row=None)
+        await TicketStateStore(db).record_mirrored_media(17, 100)
+        merged = db.session_obj.merge.await_args.args[0]
+        assert isinstance(merged, BedolagaTicketState)
+        assert merged.ticket_id == 17
+        assert merged.last_mirrored_media_message_id == 100
+
+    async def test_existing_ticket_advances_media_id(self) -> None:
+        existing = BedolagaTicketState(
+            ticket_id=17,
+            last_answered_message_id=100,
+            last_mirrored_media_message_id=90,
+        )
+        db = _FakeDbManager(row=existing)
+        await TicketStateStore(db).record_mirrored_media(17, 105)
+        merged = db.session_obj.merge.await_args.args[0]
+        assert merged.last_mirrored_media_message_id == 105
+
+    async def test_media_already_mirrored_helper(self) -> None:
+        db = _FakeDbManager(
+            row=BedolagaTicketState(
+                ticket_id=17,
+                last_answered_message_id=0,
+                last_mirrored_media_message_id=100,
+            )
+        )
+        progress = await TicketStateStore(db).progress(17)
+        assert progress.media_already_mirrored(100) is True
+        assert progress.media_already_mirrored(99) is True
+        assert progress.media_already_mirrored(101) is False

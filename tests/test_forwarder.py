@@ -429,3 +429,69 @@ async def test_direct_turn_clears_active_ticket_and_does_not_call_media(mock_db)
     )
 
     assert mock_db.topic_mappings[1].active_ticket_id is None
+
+
+@pytest.mark.asyncio
+async def test_forward_ticket_media_streams_file(mock_db):
+    bot = MagicMock()
+    bot.send_document = AsyncMock(return_value=MagicMock(message_id=501))
+
+    topic_manager = MagicMock()
+    topic_manager.resolve_topic_id = AsyncMock(return_value=42)
+    mock_db.topic_mappings[1] = TopicMapping(user_id=1, topic_id=42, user_name="johndoe")
+
+    forwarder = SupportGroupForwarder(
+        sender=TelegramMessageSender(bot),
+        topic_manager=topic_manager,
+        db_manager=mock_db,
+        support_group_chat_id=-100123,
+    )
+
+    media = TicketMedia(
+        media_type="document",
+        media_url="https://bedolaga/media/test.pdf",
+        filename="test.pdf",
+    )
+
+    topic_id = await forwarder.forward_ticket_media(
+        user_chat_id=1,
+        user=DummyUser(1, username="johndoe"),
+        ticket_id=17,
+        ticket_media=media,
+    )
+
+    assert topic_id == 42
+    assert mock_db.topic_mappings[1].active_ticket_id == 17
+    bot.send_document.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_forward_ticket_media_warns_on_descriptor_failure(mock_db):
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+
+    topic_manager = MagicMock()
+    topic_manager.resolve_topic_id = AsyncMock(return_value=42)
+    mock_db.topic_mappings[1] = TopicMapping(user_id=1, topic_id=42, user_name="johndoe")
+
+    forwarder = SupportGroupForwarder(
+        sender=TelegramMessageSender(bot),
+        topic_manager=topic_manager,
+        db_manager=mock_db,
+        support_group_chat_id=-100123,
+    )
+
+    topic_id = await forwarder.forward_ticket_media(
+        user_chat_id=1,
+        user=DummyUser(1, username="johndoe"),
+        ticket_id=17,
+        ticket_media=None,
+        media_fetch_failed=True,
+    )
+
+    assert topic_id == 42
+    assert mock_db.topic_mappings[1].active_ticket_id == 17
+    bot.send_message.assert_awaited_once()
+    msg = bot.send_message.await_args.kwargs["text"]
+    assert "Не удалось переслать вложение" in msg
+    assert "#17" in msg

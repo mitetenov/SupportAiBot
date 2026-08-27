@@ -3,13 +3,16 @@
 import base64
 import binascii
 import logging
-from collections.abc import Sequence
+import urllib.parse
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
 from aiogram import Bot
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BufferedInputFile, FSInputFile, URLInputFile
+from aiogram.types import BufferedInputFile, FSInputFile, InputFile
+from aiohttp import ClientTimeout
 
 from app.bedolaga.types import TicketMedia
 from app.bot.formatting import markdown_to_telegram_html, split_telegram_html, strip_html_tags
@@ -19,6 +22,74 @@ logger = logging.getLogger(__name__)
 MAX_MESSAGE_LENGTH = 4096
 MAX_TELEGRAM_MEDIA_BYTES: int = 50 * 1024 * 1024
 TICKET_MEDIA_DOWNLOAD_TIMEOUT_SECONDS: int = 120
+
+
+class SafeURLInputFile(InputFile):
+    """Streams content from a URL to Telegram Bot API without leaking auth headers on redirect.
+
+    Prevents leaking credentials (such as X-API-Key) if the remote endpoint redirects to
+    a different origin (e.g. S3 bucket, CDN, or third-party host).
+    """
+
+    def __init__(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        filename: str | None = None,
+        chunk_size: int = 64 * 1024,
+        timeout: int = 120,
+        max_redirects: int = 5,
+    ) -> None:
+        super().__init__(filename=filename, chunk_size=chunk_size)
+        self.url = url
+        self.headers = dict(headers) if headers else {}
+        self.timeout = timeout
+        self.max_redirects = max_redirects
+
+    async def read(self, bot: Bot) -> AsyncGenerator[bytes]:
+        current_url = self.url
+        initial_parsed = urllib.parse.urlparse(self.url)
+        initial_port = initial_parsed.port or (443 if initial_parsed.scheme == "https" else 80)
+
+        for _ in range(self.max_redirects + 1):
+            current_parsed = urllib.parse.urlparse(current_url)
+            current_port = current_parsed.port or (443 if current_parsed.scheme == "https" else 80)
+
+            is_same_origin = (
+                current_parsed.scheme == initial_parsed.scheme
+                and current_parsed.hostname == initial_parsed.hostname
+                and current_port == initial_port
+            )
+            req_headers = dict(self.headers) if is_same_origin else {}
+
+            client_timeout = ClientTimeout(total=self.timeout)
+            session: Any
+            if isinstance(bot.session, AiohttpSession):
+                session = await bot.session.create_session()
+            else:
+                session = bot.session
+
+            async with session.get(
+                current_url,
+                headers=req_headers,
+                allow_redirects=False,
+                timeout=client_timeout,
+            ) as resp:
+                if resp.status in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("Location")
+                    if not location:
+                        raise RuntimeError(f"Redirect {resp.status} without Location header")
+                    current_url = urllib.parse.urljoin(current_url, location)
+                    continue
+
+                if resp.status != 200:
+                    raise RuntimeError(f"HTTP {resp.status} downloading {current_url}")
+
+                async for chunk in resp.content.iter_chunked(self.chunk_size):
+                    yield chunk
+                return
+
+        raise RuntimeError(f"Too many redirects ({self.max_redirects}) for {self.url}")
 
 
 def _ticket_media_method(media: TicketMedia) -> Literal["photo", "video", "document"]:
@@ -240,8 +311,8 @@ class TelegramMessageSender:
             )
             return None
 
-        def _create_input_file() -> URLInputFile:
-            return URLInputFile(
+        def _create_input_file() -> SafeURLInputFile:
+            return SafeURLInputFile(
                 media.media_url,
                 headers=dict(media.download_headers),
                 filename=media.filename,

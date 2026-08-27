@@ -1,14 +1,13 @@
-"""Main aiogram Router: user text/photos/commands, support topic forwarding, and reaction sync."""
+from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiogram import F, Router
 from aiogram.types import Message, MessageReactionUpdated
 from sqlalchemy import select
 
-from app.bedolaga.relay import TicketOperatorRelay
 from app.bot.buffer import BufferedMessage, UserMessageBuffer
 from app.bot.command_handler import SupportCommandHandler
 from app.bot.conversation_state import ConversationState
@@ -23,6 +22,10 @@ from app.rag.knowledge_gaps import KnowledgeGapService
 from app.storage.chat_history import ChatHistoryService
 from app.storage.database import DatabaseSessionManager
 from app.storage.models import MessageMapping, TopicMapping, User
+
+if TYPE_CHECKING:
+    from app.bedolaga.relay import TicketOperatorRelay
+
 
 logger = logging.getLogger(__name__)
 

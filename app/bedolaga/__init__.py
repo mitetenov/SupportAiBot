@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from app.bedolaga.relay import TicketOperatorRelay
 from app.bot.maintenance import MaintenanceJob
 from app.config import Settings, reveal
 
@@ -14,7 +15,6 @@ if TYPE_CHECKING:
 
     from app.bedolaga.pipeline import TicketAnswerer
     from app.bedolaga.poller import TicketPoller
-    from app.bedolaga.relay import TicketOperatorRelay
     from app.bedolaga.webhook import BedolagaWebhookEndpoint
     from app.bot.admin_notifier import AdminNotifier
     from app.bot.conversation_state import ConversationState
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["TicketSupport", "create_ticket_support"]
+__all__ = ["TicketOperatorRelay", "TicketSupport", "create_ticket_support"]
 
 
 @dataclass(frozen=True)

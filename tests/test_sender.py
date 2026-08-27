@@ -467,3 +467,192 @@ class TestSendTicketMedia:
 
         result = await sender.send_ticket_media(100, media)
         assert result is None
+
+
+class TestSafeURLInputFile:
+    """Validate that SafeURLInputFile safely streams data without leaking auth headers."""
+
+    class _FakeContent:
+        def __init__(self, data: bytes) -> None:
+            self.data = data
+
+        async def iter_chunked(self, chunk_size: int):
+            for i in range(0, len(self.data), chunk_size):
+                yield self.data[i : i + chunk_size]
+
+    class _FakeResponse:
+        def __init__(
+            self, status: int, headers: dict[str, str] | None = None, body: bytes = b""
+        ) -> None:
+            self.status = status
+            self.headers = headers or {}
+            self.content = TestSafeURLInputFile._FakeContent(body)
+            self.released = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            self.released = True
+
+    @pytest.mark.asyncio
+    async def test_streams_chunks_on_200_same_origin(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        fake_resp = self._FakeResponse(200, body=b"hello stream")
+        bot.session.get = MagicMock(return_value=fake_resp)
+
+        input_file = SafeURLInputFile(
+            url="https://bedolaga.local:8080/media/doc.pdf",
+            headers={"X-API-Key": "secret"},
+            filename="doc.pdf",
+            chunk_size=5,
+        )
+
+        chunks = [c async for c in input_file.read(bot)]
+        assert b"".join(chunks) == b"hello stream"
+        assert len(chunks) == 3
+        assert fake_resp.released is True
+
+        bot.session.get.assert_called_once()
+        args, kwargs = bot.session.get.call_args
+        assert args[0] == "https://bedolaga.local:8080/media/doc.pdf"
+        assert kwargs["headers"] == {"X-API-Key": "secret"}
+        assert kwargs["allow_redirects"] is False
+
+    @pytest.mark.asyncio
+    async def test_preserves_headers_on_same_origin_redirect(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp1 = self._FakeResponse(302, headers={"Location": "/media/real-doc.pdf"})
+        resp2 = self._FakeResponse(200, body=b"data")
+        bot.session.get = MagicMock(side_effect=[resp1, resp2])
+
+        input_file = SafeURLInputFile(
+            url="https://bedolaga.local:8080/media/doc.pdf",
+            headers={"X-API-Key": "secret"},
+        )
+
+        chunks = [c async for c in input_file.read(bot)]
+        assert b"".join(chunks) == b"data"
+        assert resp1.released is True
+        assert resp2.released is True
+
+        assert bot.session.get.call_count == 2
+        call1_kwargs = bot.session.get.call_args_list[0].kwargs
+        call2_args, call2_kwargs = bot.session.get.call_args_list[1]
+
+        assert call1_kwargs["headers"] == {"X-API-Key": "secret"}
+        assert call2_args[0] == "https://bedolaga.local:8080/media/real-doc.pdf"
+        assert call2_kwargs["headers"] == {"X-API-Key": "secret"}
+
+    @pytest.mark.asyncio
+    async def test_strips_headers_on_cross_origin_redirect(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp1 = self._FakeResponse(
+            302, headers={"Location": "https://s3.amazonaws.com/bucket/doc.pdf"}
+        )
+        resp2 = self._FakeResponse(200, body=b"s3 data")
+        bot.session.get = MagicMock(side_effect=[resp1, resp2])
+
+        input_file = SafeURLInputFile(
+            url="https://bedolaga.local:8080/media/doc.pdf",
+            headers={"X-API-Key": "secret"},
+        )
+
+        chunks = [c async for c in input_file.read(bot)]
+        assert b"".join(chunks) == b"s3 data"
+
+        assert bot.session.get.call_count == 2
+        call1_kwargs = bot.session.get.call_args_list[0].kwargs
+        call2_args, call2_kwargs = bot.session.get.call_args_list[1]
+
+        assert call1_kwargs["headers"] == {"X-API-Key": "secret"}
+        assert call2_args[0] == "https://s3.amazonaws.com/bucket/doc.pdf"
+        assert call2_kwargs["headers"] == {}  # Stripped! No leak!
+
+    @pytest.mark.asyncio
+    async def test_strips_headers_on_scheme_downgrade(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp1 = self._FakeResponse(
+            302, headers={"Location": "http://bedolaga.local:8080/media/doc.pdf"}
+        )
+        resp2 = self._FakeResponse(200, body=b"http data")
+        bot.session.get = MagicMock(side_effect=[resp1, resp2])
+
+        input_file = SafeURLInputFile(
+            url="https://bedolaga.local:8080/media/doc.pdf",
+            headers={"X-API-Key": "secret"},
+        )
+
+        chunks = [c async for c in input_file.read(bot)]
+        assert b"".join(chunks) == b"http data"
+
+        call2_kwargs = bot.session.get.call_args_list[1].kwargs
+        assert call2_kwargs["headers"] == {}  # Stripped on downgrade!
+
+    @pytest.mark.asyncio
+    async def test_strips_headers_on_different_port(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp1 = self._FakeResponse(
+            302, headers={"Location": "https://bedolaga.local:9090/media/doc.pdf"}
+        )
+        resp2 = self._FakeResponse(200, body=b"other port data")
+        bot.session.get = MagicMock(side_effect=[resp1, resp2])
+
+        input_file = SafeURLInputFile(
+            url="https://bedolaga.local:8080/media/doc.pdf",
+            headers={"X-API-Key": "secret"},
+        )
+
+        chunks = [c async for c in input_file.read(bot)]
+        assert b"".join(chunks) == b"other port data"
+
+        call2_kwargs = bot.session.get.call_args_list[1].kwargs
+        assert call2_kwargs["headers"] == {}
+
+    @pytest.mark.asyncio
+    async def test_raises_on_non_200(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp = self._FakeResponse(404)
+        bot.session.get = MagicMock(return_value=resp)
+
+        input_file = SafeURLInputFile(url="https://bedolaga.local/media/404.pdf")
+        with pytest.raises(RuntimeError, match="HTTP 404 downloading"):
+            _ = [c async for c in input_file.read(bot)]
+        assert resp.released is True
+
+    @pytest.mark.asyncio
+    async def test_raises_on_redirect_without_location(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp = self._FakeResponse(302, headers={})
+        bot.session.get = MagicMock(return_value=resp)
+
+        input_file = SafeURLInputFile(url="https://bedolaga.local/media/test")
+        with pytest.raises(RuntimeError, match="Redirect 302 without Location header"):
+            _ = [c async for c in input_file.read(bot)]
+        assert resp.released is True
+
+    @pytest.mark.asyncio
+    async def test_raises_on_exceeding_max_redirects(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resps = [self._FakeResponse(302, headers={"Location": f"/media/{i}"}) for i in range(5)]
+        bot.session.get = MagicMock(side_effect=resps)
+
+        input_file = SafeURLInputFile(url="https://bedolaga.local/media/0", max_redirects=2)
+        with pytest.raises(RuntimeError, match="Too many redirects"):
+            _ = [c async for c in input_file.read(bot)]

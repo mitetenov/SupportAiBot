@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import httpx
 from aiohttp import web
 
-from app.bedolaga import create_ticket_support
+from app.bedolaga import TicketOperatorRelay, TicketSupport, create_ticket_support
 from app.config import Settings
 
 
@@ -102,3 +102,7 @@ class TestCreateTicketSupport:
         job = support.maintenance_job()
         assert job.interval_seconds == 30
         assert "bedolaga" in job.name
+
+    def test_exports_relay_and_support_classes(self) -> None:
+        assert TicketOperatorRelay is not None
+        assert TicketSupport is not None

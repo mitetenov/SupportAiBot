@@ -191,6 +191,8 @@ class TicketAnswerer:
             )
             return
 
+        media_map = await self.mirror_pending_media(ticket, user_key, progress)
+
         question = ticket.question_for(last)
 
         if await self.a_human_is_on_it(ticket, progress, user_key):
@@ -214,18 +216,26 @@ class TicketAnswerer:
             logger.info("Bedolaga ticket %d is rate limited for user %d", ticket.id, user_key)
             return
 
-        await self.answer_now(ticket, last, user_key, question)
+        last_media = media_map.get(last.id) if last.id in media_map else None
+        await self.answer_now(ticket, last, user_key, question, media=last_media)
 
     async def answer_now(
-        self, ticket: Ticket, last: TicketMessage, user_key: int, question: str
+        self,
+        ticket: Ticket,
+        last: TicketMessage,
+        user_key: int,
+        question: str,
+        media: TicketMedia | None = None,
     ) -> None:
         """Ask the model about this ticket and write the answer back.
 
         Re-reads the ticket immediately before posting reply to prevent stale
         writes when user sends a new message or operator intervenes during LLM generation.
         """
-        media = await self.media_for(ticket, last)
+        if media is None and last.has_media:
+            media = await self.media_for(ticket, last)
         attachment = await self.image_attachment_for(media)
+
         if not question.strip() and attachment is None:
             # There is genuinely nothing to ask about: no text anywhere in the
             # ticket and no picture the model can read. Sending an empty prompt
@@ -233,7 +243,7 @@ class TicketAnswerer:
             # it to the user as support's answer. The fixed hand-over line is
             # recorded against this empty turn; a later message has a larger
             # id and is still the bot's to take.
-            await self.hand_over(ticket, last, user_key, media=media)
+            await self.hand_over(ticket, last, user_key)
             return
 
         reply = await self.ask_model(question, user_key, attachment)
@@ -319,7 +329,6 @@ class TicketAnswerer:
             get_message("bedolaga.mirror", ticket.id, ticket.title, question, truncated_answer),
             escalate=escalate,
             source_message=last,
-            media=media,
         )
 
         if question.strip():
@@ -464,12 +473,48 @@ class TicketAnswerer:
             attachment.mime_type,
         )
 
+    async def mirror_pending_media(
+        self,
+        ticket: Ticket,
+        user_key: int,
+        progress: TicketProgress,
+    ) -> dict[int, TicketMedia | None]:
+        """Ensure all un-mirrored user attachments in this ticket reach the operator topic."""
+        unmirrored = [
+            msg
+            for msg in ticket.messages
+            if not msg.is_from_admin
+            and msg.has_media
+            and not progress.media_already_mirrored(msg.id)
+        ]
+        media_by_msg: dict[int, TicketMedia | None] = {}
+        for msg in unmirrored:
+            try:
+                media = await self.media_for(ticket, msg)
+                media_by_msg[msg.id] = media
+                media_fetch_failed = media is None
+                await self.forwarder.forward_ticket_media(
+                    user_chat_id=user_key,
+                    user=self.stand_in(ticket, user_key),
+                    ticket_id=ticket.id,
+                    ticket_media=media,
+                    media_fetch_failed=media_fetch_failed,
+                )
+                await self.state.record_mirrored_media(ticket.id, msg.id)
+            except Exception as e:
+                logger.warning(
+                    "Bedolaga ticket %d: could not mirror media for message %d: %s",
+                    ticket.id,
+                    msg.id,
+                    e,
+                )
+        return media_by_msg
+
     async def hand_over(
         self,
         ticket: Ticket,
         last: TicketMessage,
         user_key: int,
-        media: TicketMedia | None = None,
     ) -> None:
         """Answer a ticket with nothing in it by asking for words, and call a human.
 
@@ -502,7 +547,6 @@ class TicketAnswerer:
             get_message("bedolaga.nothing.mirror", ticket.id, ticket.title),
             escalate=True,
             source_message=last,
-            media=media,
         )
 
     async def mirror(
@@ -512,7 +556,6 @@ class TicketAnswerer:
         text: str,
         escalate: bool,
         source_message: TicketMessage | None = None,
-        media: TicketMedia | None = None,
     ) -> None:
         """Put this ticket turn into the user's forum topic.
 
@@ -521,10 +564,6 @@ class TicketAnswerer:
         their reply. Every failure here stays here.
         """
         try:
-            mirrored_media = media
-            if mirrored_media is None and source_message is not None and source_message.has_media:
-                mirrored_media = await self.media_for(ticket, source_message)
-
             await self.forwarder.forward_to_support(
                 user_chat_id=user_key,
                 user_message_ids=None,
@@ -532,7 +571,6 @@ class TicketAnswerer:
                 bot_response=text,
                 needs_escalation=escalate,
                 ticket_id=ticket.id,
-                ticket_media=mirrored_media,
             )
         except Exception as e:
             logger.warning("Could not mirror Bedolaga ticket %d to the topic: %s", ticket.id, e)

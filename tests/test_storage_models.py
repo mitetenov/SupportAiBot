@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from app.storage.database import DatabaseSessionManager
 from app.storage.models import (
+    BedolagaTicketState,
     ChatMessage,
     Faq,
     FaqMetadata,
@@ -255,6 +256,18 @@ class TestStorageModelsSchema:
         assert "key" in meta_cols
         assert meta_cols["key"].primary_key is True
         assert "val" in meta_cols
+
+    def test_bedolaga_ticket_state_model_schema(self) -> None:
+        assert BedolagaTicketState.__tablename__ == "bedolaga_ticket_state"
+        cols = {c.name: c for c in inspect(BedolagaTicketState).columns}
+        assert "ticket_id" in cols
+        assert cols["ticket_id"].primary_key is True
+        assert "last_answered_message_id" in cols
+        assert "last_bot_reply_message_id" in cols
+        assert "last_human_reply_message_id" in cols
+        assert "last_mirrored_media_message_id" in cols
+        assert "last_human_reply_at" in cols
+        assert "updated_at" in cols
 
 
 class TestDatabaseSessionManager:

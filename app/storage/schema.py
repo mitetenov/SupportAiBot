@@ -76,7 +76,9 @@ UTC_TIMESTAMP_COLUMNS: tuple[tuple[str, str], ...] = (
 BEDOLAGA_STATE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("bedolaga_ticket_state", "last_bot_reply_message_id"),
     ("bedolaga_ticket_state", "last_human_reply_message_id"),
+    ("bedolaga_ticket_state", "last_mirrored_media_message_id"),
 )
+
 
 # Unlike the legacy timestamp columns above, this field means "no human reply"
 # when it is NULL. Giving old rows DEFAULT now() would manufacture operator
