@@ -1,30 +1,32 @@
-"""Answering Bedolaga support tickets with the same model that answers Telegram."""
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import httpx
 from aiohttp import web
 
-from app.bedolaga.client import BedolagaClient
-from app.bedolaga.pipeline import TicketAnswerer
-from app.bedolaga.poller import TicketPoller
-from app.bedolaga.relay import TicketOperatorRelay
-from app.bedolaga.state import TicketStateStore
-from app.bedolaga.webhook import BedolagaWebhookEndpoint
-from app.bot.admin_notifier import AdminNotifier
-from app.bot.conversation_state import ConversationState
-from app.bot.forwarder import SupportGroupForwarder
 from app.bot.maintenance import MaintenanceJob
-from app.bot.rate_limiter import UserRateLimiter
 from app.config import Settings, reveal
-from app.llm.base import LlmClient
-from app.rag.knowledge_gaps import KnowledgeGapService
-from app.storage.database import DatabaseSessionManager
+
+if TYPE_CHECKING:
+    import httpx
+
+    from app.bedolaga.pipeline import TicketAnswerer
+    from app.bedolaga.poller import TicketPoller
+    from app.bedolaga.relay import TicketOperatorRelay
+    from app.bedolaga.webhook import BedolagaWebhookEndpoint
+    from app.bot.admin_notifier import AdminNotifier
+    from app.bot.conversation_state import ConversationState
+    from app.bot.forwarder import SupportGroupForwarder
+    from app.bot.rate_limiter import UserRateLimiter
+    from app.llm.base import LlmClient
+    from app.rag.knowledge_gaps import KnowledgeGapService
+    from app.storage.database import DatabaseSessionManager
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["TicketOperatorRelay", "TicketSupport", "create_ticket_support"]
+__all__ = ["TicketSupport", "create_ticket_support"]
 
 
 @dataclass(frozen=True)
@@ -66,12 +68,20 @@ def create_ticket_support(
     if not settings.bedolaga_enabled:
         return None
 
+    from app.bedolaga.client import BedolagaClient
+    from app.bedolaga.pipeline import TicketAnswerer
+    from app.bedolaga.poller import TicketPoller
+    from app.bedolaga.relay import TicketOperatorRelay
+    from app.bedolaga.state import TicketStateStore
+    from app.bedolaga.webhook import BedolagaWebhookEndpoint
+
     client = BedolagaClient(
         base_url=settings.bedolaga_api_url,
         api_key=reveal(settings.bedolaga_api_key),
         http_client=http_client,
     )
     state = TicketStateStore(db_manager)
+
     answerer = TicketAnswerer(
         client=client,
         llm_client=llm_client,

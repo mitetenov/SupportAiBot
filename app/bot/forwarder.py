@@ -116,7 +116,6 @@ class SupportGroupForwarder:
                 get_message("bedolaga.media.forward.failed", ticket_id),
             )
 
-
     async def _set_active_ticket(
         self,
         user_id: int,

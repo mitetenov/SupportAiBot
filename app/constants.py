@@ -121,7 +121,6 @@ MESSAGES: dict[str, str] = {
     "bedolaga.media.caption": "🎫 Вложение из тикета #{0}",
     "bedolaga.media.forward.failed": "⚠️ Не удалось переслать вложение из тикета #{0}. Откройте его в кабинете Bedolaga.",
     # Admin notifications
-
     "admin.error.prefix": "[ОШИБКА БОТА]",
     "admin.error.suppressed": "(повторов подавлено с прошлого раза: {0})",
     "admin.error.details": "Детали ошибки:",

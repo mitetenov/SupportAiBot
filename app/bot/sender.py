@@ -45,7 +45,6 @@ def _is_entity_parse_error(exc: Exception) -> bool:
 
 
 class TelegramMessageSender:
-
     """Every outbound message goes through here.
 
     Two things callers must not have to think about:
@@ -292,7 +291,6 @@ class TelegramMessageSender:
             return None
 
     def _remember_file_id(self, key: str, result: Any) -> None:
-
         """Keep the file_id Telegram assigned to a freshly uploaded picture."""
         sizes = getattr(result, "photo", None) or []
         file_id = getattr(sizes[-1], "file_id", None) if sizes else None

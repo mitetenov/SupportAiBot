@@ -29,7 +29,6 @@ class ImageAttachment:
     mime_type: str
 
 
-
 @dataclass(frozen=True)
 class TelegramIdLookup:
     """What the panel said when asked for the Telegram id behind a panel user.

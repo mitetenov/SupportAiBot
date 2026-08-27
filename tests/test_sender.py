@@ -239,7 +239,6 @@ class TestSendPhoto:
 
 
 class TestSendTicketMedia:
-
     """Streaming ticket media from Bedolaga to Telegram operator topics."""
 
     @pytest.mark.asyncio

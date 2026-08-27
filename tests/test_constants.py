@@ -75,7 +75,6 @@ class TestMessages:
             assert MESSAGES[key].strip() != ""
 
 
-
 class TestSupportPrompt:
     """Test SupportPrompt template and contextual formatting."""
 

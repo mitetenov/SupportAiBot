@@ -322,7 +322,6 @@ class TicketAnswerer:
             media=media,
         )
 
-
         if question.strip():
             await self.knowledge_gap_service.evaluate(
                 question,
@@ -523,11 +522,7 @@ class TicketAnswerer:
         """
         try:
             mirrored_media = media
-            if (
-                mirrored_media is None
-                and source_message is not None
-                and source_message.has_media
-            ):
+            if mirrored_media is None and source_message is not None and source_message.has_media:
                 mirrored_media = await self.media_for(ticket, source_message)
 
             await self.forwarder.forward_to_support(
@@ -541,7 +536,6 @@ class TicketAnswerer:
             )
         except Exception as e:
             logger.warning("Could not mirror Bedolaga ticket %d to the topic: %s", ticket.id, e)
-
 
     @staticmethod
     def stand_in(ticket: Ticket, user_key: int) -> TicketUser:

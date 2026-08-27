@@ -429,4 +429,3 @@ async def test_direct_turn_clears_active_ticket_and_does_not_call_media(mock_db)
     )
 
     assert mock_db.topic_mappings[1].active_ticket_id is None
-

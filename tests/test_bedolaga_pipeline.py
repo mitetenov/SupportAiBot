@@ -71,13 +71,11 @@ def _answerer(
     client.describe_media = AsyncMock(return_value=None)
     client.download_image = AsyncMock(return_value=None)
 
-
     llm_client = MagicMock()
     llm_client.chat = AsyncMock(
         return_value=reply if reply is not None else LlmReply(text="Проверьте подписку")
     )
     llm_client.chat_with_image = AsyncMock()
-
 
     state = MagicMock()
     state.progress = AsyncMock(
@@ -603,7 +601,9 @@ class TestScreenshots:
         ticket = _ticket(
             TicketMessage(id=100, text="Помогите", is_from_admin=False),
             TicketMessage(id=101, text="Смотрю", is_from_admin=True),
-            TicketMessage(id=102, text="", is_from_admin=False, has_media=True, media_type="document"),
+            TicketMessage(
+                id=102, text="", is_from_admin=False, has_media=True, media_type="document"
+            ),
             title="Лог",
         )
         answerer, parts = _answerer(
@@ -813,7 +813,6 @@ class TestNothingToAnswer:
         parts["client"].reply.assert_awaited_once_with(
             TICKET_ID, get_message("bedolaga.nothing.to.answer")
         )
-
 
 
 class TestUnresolvedIdentity:

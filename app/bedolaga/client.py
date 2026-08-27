@@ -86,7 +86,6 @@ class UploadedMedia:
 
 
 class BedolagaClient:
-
     """Reads tickets from Bedolaga and answers them under a service API key."""
 
     def __init__(self, base_url: str, api_key: str, http_client: httpx.AsyncClient) -> None:
@@ -456,7 +455,7 @@ class BedolagaClient:
 
         try:
             payload = response.json()
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return None
 
         if not isinstance(payload, dict):
@@ -497,7 +496,7 @@ class BedolagaClient:
                 if parsed_size < 0:
                     return None
                 file_size = parsed_size
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 return None
 
         return TicketMedia(
@@ -558,5 +557,3 @@ class BedolagaClient:
             base64_image=base64.b64encode(content).decode("ascii"),
             mime_type=mime_type.split(";")[0].strip(),
         )
-
-

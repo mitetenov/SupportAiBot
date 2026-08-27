@@ -387,7 +387,10 @@ class TestDescribeMedia:
         assert media.mime_type == "video/mp4"
         assert media.file_size == 2048
         assert media.download_headers == {"X-API-Key": API_KEY}
-        assert http_client.get.await_args.args[0] == "http://bedolaga:8080/tickets/17/messages/100/media"
+        assert (
+            http_client.get.await_args.args[0]
+            == "http://bedolaga:8080/tickets/17/messages/100/media"
+        )
         assert http_client.get.await_args.kwargs["headers"] == {"X-API-Key": API_KEY}
 
     async def test_accepts_filename_alias(self) -> None:
@@ -544,7 +547,10 @@ class TestDownloadImage:
         assert attachment is not None
         assert attachment.base64_image == base64.b64encode(b"my-image-data").decode("ascii")
         assert attachment.mime_type == "image/png"
-        assert http_client.stream.call_args.args[:2] == ("GET", "http://bedolaga:8080/media/photo.jpg")
+        assert http_client.stream.call_args.args[:2] == (
+            "GET",
+            "http://bedolaga:8080/media/photo.jpg",
+        )
         assert http_client.stream.call_args.kwargs["headers"] == {"X-API-Key": API_KEY}
 
     async def test_strips_parameters_from_content_type(self) -> None:
@@ -630,5 +636,3 @@ class TestDownloadImage:
         await client.download_image(media)
         assert media.filename == "photo.jpg"
         assert media.download_headers == {"X-API-Key": API_KEY}
-
-
