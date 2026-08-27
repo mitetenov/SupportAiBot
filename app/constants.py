@@ -118,8 +118,10 @@ MESSAGES: dict[str, str] = {
     "bedolaga.suppressed": "🎫 Тикет #{0} · {1}\n\nВопрос:\n{2}\n\n(бот молчит: с пользователем работает оператор)",
     "bedolaga.error.context": "Не удалось обработать тикет Bedolaga #{0}",
     "bedolaga.reply.failed": "Не удалось отправить ответ в тикет Bedolaga #{0}",
-    "bedolaga.photo.caption": "🎫 Фото из тикета #{0}",
+    "bedolaga.media.caption": "🎫 Вложение из тикета #{0}",
+    "bedolaga.media.forward.failed": "⚠️ Не удалось переслать вложение из тикета #{0}. Откройте его в кабинете Bedolaga.",
     # Admin notifications
+
     "admin.error.prefix": "[ОШИБКА БОТА]",
     "admin.error.suppressed": "(повторов подавлено с прошлого раза: {0})",
     "admin.error.details": "Детали ошибки:",

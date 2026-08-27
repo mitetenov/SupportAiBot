@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.bedolaga.types import TicketMedia
 from app.bot.forwarder import SupportGroupForwarder
 from app.bot.sender import TelegramMessageSender
 from app.storage.models import MessageMapping, TopicMapping
@@ -297,11 +298,10 @@ async def test_no_illustration_means_nothing_extra_is_copied(mock_db):
 
 
 @pytest.mark.asyncio
-async def test_ticket_photo_marks_topic_and_a_direct_turn_clears_it(mock_db):
+async def test_ticket_media_forwards_before_text_and_marks_active_ticket(mock_db):
     bot = MagicMock()
     bot.send_message = AsyncMock()
-    bot.send_photo = AsyncMock(return_value=MagicMock(message_id=300))
-    bot.copy_message = AsyncMock(return_value=DummyCopyMessageResult(301))
+    bot.send_document = AsyncMock(return_value=MagicMock(message_id=300))
 
     topic_manager = MagicMock()
     topic_manager.resolve_topic_id = AsyncMock(return_value=42)
@@ -318,6 +318,13 @@ async def test_ticket_photo_marks_topic_and_a_direct_turn_clears_it(mock_db):
         support_group_chat_id=-100123,
     )
 
+    media = TicketMedia(
+        media_type="document",
+        media_url="https://bedolaga/media/client.log",
+        filename="client.log",
+        mime_type="text/plain",
+    )
+
     await forwarder.forward_to_support(
         user_chat_id=1,
         user_message_ids=None,
@@ -325,15 +332,93 @@ async def test_ticket_photo_marks_topic_and_a_direct_turn_clears_it(mock_db):
         bot_response="Тикет",
         needs_escalation=False,
         ticket_id=17,
-        photo_base64="Zm9v",
-        photo_mime_type="image/png",
+        ticket_media=media,
     )
 
     assert mock_db.topic_mappings[1].active_ticket_id == 17
-    photo = bot.send_photo.await_args.kwargs
-    assert photo["chat_id"] == -100123
-    assert photo["message_thread_id"] == 42
-    assert "#17" in photo["caption"]
+    bot.send_document.assert_awaited_once()
+    doc_call = bot.send_document.await_args.kwargs
+    assert doc_call["chat_id"] == -100123
+    assert doc_call["message_thread_id"] == 42
+    assert "#17" in doc_call["caption"]
+    assert doc_call["document"].filename == "client.log"
+
+    bot.send_message.assert_awaited_once()
+    assert "Тикет" in bot.send_message.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_ticket_media_failure_sends_warning_and_preserves_bot_response_and_active_ticket(
+    mock_db,
+):
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    bot.send_document = AsyncMock(side_effect=RuntimeError("send failed"))
+
+    topic_manager = MagicMock()
+    topic_manager.resolve_topic_id = AsyncMock(return_value=42)
+    mock_db.topic_mappings[1] = TopicMapping(
+        user_id=1,
+        topic_id=42,
+        user_name="johndoe",
+    )
+
+    forwarder = SupportGroupForwarder(
+        sender=TelegramMessageSender(bot),
+        topic_manager=topic_manager,
+        db_manager=mock_db,
+        support_group_chat_id=-100123,
+    )
+
+    media = TicketMedia(
+        media_type="document",
+        media_url="https://bedolaga/media/client.log",
+        filename="client.log",
+    )
+
+    await forwarder.forward_to_support(
+        user_chat_id=1,
+        user_message_ids=None,
+        user=DummyUser(1, username="johndoe"),
+        bot_response="Тикет ответ",
+        needs_escalation=False,
+        ticket_id=17,
+        ticket_media=media,
+    )
+
+    # Active ticket is preserved
+    assert mock_db.topic_mappings[1].active_ticket_id == 17
+
+    # Should send exactly 2 messages: 1 warning about failed media, 1 bot response
+    assert bot.send_message.await_count == 2
+    first_msg = bot.send_message.await_args_list[0].kwargs["text"]
+    second_msg = bot.send_message.await_args_list[1].kwargs["text"]
+    assert "Не удалось переслать вложение" in first_msg
+    assert "#17" in first_msg
+    assert "Тикет ответ" in second_msg
+
+
+@pytest.mark.asyncio
+async def test_direct_turn_clears_active_ticket_and_does_not_call_media(mock_db):
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    bot.copy_message = AsyncMock(return_value=DummyCopyMessageResult(301))
+
+    topic_manager = MagicMock()
+    topic_manager.resolve_topic_id = AsyncMock(return_value=42)
+    mock_db.topic_mappings[1] = TopicMapping(
+        user_id=1,
+        topic_id=42,
+        user_name="johndoe",
+        active_ticket_id=17,
+    )
+
+    forwarder = SupportGroupForwarder(
+        sender=TelegramMessageSender(bot),
+        topic_manager=topic_manager,
+        db_manager=mock_db,
+        support_group_chat_id=-100123,
+    )
 
     await forwarder.forward_to_support(
         user_chat_id=1,
@@ -344,3 +429,4 @@ async def test_ticket_photo_marks_topic_and_a_direct_turn_clears_it(mock_db):
     )
 
     assert mock_db.topic_mappings[1].active_ticket_id is None
+

@@ -8,7 +8,14 @@ from unittest.mock import AsyncMock, MagicMock
 from app.bedolaga.client import MAX_REPLY_LENGTH, PostedTicketReply
 from app.bedolaga.pipeline import TicketAnswerer
 from app.bedolaga.state import TicketProgress
-from app.bedolaga.types import TELEGRAM_ID_UNKNOWN, TelegramIdLookup, Ticket, TicketMessage
+from app.bedolaga.types import (
+    TELEGRAM_ID_UNKNOWN,
+    ImageAttachment,
+    TelegramIdLookup,
+    Ticket,
+    TicketMedia,
+    TicketMessage,
+)
 from app.bot.conversation_state import ConversationState
 from app.bot.rate_limiter import UserRateLimiter
 from app.constants import get_message
@@ -61,11 +68,16 @@ def _answerer(
         return_value=PostedTicketReply(message_id=reply_message_id) if reply_ok else None
     )
     client.set_priority = AsyncMock(return_value=True)
+    client.describe_media = AsyncMock(return_value=None)
+    client.download_image = AsyncMock(return_value=None)
+
 
     llm_client = MagicMock()
     llm_client.chat = AsyncMock(
         return_value=reply if reply is not None else LlmReply(text="Проверьте подписку")
     )
+    llm_client.chat_with_image = AsyncMock()
+
 
     state = MagicMock()
     state.progress = AsyncMock(
@@ -367,7 +379,7 @@ class TestKnowledgeGaps:
 
 
 class TestScreenshots:
-    """A ticket is often a screenshot with two words under it."""
+    """A ticket with media attachments: photo, video, or documents."""
 
     def _photo_ticket(self) -> Ticket:
         return _ticket(
@@ -380,11 +392,40 @@ class TestScreenshots:
             )
         )
 
-    async def test_sends_the_screenshot_to_the_model(self) -> None:
-        from app.bedolaga.types import ImageAttachment
+    def _video_ticket(self, text: str = "Вот видео ошибки", title: str = "Не работает") -> Ticket:
+        return _ticket(
+            TicketMessage(
+                id=100,
+                text=text,
+                is_from_admin=False,
+                has_media=True,
+                media_type="video",
+            ),
+            title=title,
+        )
 
+    def _doc_ticket(self, text: str = "Лог ошибки", title: str = "Ошибка") -> Ticket:
+        return _ticket(
+            TicketMessage(
+                id=100,
+                text=text,
+                is_from_admin=False,
+                has_media=True,
+                media_type="document",
+            ),
+            title=title,
+        )
+
+    async def test_sends_the_screenshot_to_the_vision_model(self) -> None:
         answerer, parts = _answerer(ticket=self._photo_ticket())
-        parts["client"].download_media = AsyncMock(
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/pic.png",
+            filename="pic.png",
+            mime_type="image/png",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        parts["client"].download_image = AsyncMock(
             return_value=ImageAttachment(base64_image="Zm9v", mime_type="image/png")
         )
         parts["llm_client"].supports_images = MagicMock(return_value=True)
@@ -399,12 +440,19 @@ class TestScreenshots:
         assert args[2] == "Zm9v"
         assert args[3] == "image/png"
         parts["client"].reply.assert_awaited_once_with(TICKET_ID, "Видно ошибку")
+        kwargs = parts["forwarder"].forward_to_support.await_args.kwargs
+        assert kwargs["ticket_media"] == media
 
     async def test_asks_about_the_picture_when_there_is_no_text(self) -> None:
-        from app.bedolaga.types import ImageAttachment
-
         answerer, parts = _answerer(ticket=self._photo_ticket())
-        parts["client"].download_media = AsyncMock(
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/pic.png",
+            filename="pic.png",
+            mime_type="image/png",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        parts["client"].download_image = AsyncMock(
             return_value=ImageAttachment(base64_image="Zm9v", mime_type="image/png")
         )
         parts["llm_client"].supports_images = MagicMock(return_value=True)
@@ -418,7 +466,14 @@ class TestScreenshots:
 
     async def test_falls_back_to_text_when_the_download_fails(self) -> None:
         answerer, parts = _answerer(ticket=self._photo_ticket())
-        parts["client"].download_media = AsyncMock(return_value=None)
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/pic.png",
+            filename="pic.png",
+            mime_type="image/png",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        parts["client"].download_image = AsyncMock(return_value=None)
         parts["llm_client"].supports_images = MagicMock(return_value=True)
         parts["llm_client"].chat_with_image = AsyncMock()
         answerer.client = parts["client"]
@@ -429,25 +484,192 @@ class TestScreenshots:
         parts["llm_client"].chat_with_image.assert_not_awaited()
         parts["llm_client"].chat.assert_awaited_once()
 
-    async def test_still_mirrors_media_a_text_only_model_cannot_read(self) -> None:
+    async def test_still_mirrors_photo_when_model_is_text_only(self) -> None:
         answerer, parts = _answerer(ticket=self._photo_ticket())
-        from app.bedolaga.types import ImageAttachment
-
-        parts["client"].download_media = AsyncMock(
-            return_value=ImageAttachment(base64_image="Zm9v", mime_type="image/png")
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/pic.png",
+            filename="pic.png",
+            mime_type="image/png",
         )
+        parts["client"].describe_media = AsyncMock(return_value=media)
         parts["llm_client"].supports_images = MagicMock(return_value=False)
         answerer.client = parts["client"]
         answerer.llm_client = parts["llm_client"]
 
         await answerer.handle(TICKET_ID)
 
-        parts["client"].download_media.assert_awaited_once_with(TICKET_ID, 100)
+        parts["client"].download_image.assert_not_awaited()
         parts["llm_client"].chat.assert_awaited_once()
         kwargs = parts["forwarder"].forward_to_support.await_args.kwargs
-        assert kwargs["photo_base64"] == "Zm9v"
-        assert kwargs["photo_mime_type"] == "image/png"
+        assert kwargs["ticket_media"] == media
         assert kwargs["ticket_id"] == TICKET_ID
+
+    async def test_text_and_video_sends_text_to_model_and_streams_video_to_operator(self) -> None:
+        answerer, parts = _answerer(ticket=self._video_ticket())
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/video.mp4",
+            filename="video.mp4",
+            mime_type="video/mp4",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        parts["llm_client"].supports_images = MagicMock(return_value=True)
+        answerer.client = parts["client"]
+        answerer.llm_client = parts["llm_client"]
+
+        await answerer.handle(TICKET_ID)
+
+        # Video is NOT downloaded into ImageAttachment and NOT sent to vision model
+        parts["client"].download_image.assert_not_awaited()
+        parts["llm_client"].chat_with_image.assert_not_awaited()
+        parts["llm_client"].chat.assert_awaited_once()
+        assert "Вот видео ошибки" in parts["llm_client"].chat.await_args.args[0]
+        # But forwarded to operator topic
+        kwargs = parts["forwarder"].forward_to_support.await_args.kwargs
+        assert kwargs["ticket_media"] == media
+
+    async def test_text_and_document_sends_text_to_model_and_passes_file_to_operator(self) -> None:
+        answerer, parts = _answerer(ticket=self._doc_ticket())
+        media = TicketMedia(
+            media_type="document",
+            media_url="https://bedolaga/media/client.log",
+            filename="client.log",
+            mime_type="text/plain",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        parts["llm_client"].supports_images = MagicMock(return_value=True)
+        answerer.client = parts["client"]
+        answerer.llm_client = parts["llm_client"]
+
+        await answerer.handle(TICKET_ID)
+
+        parts["client"].download_image.assert_not_awaited()
+        parts["llm_client"].chat_with_image.assert_not_awaited()
+        parts["llm_client"].chat.assert_awaited_once()
+        assert "Лог ошибки" in parts["llm_client"].chat.await_args.args[0]
+        kwargs = parts["forwarder"].forward_to_support.await_args.kwargs
+        assert kwargs["ticket_media"] == media
+        assert kwargs["ticket_media"].filename == "client.log"
+
+    async def test_empty_video_without_title_hands_over_and_forwards_media(self) -> None:
+        ticket = _ticket(
+            TicketMessage(id=100, text="", is_from_admin=False, has_media=True, media_type="video"),
+            title="",
+        )
+        answerer, parts = _answerer(ticket=ticket)
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/video.mp4",
+            filename="video.mp4",
+            mime_type="video/mp4",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        answerer.client = parts["client"]
+
+        await answerer.handle(TICKET_ID)
+
+        parts["llm_client"].chat.assert_not_awaited()
+        parts["client"].reply.assert_awaited_once_with(
+            TICKET_ID, get_message("bedolaga.nothing.to.answer")
+        )
+        kwargs = parts["forwarder"].forward_to_support.await_args.kwargs
+        assert kwargs["needs_escalation"] is True
+        assert kwargs["ticket_media"] == media
+
+    async def test_empty_video_with_title_answers_by_title_and_forwards_media(self) -> None:
+        ticket = _ticket(
+            TicketMessage(id=100, text="", is_from_admin=False, has_media=True, media_type="video"),
+            title="Не работает VPN",
+        )
+        answerer, parts = _answerer(ticket=ticket)
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/video.mp4",
+            filename="video.mp4",
+            mime_type="video/mp4",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        answerer.client = parts["client"]
+
+        await answerer.handle(TICKET_ID)
+
+        parts["llm_client"].chat.assert_awaited_once()
+        assert "Не работает VPN" in parts["llm_client"].chat.await_args.args[0]
+        kwargs = parts["forwarder"].forward_to_support.await_args.kwargs
+        assert kwargs["ticket_media"] == media
+
+    async def test_human_suppressed_turn_mirrors_video_or_document(self) -> None:
+        ticket = _ticket(
+            TicketMessage(id=100, text="Помогите", is_from_admin=False),
+            TicketMessage(id=101, text="Смотрю", is_from_admin=True),
+            TicketMessage(id=102, text="", is_from_admin=False, has_media=True, media_type="document"),
+            title="Лог",
+        )
+        answerer, parts = _answerer(
+            ticket=ticket,
+            last_bot_reply_message_id=50,
+            last_human_reply_message_id=101,
+            last_human_reply_at=datetime.now(UTC),
+        )
+
+        media = TicketMedia(
+            media_type="document",
+            media_url="https://bedolaga/media/client.log",
+            filename="client.log",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        answerer.client = parts["client"]
+
+        await answerer.handle(TICKET_ID)
+
+        # AI reply suppressed: no bot reply
+        parts["client"].reply.assert_not_awaited()
+        # But forwarded to operator topic
+        kwargs = parts["forwarder"].forward_to_support.await_args.kwargs
+        assert kwargs["needs_escalation"] is True
+        assert kwargs["ticket_media"] == media
+
+    async def test_error_in_describe_media_does_not_crash_turn(self) -> None:
+        answerer, parts = _answerer(ticket=self._video_ticket())
+        parts["client"].describe_media = AsyncMock(return_value=None)
+        answerer.client = parts["client"]
+
+        await answerer.handle(TICKET_ID)
+
+        parts["client"].reply.assert_awaited_once()
+        kwargs = parts["forwarder"].forward_to_support.await_args.kwargs
+        assert kwargs["ticket_media"] is None
+
+    async def test_describe_media_called_once_per_turn(self) -> None:
+        answerer, parts = _answerer(ticket=self._photo_ticket())
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/pic.png",
+            filename="pic.png",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        parts["client"].download_image = AsyncMock(
+            return_value=ImageAttachment(base64_image="Zm9v", mime_type="image/png")
+        )
+        parts["llm_client"].supports_images = MagicMock(return_value=True)
+        answerer.client = parts["client"]
+        answerer.llm_client = parts["llm_client"]
+
+        await answerer.handle(TICKET_ID)
+
+        assert parts["client"].describe_media.await_count == 1
+
+    async def test_text_only_ticket_does_not_call_describe_media(self) -> None:
+        ticket = _ticket(
+            TicketMessage(id=100, text="Просто текст", is_from_admin=False, has_media=False)
+        )
+        answerer, parts = _answerer(ticket=ticket)
+        answerer.client = parts["client"]
+
+        await answerer.handle(TICKET_ID)
+
+        parts["client"].describe_media.assert_not_awaited()
 
 
 class TestNothingToAnswer:
@@ -469,7 +691,14 @@ class TestNothingToAnswer:
         )
 
     def _blind(self, answerer: TicketAnswerer, parts: dict[str, Any]) -> None:
-        parts["client"].download_media = AsyncMock()
+        parts["client"].describe_media = AsyncMock(
+            return_value=TicketMedia(
+                media_type="photo",
+                media_url="https://bedolaga/media/pic.jpg",
+                filename="pic.jpg",
+            )
+        )
+        parts["client"].download_image = AsyncMock()
         parts["llm_client"].supports_images = MagicMock(return_value=False)
         parts["llm_client"].chat_with_image = AsyncMock()
         answerer.client = parts["client"]
@@ -536,7 +765,13 @@ class TestNothingToAnswer:
         from app.bedolaga.types import ImageAttachment
 
         answerer, parts = _answerer(ticket=self._screenshot_thread())
-        parts["client"].download_media = AsyncMock(
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/pic.png",
+            filename="pic.png",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        parts["client"].download_image = AsyncMock(
             return_value=ImageAttachment(base64_image="Zm9v", mime_type="image/png")
         )
         parts["llm_client"].supports_images = MagicMock(return_value=True)
@@ -560,18 +795,25 @@ class TestNothingToAnswer:
             title="",
         )
         answerer, parts = _answerer(ticket=ticket)
-        parts["client"].download_media = AsyncMock()
+        parts["client"].describe_media = AsyncMock(
+            return_value=TicketMedia(
+                media_type="voice",
+                media_url="https://bedolaga/media/voice.ogg",
+                filename="voice.ogg",
+            )
+        )
         parts["llm_client"].supports_images = MagicMock(return_value=True)
         answerer.client = parts["client"]
         answerer.llm_client = parts["llm_client"]
 
         await answerer.handle(TICKET_ID)
 
-        parts["client"].download_media.assert_not_awaited()
+        parts["client"].download_image.assert_not_awaited()
         parts["llm_client"].chat.assert_not_awaited()
         parts["client"].reply.assert_awaited_once_with(
             TICKET_ID, get_message("bedolaga.nothing.to.answer")
         )
+
 
 
 class TestUnresolvedIdentity:

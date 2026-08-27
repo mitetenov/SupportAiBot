@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from app.bedolaga.client import MAX_REPLY_LENGTH, BedolagaClient
 from app.bedolaga.state import TicketProgress, TicketStateStore
-from app.bedolaga.types import OPEN_STATUSES, ImageAttachment, Ticket, TicketMessage
+from app.bedolaga.types import OPEN_STATUSES, ImageAttachment, Ticket, TicketMedia, TicketMessage
 from app.bot.admin_notifier import AdminNotifier
 from app.bot.conversation_state import ConversationState
 from app.bot.forwarder import SupportGroupForwarder
@@ -224,7 +224,8 @@ class TicketAnswerer:
         Re-reads the ticket immediately before posting reply to prevent stale
         writes when user sends a new message or operator intervenes during LLM generation.
         """
-        attachment = await self.attachment_for(ticket, last)
+        media = await self.media_for(ticket, last)
+        attachment = await self.image_attachment_for(media)
         if not question.strip() and attachment is None:
             # There is genuinely nothing to ask about: no text anywhere in the
             # ticket and no picture the model can read. Sending an empty prompt
@@ -232,10 +233,11 @@ class TicketAnswerer:
             # it to the user as support's answer. The fixed hand-over line is
             # recorded against this empty turn; a later message has a larger
             # id and is still the bot's to take.
-            await self.hand_over(ticket, last, user_key)
+            await self.hand_over(ticket, last, user_key, media=media)
             return
 
         reply = await self.ask_model(question, user_key, attachment)
+
         answer = EscalationPolicy.strip_marker(reply.text) or get_message("bedolaga.llm.empty")
         escalate = EscalationPolicy.model_requested_escalation(
             reply.text
@@ -317,8 +319,9 @@ class TicketAnswerer:
             get_message("bedolaga.mirror", ticket.id, ticket.title, question, truncated_answer),
             escalate=escalate,
             source_message=last,
-            attachment=attachment,
+            media=media,
         )
+
 
         if question.strip():
             await self.knowledge_gap_service.evaluate(
@@ -432,31 +435,20 @@ class TicketAnswerer:
             user_id=user_key,
         )
 
-    async def attachment_for(
-        self, ticket: Ticket, message: TicketMessage
-    ) -> ImageAttachment | None:
-        """The screenshot this turn can show the model, when there is one.
-
-        None is every reason the model will see no picture, answered in one
-        place: no attachment at all, an attachment that is not a photo (voice,
-        video, a document), a text-only provider, and a panel that could not
-        serve the file. The caller needs that single answer twice — once to
-        decide whether an empty question leaves anything to ask about, and once
-        to pick which model call to make.
-        """
+    async def media_for(self, ticket: Ticket, message: TicketMessage) -> TicketMedia | None:
+        """Fetch media descriptor for an attachment in this turn."""
         if not message.has_media:
             return None
-        if (message.media_type or "") != "photo":
-            logger.info(
-                "Bedolaga ticket %d: message %d carries %s, which the bot does not read",
-                ticket.id,
-                message.id,
-                message.media_type or "an attachment of unknown type",
-            )
+        return await self.client.describe_media(ticket.id, message.id, message.media_type)
+
+    async def image_attachment_for(
+        self,
+        media: TicketMedia | None,
+    ) -> ImageAttachment | None:
+        """The screenshot this turn can show the model, when there is one."""
+        if media is None or media.media_type != "photo" or not self.llm_client.supports_images():
             return None
-        if not self.llm_client.supports_images():
-            return None
-        return await self.client.download_media(ticket.id, message.id)
+        return await self.client.download_image(media)
 
     async def ask_model(
         self, question: str, user_key: int, attachment: ImageAttachment | None
@@ -473,7 +465,13 @@ class TicketAnswerer:
             attachment.mime_type,
         )
 
-    async def hand_over(self, ticket: Ticket, last: TicketMessage, user_key: int) -> None:
+    async def hand_over(
+        self,
+        ticket: Ticket,
+        last: TicketMessage,
+        user_key: int,
+        media: TicketMedia | None = None,
+    ) -> None:
         """Answer a ticket with nothing in it by asking for words, and call a human.
 
         Deliberately not routed through the model: the bot has been given
@@ -505,6 +503,7 @@ class TicketAnswerer:
             get_message("bedolaga.nothing.mirror", ticket.id, ticket.title),
             escalate=True,
             source_message=last,
+            media=media,
         )
 
     async def mirror(
@@ -514,7 +513,7 @@ class TicketAnswerer:
         text: str,
         escalate: bool,
         source_message: TicketMessage | None = None,
-        attachment: ImageAttachment | None = None,
+        media: TicketMedia | None = None,
     ) -> None:
         """Put this ticket turn into the user's forum topic.
 
@@ -523,14 +522,13 @@ class TicketAnswerer:
         their reply. Every failure here stays here.
         """
         try:
-            mirrored_photo = attachment
+            mirrored_media = media
             if (
-                mirrored_photo is None
+                mirrored_media is None
                 and source_message is not None
                 and source_message.has_media
-                and (source_message.media_type or "") == "photo"
             ):
-                mirrored_photo = await self.client.download_media(ticket.id, source_message.id)
+                mirrored_media = await self.media_for(ticket, source_message)
 
             await self.forwarder.forward_to_support(
                 user_chat_id=user_key,
@@ -539,11 +537,11 @@ class TicketAnswerer:
                 bot_response=text,
                 needs_escalation=escalate,
                 ticket_id=ticket.id,
-                photo_base64=(mirrored_photo.base64_image if mirrored_photo is not None else None),
-                photo_mime_type=(mirrored_photo.mime_type if mirrored_photo is not None else None),
+                ticket_media=mirrored_media,
             )
         except Exception as e:
             logger.warning("Could not mirror Bedolaga ticket %d to the topic: %s", ticket.id, e)
+
 
     @staticmethod
     def stand_in(ticket: Ticket, user_key: int) -> TicketUser:

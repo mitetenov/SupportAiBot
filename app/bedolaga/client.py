@@ -559,10 +559,4 @@ class BedolagaClient:
             mime_type=mime_type.split(";")[0].strip(),
         )
 
-    async def download_media(self, ticket_id: int, message_id: int) -> ImageAttachment | None:
-        """Fetch a ticket screenshot, base64-encoded for the vision APIs."""
-        media = await self.describe_media(ticket_id, message_id, fallback_media_type="photo")
-        if media is None:
-            return None
-        return await self.download_image(media)
 
