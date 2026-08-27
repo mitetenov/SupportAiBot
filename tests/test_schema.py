@@ -25,7 +25,11 @@ class _Connection:
             exists = params.get("table_name") in {"bedolaga_ticket_state", "topic_mappings"}
             return _Result((1,) if exists else None)
         if statement is schema._COLUMN_TYPE_SQL:
-            if params.get("column_name") in {"last_human_reply_at", "active_ticket_id"}:
+            if params.get("column_name") in {
+                "last_human_reply_at",
+                "active_ticket_id",
+                "pending_media_message_id",
+            }:
                 return _Result(None)
             return _Result(("bigint",))
 
@@ -69,3 +73,16 @@ async def test_active_ticket_pointer_is_added_nullable() -> None:
     matching = [ddl for ddl in engine.connection.ddl if "active_ticket_id" in ddl]
     assert matching == ["ALTER TABLE topic_mappings ADD COLUMN active_ticket_id BIGINT NULL"]
     assert "topic_mappings.active_ticket_id: added" in changes
+
+
+async def test_pending_media_watermark_is_added_with_zero_default() -> None:
+    engine = _Engine()
+
+    changes = await schema.sync_legacy_schema(engine)  # type: ignore[arg-type]
+
+    matching = [ddl for ddl in engine.connection.ddl if "pending_media_message_id" in ddl]
+    assert matching == [
+        "ALTER TABLE bedolaga_ticket_state ADD COLUMN pending_media_message_id "
+        "BIGINT NOT NULL DEFAULT 0"
+    ]
+    assert "bedolaga_ticket_state.pending_media_message_id: added" in changes

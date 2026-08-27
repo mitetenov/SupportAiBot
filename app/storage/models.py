@@ -217,6 +217,10 @@ class BedolagaTicketState(Base):
     last_mirrored_media_message_id: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default="0"
     )
+    #: Highest attachment message still requiring a delivery attempt to the support topic.
+    pending_media_message_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
     #: Timestamp of the most recent human operator reply in Bedolaga panel,
     #: used for 30-minute suppression TTL across bot restarts.
     last_human_reply_at: Mapped[datetime | None] = mapped_column(
@@ -236,5 +240,6 @@ class BedolagaTicketState(Base):
             f"last_bot_reply_message_id={self.last_bot_reply_message_id} "
             f"last_human_reply_message_id={self.last_human_reply_message_id} "
             f"last_mirrored_media_message_id={self.last_mirrored_media_message_id} "
+            f"pending_media_message_id={self.pending_media_message_id} "
             f"last_human_reply_at={self.last_human_reply_at}>"
         )

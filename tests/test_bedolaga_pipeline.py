@@ -88,6 +88,7 @@ def _answerer(
     state.record_reply = AsyncMock()
     state.record_human_reply = AsyncMock()
     state.record_mirrored_media = AsyncMock()
+    state.record_pending_media = AsyncMock()
 
     forwarder = MagicMock()
     forwarder.forward_to_support = AsyncMock()
@@ -646,7 +647,47 @@ class TestScreenshots:
         kwargs = parts["forwarder"].forward_ticket_media.await_args.kwargs
         assert kwargs["media_fetch_failed"] is True
         assert kwargs["ticket_media"] is None
+        parts["client"].describe_media.assert_awaited_once()
         parts["state"].record_mirrored_media.assert_awaited_once_with(TICKET_ID, 100)
+
+    async def test_missing_topic_keeps_media_pending_for_a_later_sweep(self) -> None:
+        answerer, parts = _answerer(ticket=self._video_ticket())
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/video.mp4",
+            filename="video.mp4",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        parts["forwarder"].forward_ticket_media = AsyncMock(return_value=None)
+        answerer.client = parts["client"]
+        answerer.forwarder = parts["forwarder"]
+
+        await answerer.handle(TICKET_ID)
+
+        parts["client"].reply.assert_awaited_once()
+        parts["state"].record_pending_media.assert_awaited_once_with(TICKET_ID, 100)
+        parts["state"].record_mirrored_media.assert_not_awaited()
+
+    async def test_pending_media_retries_after_ticket_was_answered(self) -> None:
+        answerer, parts = _answerer(
+            ticket=self._video_ticket(),
+            already_answered=True,
+            last_bot_reply_message_id=101,
+        )
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/video.mp4",
+            filename="video.mp4",
+        )
+        parts["client"].describe_media = AsyncMock(return_value=media)
+        answerer.client = parts["client"]
+
+        await answerer.handle(TICKET_ID)
+
+        parts["forwarder"].forward_ticket_media.assert_awaited_once()
+        parts["state"].record_mirrored_media.assert_awaited_once_with(TICKET_ID, 100)
+        parts["client"].reply.assert_not_awaited()
+        parts["llm_client"].chat.assert_not_awaited()
 
     async def test_media_is_mirrored_even_if_llm_fails(self) -> None:
         answerer, parts = _answerer(ticket=self._video_ticket())

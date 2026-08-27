@@ -101,7 +101,7 @@ def create_ticket_support(
     )
     return TicketSupport(
         answerer=answerer,
-        poller=TicketPoller(client=client, answerer=answerer),
+        poller=TicketPoller(client=client, answerer=answerer, state=state),
         operator_relay=TicketOperatorRelay(
             client=client,
             state=state,

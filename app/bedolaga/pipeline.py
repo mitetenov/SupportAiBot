@@ -164,12 +164,18 @@ class TicketAnswerer:
 
         progress = await self.state.progress(ticket.id)
         last = self.unanswered_user_message(ticket, progress)
-        if last is None:
+        has_pending_media = any(
+            not message.is_from_admin
+            and message.has_media
+            and not progress.media_already_mirrored(message.id)
+            for message in ticket.messages
+        )
+        if last is None and not has_pending_media:
             self._reply_backoff.pop(ticket_id, None)
             self._suppressed.pop(ticket_id, None)
             return
 
-        if self.backing_off(ticket.id):
+        if last is not None and self.backing_off(ticket.id) and not has_pending_media:
             # Everything below this line costs money or noise, and the last
             # attempt proved the answer has nowhere to go. No admin alert
             # either: the retry when the window ends will raise one if it
@@ -192,6 +198,14 @@ class TicketAnswerer:
             return
 
         media_map = await self.mirror_pending_media(ticket, user_key, progress)
+
+        if last is None:
+            self._reply_backoff.pop(ticket_id, None)
+            self._suppressed.pop(ticket_id, None)
+            return
+
+        if self.backing_off(ticket.id):
+            return
 
         question = ticket.question_for(last)
 
@@ -216,8 +230,15 @@ class TicketAnswerer:
             logger.info("Bedolaga ticket %d is rate limited for user %d", ticket.id, user_key)
             return
 
-        last_media = media_map.get(last.id) if last.id in media_map else None
-        await self.answer_now(ticket, last, user_key, question, media=last_media)
+        media_was_resolved = last.id in media_map
+        await self.answer_now(
+            ticket,
+            last,
+            user_key,
+            question,
+            media=media_map.get(last.id),
+            media_was_resolved=media_was_resolved,
+        )
 
     async def answer_now(
         self,
@@ -226,13 +247,14 @@ class TicketAnswerer:
         user_key: int,
         question: str,
         media: TicketMedia | None = None,
+        media_was_resolved: bool = False,
     ) -> None:
         """Ask the model about this ticket and write the answer back.
 
         Re-reads the ticket immediately before posting reply to prevent stale
         writes when user sends a new message or operator intervenes during LLM generation.
         """
-        if media is None and last.has_media:
+        if not media_was_resolved and last.has_media:
             media = await self.media_for(ticket, last)
         attachment = await self.image_attachment_for(media)
 
@@ -480,26 +502,34 @@ class TicketAnswerer:
         progress: TicketProgress,
     ) -> dict[int, TicketMedia | None]:
         """Ensure all un-mirrored user attachments in this ticket reach the operator topic."""
-        unmirrored = [
-            msg
-            for msg in ticket.messages
-            if not msg.is_from_admin
-            and msg.has_media
-            and not progress.media_already_mirrored(msg.id)
-        ]
+        unmirrored = sorted(
+            (
+                msg
+                for msg in ticket.messages
+                if not msg.is_from_admin
+                and msg.has_media
+                and not progress.media_already_mirrored(msg.id)
+            ),
+            key=lambda msg: msg.id,
+        )
+        if unmirrored:
+            await self.state.record_pending_media(ticket.id, unmirrored[-1].id)
+
         media_by_msg: dict[int, TicketMedia | None] = {}
         for msg in unmirrored:
             try:
                 media = await self.media_for(ticket, msg)
                 media_by_msg[msg.id] = media
                 media_fetch_failed = media is None
-                await self.forwarder.forward_ticket_media(
+                topic_id = await self.forwarder.forward_ticket_media(
                     user_chat_id=user_key,
                     user=self.stand_in(ticket, user_key),
                     ticket_id=ticket.id,
                     ticket_media=media,
                     media_fetch_failed=media_fetch_failed,
                 )
+                if topic_id is None:
+                    break
                 await self.state.record_mirrored_media(ticket.id, msg.id)
             except Exception as e:
                 logger.warning(
@@ -508,6 +538,7 @@ class TicketAnswerer:
                     msg.id,
                     e,
                 )
+                break
         return media_by_msg
 
     async def hand_over(

@@ -266,6 +266,7 @@ class TestStorageModelsSchema:
         assert "last_bot_reply_message_id" in cols
         assert "last_human_reply_message_id" in cols
         assert "last_mirrored_media_message_id" in cols
+        assert "pending_media_message_id" in cols
         assert "last_human_reply_at" in cols
         assert "updated_at" in cols
 
