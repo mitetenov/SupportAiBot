@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from aiogram.exceptions import TelegramBadRequest
 
+from app.bedolaga.types import TicketMedia
 from app.bot.sender import MAX_MESSAGE_LENGTH, TelegramMessageSender
 
 
@@ -235,3 +236,423 @@ class TestSendPhoto:
 
         assert await sender.send_photo_bytes(1, "bad!", "image/jpeg") is None
         bot.send_photo.assert_not_awaited()
+
+
+class TestSendTicketMedia:
+    """Streaming ticket media from Bedolaga to Telegram operator topics."""
+
+    @pytest.mark.asyncio
+    async def test_photo_sends_via_send_photo(self) -> None:
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock(return_value=MagicMock(message_id=701))
+
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/test.jpg",
+            filename="screenshot.jpg",
+            mime_type="image/jpeg",
+            download_headers={"X-API-Key": "secret-key"},
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+            message_thread_id=42,
+            caption="Ticket #17",
+        )
+
+        assert result == 701
+        bot.send_photo.assert_awaited_once()
+        sent = bot.send_photo.await_args.kwargs
+        assert sent["chat_id"] == -100123
+        assert sent["message_thread_id"] == 42
+        assert sent["caption"] == "Ticket #17"
+        input_file = sent["photo"]
+        assert input_file.url == "https://bedolaga/media/test.jpg"
+        assert input_file.filename == "screenshot.jpg"
+        assert input_file.headers == {"X-API-Key": "secret-key"}
+        assert input_file.timeout == 120
+
+    @pytest.mark.asyncio
+    async def test_mp4_video_sends_via_send_video_with_streaming(self) -> None:
+        sender, bot = make_sender()
+        bot.send_video = AsyncMock(return_value=MagicMock(message_id=702))
+
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/test.mp4",
+            filename="record.mp4",
+            mime_type="video/mp4",
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+            message_thread_id=42,
+            caption="Ticket #17",
+        )
+
+        assert result == 702
+        bot.send_video.assert_awaited_once()
+        sent = bot.send_video.await_args.kwargs
+        assert sent["chat_id"] == -100123
+        assert sent["message_thread_id"] == 42
+        assert sent["caption"] == "Ticket #17"
+        assert sent["supports_streaming"] is True
+        assert sent["video"].filename == "record.mp4"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("media_type", "filename", "mime_type"),
+        [
+            ("document", "client.log", "text/plain"),
+            ("document", "report.pdf", "application/pdf"),
+            ("voice", "voice.ogg", "audio/ogg"),
+            ("audio", "sound.mp3", "audio/mpeg"),
+            ("animation", "demo.gif", "image/gif"),
+            ("video", "video.avi", "video/x-msvideo"),
+            ("unknown_type", "file.bin", None),
+        ],
+    )
+    async def test_documents_and_non_mp4_send_via_send_document(
+        self, media_type: str, filename: str, mime_type: str | None
+    ) -> None:
+        sender, bot = make_sender()
+        bot.send_document = AsyncMock(return_value=MagicMock(message_id=703))
+
+        media = TicketMedia(
+            media_type=media_type,
+            media_url="https://bedolaga/media/test",
+            filename=filename,
+            mime_type=mime_type,
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+            message_thread_id=42,
+        )
+
+        assert result == 703
+        bot.send_document.assert_awaited_once()
+        sent = bot.send_document.await_args.kwargs
+        assert sent["chat_id"] == -100123
+        assert sent["message_thread_id"] == 42
+        assert sent["document"].filename == filename
+
+    @pytest.mark.asyncio
+    async def test_video_falls_back_to_send_document_on_telegram_bad_request(self) -> None:
+        sender, bot = make_sender()
+        bot.send_video = AsyncMock(
+            side_effect=TelegramBadRequest(
+                method=MagicMock(), message="Bad Request: failed to get HTTP URL content"
+            )
+        )
+        bot.send_document = AsyncMock(return_value=MagicMock(message_id=704))
+
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/test.mp4",
+            filename="record.mp4",
+            mime_type="video/mp4",
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+            message_thread_id=42,
+            caption="Ticket #17",
+        )
+
+        assert result == 704
+        assert bot.send_video.await_count == 1
+        assert bot.send_document.await_count == 1
+        sent_doc = bot.send_document.await_args.kwargs
+        assert sent_doc["chat_id"] == -100123
+        assert sent_doc["message_thread_id"] == 42
+        assert sent_doc["caption"] == "Ticket #17"
+        assert sent_doc["document"].filename == "record.mp4"
+
+    @pytest.mark.asyncio
+    async def test_video_does_not_retry_on_network_or_other_exception(self) -> None:
+        sender, bot = make_sender()
+        bot.send_video = AsyncMock(side_effect=RuntimeError("connection timeout"))
+        bot.send_document = AsyncMock()
+
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/test.mp4",
+            filename="record.mp4",
+            mime_type="video/mp4",
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+        )
+
+        assert result is None
+        assert bot.send_video.await_count == 1
+        bot.send_document.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_rejects_known_oversized_file_before_bot_call(self) -> None:
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock()
+        bot.send_video = AsyncMock()
+        bot.send_document = AsyncMock()
+
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/large.mp4",
+            filename="large.mp4",
+            file_size=50 * 1024 * 1024 + 1,
+        )
+
+        result = await sender.send_ticket_media(
+            chat_id=-100123,
+            media=media,
+        )
+
+        assert result is None
+        bot.send_photo.assert_not_awaited()
+        bot.send_video.assert_not_awaited()
+        bot.send_document.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_allows_exact_50mb_and_unknown_size(self) -> None:
+        sender, bot = make_sender()
+        bot.send_document = AsyncMock(return_value=MagicMock(message_id=705))
+
+        media_exact = TicketMedia(
+            media_type="document",
+            media_url="https://bedolaga/media/exact.bin",
+            filename="exact.bin",
+            file_size=50 * 1024 * 1024,
+        )
+        assert await sender.send_ticket_media(100, media_exact) == 705
+
+        media_unknown = TicketMedia(
+            media_type="document",
+            media_url="https://bedolaga/media/unknown.bin",
+            filename="unknown.bin",
+            file_size=None,
+        )
+        assert await sender.send_ticket_media(100, media_unknown) == 705
+
+    @pytest.mark.asyncio
+    async def test_returns_none_and_swallows_telegram_exception(self) -> None:
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock(side_effect=RuntimeError("telegram is down"))
+
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/photo.jpg",
+            filename="photo.jpg",
+        )
+
+        result = await sender.send_ticket_media(100, media)
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_message_has_no_message_id(self) -> None:
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock(return_value=object())
+
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/photo.jpg",
+            filename="photo.jpg",
+        )
+
+        result = await sender.send_ticket_media(100, media)
+        assert result is None
+
+
+class TestSafeURLInputFile:
+    """Validate that SafeURLInputFile safely streams data without leaking auth headers."""
+
+    class _FakeContent:
+        def __init__(self, data: bytes) -> None:
+            self.data = data
+
+        async def iter_chunked(self, chunk_size: int):
+            for i in range(0, len(self.data), chunk_size):
+                yield self.data[i : i + chunk_size]
+
+    class _FakeResponse:
+        def __init__(
+            self, status: int, headers: dict[str, str] | None = None, body: bytes = b""
+        ) -> None:
+            self.status = status
+            self.headers = headers or {}
+            self.content = TestSafeURLInputFile._FakeContent(body)
+            self.released = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            self.released = True
+
+    @pytest.mark.asyncio
+    async def test_streams_chunks_on_200_same_origin(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        fake_resp = self._FakeResponse(200, body=b"hello stream")
+        bot.session.get = MagicMock(return_value=fake_resp)
+
+        input_file = SafeURLInputFile(
+            url="https://bedolaga.local:8080/media/doc.pdf",
+            headers={"X-API-Key": "secret"},
+            filename="doc.pdf",
+            chunk_size=5,
+        )
+
+        chunks = [c async for c in input_file.read(bot)]
+        assert b"".join(chunks) == b"hello stream"
+        assert len(chunks) == 3
+        assert fake_resp.released is True
+
+        bot.session.get.assert_called_once()
+        args, kwargs = bot.session.get.call_args
+        assert args[0] == "https://bedolaga.local:8080/media/doc.pdf"
+        assert kwargs["headers"] == {"X-API-Key": "secret"}
+        assert kwargs["allow_redirects"] is False
+
+    @pytest.mark.asyncio
+    async def test_preserves_headers_on_same_origin_redirect(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp1 = self._FakeResponse(302, headers={"Location": "/media/real-doc.pdf"})
+        resp2 = self._FakeResponse(200, body=b"data")
+        bot.session.get = MagicMock(side_effect=[resp1, resp2])
+
+        input_file = SafeURLInputFile(
+            url="https://bedolaga.local:8080/media/doc.pdf",
+            headers={"X-API-Key": "secret"},
+        )
+
+        chunks = [c async for c in input_file.read(bot)]
+        assert b"".join(chunks) == b"data"
+        assert resp1.released is True
+        assert resp2.released is True
+
+        assert bot.session.get.call_count == 2
+        call1_kwargs = bot.session.get.call_args_list[0].kwargs
+        call2_args, call2_kwargs = bot.session.get.call_args_list[1]
+
+        assert call1_kwargs["headers"] == {"X-API-Key": "secret"}
+        assert call2_args[0] == "https://bedolaga.local:8080/media/real-doc.pdf"
+        assert call2_kwargs["headers"] == {"X-API-Key": "secret"}
+
+    @pytest.mark.asyncio
+    async def test_strips_headers_on_cross_origin_redirect(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp1 = self._FakeResponse(
+            302, headers={"Location": "https://s3.amazonaws.com/bucket/doc.pdf"}
+        )
+        resp2 = self._FakeResponse(200, body=b"s3 data")
+        bot.session.get = MagicMock(side_effect=[resp1, resp2])
+
+        input_file = SafeURLInputFile(
+            url="https://bedolaga.local:8080/media/doc.pdf",
+            headers={"X-API-Key": "secret"},
+        )
+
+        chunks = [c async for c in input_file.read(bot)]
+        assert b"".join(chunks) == b"s3 data"
+
+        assert bot.session.get.call_count == 2
+        call1_kwargs = bot.session.get.call_args_list[0].kwargs
+        call2_args, call2_kwargs = bot.session.get.call_args_list[1]
+
+        assert call1_kwargs["headers"] == {"X-API-Key": "secret"}
+        assert call2_args[0] == "https://s3.amazonaws.com/bucket/doc.pdf"
+        assert call2_kwargs["headers"] == {}  # Stripped! No leak!
+
+    @pytest.mark.asyncio
+    async def test_strips_headers_on_scheme_downgrade(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp1 = self._FakeResponse(
+            302, headers={"Location": "http://bedolaga.local:8080/media/doc.pdf"}
+        )
+        resp2 = self._FakeResponse(200, body=b"http data")
+        bot.session.get = MagicMock(side_effect=[resp1, resp2])
+
+        input_file = SafeURLInputFile(
+            url="https://bedolaga.local:8080/media/doc.pdf",
+            headers={"X-API-Key": "secret"},
+        )
+
+        chunks = [c async for c in input_file.read(bot)]
+        assert b"".join(chunks) == b"http data"
+
+        call2_kwargs = bot.session.get.call_args_list[1].kwargs
+        assert call2_kwargs["headers"] == {}  # Stripped on downgrade!
+
+    @pytest.mark.asyncio
+    async def test_strips_headers_on_different_port(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp1 = self._FakeResponse(
+            302, headers={"Location": "https://bedolaga.local:9090/media/doc.pdf"}
+        )
+        resp2 = self._FakeResponse(200, body=b"other port data")
+        bot.session.get = MagicMock(side_effect=[resp1, resp2])
+
+        input_file = SafeURLInputFile(
+            url="https://bedolaga.local:8080/media/doc.pdf",
+            headers={"X-API-Key": "secret"},
+        )
+
+        chunks = [c async for c in input_file.read(bot)]
+        assert b"".join(chunks) == b"other port data"
+
+        call2_kwargs = bot.session.get.call_args_list[1].kwargs
+        assert call2_kwargs["headers"] == {}
+
+    @pytest.mark.asyncio
+    async def test_raises_on_non_200(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp = self._FakeResponse(404)
+        bot.session.get = MagicMock(return_value=resp)
+
+        input_file = SafeURLInputFile(url="https://bedolaga.local/media/404.pdf")
+        with pytest.raises(RuntimeError, match="HTTP 404 downloading"):
+            _ = [c async for c in input_file.read(bot)]
+        assert resp.released is True
+
+    @pytest.mark.asyncio
+    async def test_raises_on_redirect_without_location(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resp = self._FakeResponse(302, headers={})
+        bot.session.get = MagicMock(return_value=resp)
+
+        input_file = SafeURLInputFile(url="https://bedolaga.local/media/test")
+        with pytest.raises(RuntimeError, match="Redirect 302 without Location header"):
+            _ = [c async for c in input_file.read(bot)]
+        assert resp.released is True
+
+    @pytest.mark.asyncio
+    async def test_raises_on_exceeding_max_redirects(self) -> None:
+        from app.bot.sender import SafeURLInputFile
+
+        bot = MagicMock()
+        resps = [self._FakeResponse(302, headers={"Location": f"/media/{i}"}) for i in range(5)]
+        bot.session.get = MagicMock(side_effect=resps)
+
+        input_file = SafeURLInputFile(url="https://bedolaga.local/media/0", max_redirects=2)
+        with pytest.raises(RuntimeError, match="Too many redirects"):
+            _ = [c async for c in input_file.read(bot)]

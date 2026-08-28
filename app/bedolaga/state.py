@@ -4,6 +4,8 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from sqlalchemy import select
+
 from app.storage.database import DatabaseSessionManager
 from app.storage.models import BedolagaTicketState
 
@@ -26,12 +28,20 @@ class TicketProgress:
     last_bot_reply_message_id: int = 0
     #: The newest admin message identified as a human's.
     last_human_reply_message_id: int = 0
+    #: The newest user message whose media has already been mirrored to support topic.
+    last_mirrored_media_message_id: int = 0
+    #: The highest attachment message that still needs a support-topic delivery attempt.
+    pending_media_message_id: int = 0
     #: When a human operator last replied in Bedolaga panel, or None if never recorded.
     last_human_reply_at: datetime | None = None
 
     def already_answered(self, message_id: int) -> bool:
         """True when this message, or a later one, has already been answered."""
         return self.last_answered_message_id >= message_id
+
+    def media_already_mirrored(self, message_id: int) -> bool:
+        """True when this message's media has already been mirrored to support."""
+        return self.last_mirrored_media_message_id >= message_id
 
     def someone_else_wrote(self, admin_message_id: int) -> bool:
         """True when this admin message is newer than anything the bot wrote.
@@ -87,8 +97,77 @@ class TicketStateStore:
             # have been written, and an unset value has to read as "never".
             last_bot_reply_message_id=row.last_bot_reply_message_id or 0,
             last_human_reply_message_id=row.last_human_reply_message_id or 0,
+            last_mirrored_media_message_id=row.last_mirrored_media_message_id or 0,
+            pending_media_message_id=row.pending_media_message_id or 0,
             last_human_reply_at=row.last_human_reply_at,
         )
+
+    async def pending_media_ticket_ids(self, limit: int) -> list[int]:
+        """Tickets that need media delivery even if the panel already marks them answered."""
+        async with self.db_manager.session() as session:
+            result = await session.execute(
+                select(BedolagaTicketState.ticket_id)
+                .where(
+                    BedolagaTicketState.pending_media_message_id
+                    > BedolagaTicketState.last_mirrored_media_message_id
+                )
+                .limit(limit)
+            )
+        return [int(ticket_id) for ticket_id in result.scalars().all()]
+
+    async def record_pending_media(self, ticket_id: int, message_id: int) -> None:
+        """Persist an attachment retry before the ticket can become answered."""
+        now = datetime.now(UTC)
+        async with self.db_manager.session() as session:
+            row = await session.get(BedolagaTicketState, ticket_id)
+            if row is None:
+                await session.merge(
+                    BedolagaTicketState(
+                        ticket_id=ticket_id,
+                        last_answered_message_id=0,
+                        last_bot_reply_message_id=0,
+                        last_human_reply_message_id=0,
+                        last_mirrored_media_message_id=0,
+                        pending_media_message_id=message_id,
+                        last_human_reply_at=None,
+                        updated_at=now,
+                    )
+                )
+            else:
+                row.pending_media_message_id = max(row.pending_media_message_id or 0, message_id)
+                row.updated_at = now
+                await session.merge(row)
+
+    async def record_mirrored_media(
+        self,
+        ticket_id: int,
+        message_id: int,
+    ) -> None:
+        """Record that user media up through message_id has been mirrored."""
+        now = datetime.now(UTC)
+        async with self.db_manager.session() as session:
+            row = await session.get(BedolagaTicketState, ticket_id)
+            if row is None:
+                await session.merge(
+                    BedolagaTicketState(
+                        ticket_id=ticket_id,
+                        last_answered_message_id=0,
+                        last_bot_reply_message_id=0,
+                        last_human_reply_message_id=0,
+                        last_mirrored_media_message_id=message_id,
+                        pending_media_message_id=0,
+                        last_human_reply_at=None,
+                        updated_at=now,
+                    )
+                )
+            else:
+                row.last_mirrored_media_message_id = max(
+                    row.last_mirrored_media_message_id or 0, message_id
+                )
+                if (row.pending_media_message_id or 0) <= row.last_mirrored_media_message_id:
+                    row.pending_media_message_id = 0
+                row.updated_at = now
+                await session.merge(row)
 
     async def record_human_reply(
         self,
@@ -107,6 +186,8 @@ class TicketStateStore:
                         last_answered_message_id=0,
                         last_bot_reply_message_id=0,
                         last_human_reply_message_id=message_id,
+                        last_mirrored_media_message_id=0,
+                        pending_media_message_id=0,
                         last_human_reply_at=now,
                         updated_at=now,
                     )
@@ -144,12 +225,16 @@ class TicketStateStore:
             )
             last_human_message_id = row.last_human_reply_message_id or 0 if row is not None else 0
             last_human_at = row.last_human_reply_at if row is not None else None
+            last_mirrored_media = row.last_mirrored_media_message_id or 0 if row is not None else 0
+            pending_media = row.pending_media_message_id or 0 if row is not None else 0
             await session.merge(
                 BedolagaTicketState(
                     ticket_id=ticket_id,
                     last_answered_message_id=answered_message_id,
                     last_bot_reply_message_id=last_bot_reply_message_id,
                     last_human_reply_message_id=last_human_message_id,
+                    last_mirrored_media_message_id=last_mirrored_media,
+                    pending_media_message_id=pending_media,
                     last_human_reply_at=last_human_at,
                     updated_at=datetime.now(UTC),
                 )

@@ -4,36 +4,46 @@ import logging
 
 from app.bedolaga.client import DEFAULT_LIST_LIMIT, BedolagaClient
 from app.bedolaga.pipeline import TicketAnswerer
+from app.bedolaga.state import TicketStateStore
 
 logger = logging.getLogger(__name__)
 
 
 class TicketPoller:
-    """Schedules every ticket that is still waiting for support.
+    """Schedules tickets awaiting support and answered tickets with pending media.
 
     Bedolaga's webhook delivery has no retries: one timeout and that ticket
-    would sit unanswered forever. Scheduling is cheap and idempotent — a ticket
-    already answered is dropped by the answerer after a single read.
+    would sit unanswered forever. Media delivery has its own durable pending
+    watermark, because a ticket can become answered before its topic recovers.
     """
 
     def __init__(
         self,
         client: BedolagaClient,
         answerer: TicketAnswerer,
+        state: TicketStateStore,
         limit: int = DEFAULT_LIST_LIMIT,
     ) -> None:
         self.client = client
         self.answerer = answerer
+        self.state = state
         self.limit = limit
 
     async def sweep(self) -> int:
-        """Schedule the open tickets. Returns how many were scheduled."""
+        """Schedule open tickets and pending media retries, returning the unique count."""
+        ticket_ids: list[int] = []
         try:
-            ticket_ids = await self.client.list_awaiting_ticket_ids(self.limit)
+            ticket_ids.extend(await self.client.list_awaiting_ticket_ids(self.limit))
         except Exception as e:
-            # The scheduler logs and retries on the next tick; nothing is lost.
             logger.warning("Bedolaga ticket sweep failed: %s", e)
-            return 0
+
+        try:
+            pending_media_ids = await self.state.pending_media_ticket_ids(self.limit)
+        except Exception as e:
+            logger.warning("Bedolaga pending-media sweep failed: %s", e)
+            pending_media_ids = []
+
+        ticket_ids = list(dict.fromkeys([*ticket_ids, *pending_media_ids]))
 
         for ticket_id in ticket_ids:
             self.answerer.schedule(ticket_id)

@@ -67,6 +67,8 @@ class TestMessages:
             "bedolaga.mirror",
             "bedolaga.nothing.to.answer",
             "bedolaga.nothing.mirror",
+            "bedolaga.media.caption",
+            "bedolaga.media.forward.failed",
         ]
         for key in required_keys:
             assert key in MESSAGES, f"Missing key in MESSAGES: {key}"

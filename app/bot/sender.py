@@ -3,19 +3,107 @@
 import base64
 import binascii
 import logging
-from collections.abc import Sequence
+import urllib.parse
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from aiogram import Bot
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BufferedInputFile, FSInputFile
+from aiogram.types import BufferedInputFile, FSInputFile, InputFile
+from aiohttp import ClientTimeout
 
+from app.bedolaga.types import TicketMedia
 from app.bot.formatting import markdown_to_telegram_html, split_telegram_html, strip_html_tags
 
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_LENGTH = 4096
+MAX_TELEGRAM_MEDIA_BYTES: int = 50 * 1024 * 1024
+TICKET_MEDIA_DOWNLOAD_TIMEOUT_SECONDS: int = 120
+
+
+class SafeURLInputFile(InputFile):
+    """Streams content from a URL to Telegram Bot API without leaking auth headers on redirect.
+
+    Prevents leaking credentials (such as X-API-Key) if the remote endpoint redirects to
+    a different origin (e.g. S3 bucket, CDN, or third-party host).
+    """
+
+    def __init__(
+        self,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        filename: str | None = None,
+        chunk_size: int = 64 * 1024,
+        timeout: int = 120,
+        max_redirects: int = 5,
+    ) -> None:
+        super().__init__(filename=filename, chunk_size=chunk_size)
+        self.url = url
+        self.headers = dict(headers) if headers else {}
+        self.timeout = timeout
+        self.max_redirects = max_redirects
+
+    async def read(self, bot: Bot) -> AsyncGenerator[bytes]:
+        current_url = self.url
+        initial_parsed = urllib.parse.urlparse(self.url)
+        initial_port = initial_parsed.port or (443 if initial_parsed.scheme == "https" else 80)
+
+        for _ in range(self.max_redirects + 1):
+            current_parsed = urllib.parse.urlparse(current_url)
+            current_port = current_parsed.port or (443 if current_parsed.scheme == "https" else 80)
+
+            is_same_origin = (
+                current_parsed.scheme == initial_parsed.scheme
+                and current_parsed.hostname == initial_parsed.hostname
+                and current_port == initial_port
+            )
+            req_headers = dict(self.headers) if is_same_origin else {}
+
+            client_timeout = ClientTimeout(total=self.timeout)
+            session: Any
+            if isinstance(bot.session, AiohttpSession):
+                session = await bot.session.create_session()
+            else:
+                session = bot.session
+
+            async with session.get(
+                current_url,
+                headers=req_headers,
+                allow_redirects=False,
+                timeout=client_timeout,
+            ) as resp:
+                if resp.status in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("Location")
+                    if not location:
+                        raise RuntimeError(f"Redirect {resp.status} without Location header")
+                    current_url = urllib.parse.urljoin(current_url, location)
+                    continue
+
+                if resp.status != 200:
+                    raise RuntimeError(f"HTTP {resp.status} downloading {current_url}")
+
+                async for chunk in resp.content.iter_chunked(self.chunk_size):
+                    yield chunk
+                return
+
+        raise RuntimeError(f"Too many redirects ({self.max_redirects}) for {self.url}")
+
+
+def _ticket_media_method(media: TicketMedia) -> Literal["photo", "video", "document"]:
+    """Select the Telegram Bot API method for streaming ticket media."""
+    if media.media_type == "photo":
+        return "photo"
+    if media.media_type in ("video", "video_note"):
+        if (
+            media.mime_type == "video/mp4"
+            or media.filename.lower().endswith(".mp4")
+            or media.mime_type is None
+        ):
+            return "video"
+    return "document"
 
 
 def _is_entity_parse_error(exc: Exception) -> bool:
@@ -205,6 +293,73 @@ class TelegramMessageSender:
             logger.warning("Failed to upload ticket photo to %s: %s", chat_id, e)
             return None
         return getattr(result, "message_id", None)
+
+    async def send_ticket_media(
+        self,
+        chat_id: int,
+        media: TicketMedia,
+        message_thread_id: int | None = None,
+        caption: str | None = None,
+    ) -> int | None:
+        """Stream ticket media directly to Telegram via URLInputFile."""
+        if media.file_size is not None and media.file_size > MAX_TELEGRAM_MEDIA_BYTES:
+            logger.warning(
+                "Rejecting oversized ticket media %s (%d bytes, limit %d bytes)",
+                media.filename,
+                media.file_size,
+                MAX_TELEGRAM_MEDIA_BYTES,
+            )
+            return None
+
+        def _create_input_file() -> SafeURLInputFile:
+            return SafeURLInputFile(
+                media.media_url,
+                headers=dict(media.download_headers),
+                filename=media.filename,
+                timeout=TICKET_MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
+            )
+
+        method = _ticket_media_method(media)
+        kwargs: dict[str, Any] = {"chat_id": chat_id}
+        if message_thread_id is not None:
+            kwargs["message_thread_id"] = message_thread_id
+        if caption:
+            kwargs["caption"] = caption
+
+        try:
+            if method == "photo":
+                result = await self.bot.send_photo(photo=_create_input_file(), **kwargs)
+            elif method == "video":
+                try:
+                    result = await self.bot.send_video(
+                        video=_create_input_file(),
+                        supports_streaming=True,
+                        **kwargs,
+                    )
+                except TelegramBadRequest as e:
+                    logger.warning(
+                        "Telegram rejected video %s for chat %s (%s), falling back to send_document",
+                        media.filename,
+                        chat_id,
+                        e,
+                    )
+                    result = await self.bot.send_document(
+                        document=_create_input_file(),
+                        **kwargs,
+                    )
+            else:
+                result = await self.bot.send_document(document=_create_input_file(), **kwargs)
+
+            return getattr(result, "message_id", None)
+        except Exception as e:
+            logger.warning(
+                "Failed to send ticket media %s (type %s) to %s: %s",
+                media.filename,
+                media.media_type,
+                chat_id,
+                e,
+            )
+            return None
 
     def _remember_file_id(self, key: str, result: Any) -> None:
         """Keep the file_id Telegram assigned to a freshly uploaded picture."""
