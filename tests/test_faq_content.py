@@ -90,6 +90,24 @@ class TestSubscriptionLink:
         assert "три точки" in SupportPrompt.SYSTEM
 
 
+class TestEmptyServerListAfterInstallation:
+    """Installing the client alone does not import the user's subscription."""
+
+    def test_tells_the_user_to_press_the_second_button(self, entries: list[dict[str, Any]]) -> None:
+        answer = find(entries, "нет серверов")["answer"].lower()
+        assert "первая кнопка" in answer
+        assert "только устанавливает приложение" in answer
+        assert "вторую кнопку" in answer
+        assert "добавить подписку" in answer
+
+    def test_explains_how_to_reopen_the_subscription_page(
+        self, entries: list[dict[str, Any]]
+    ) -> None:
+        answer = find(entries, "нет серверов")["answer"]
+        assert "@PeipivoSalesBot" in answer
+        assert "https://lk.peipivo.top" in answer
+
+
 class TestGapsOperatorsAnsweredByHand:
     def test_tribute_is_documented_as_the_legacy_payment_provider(
         self, entries: list[dict[str, Any]]
