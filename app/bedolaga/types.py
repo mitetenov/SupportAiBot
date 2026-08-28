@@ -1,12 +1,24 @@
 """The slice of the Bedolaga ticket API this bot reads, as plain data."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 #: Statuses in which a ticket is still waiting for support. The bot writes
 #: `open`, the cabinet writes `pending` — both mean the same thing to us.
 OPEN_STATUSES: frozenset[str] = frozenset({"open", "pending"})
+
+
+@dataclass(frozen=True)
+class TicketMedia:
+    """A transport-neutral descriptor of any media attached to a ticket message."""
+
+    media_type: str
+    media_url: str
+    filename: str
+    mime_type: str | None = None
+    file_size: int | None = None
+    download_headers: Mapping[str, str] = field(default_factory=dict, repr=False)
 
 
 @dataclass(frozen=True)

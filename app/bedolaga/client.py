@@ -4,6 +4,7 @@ import base64
 import binascii
 import logging
 from dataclasses import dataclass
+from pathlib import PurePath
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -15,6 +16,7 @@ from app.bedolaga.types import (
     ImageAttachment,
     TelegramIdLookup,
     Ticket,
+    TicketMedia,
     ticket_from_payload,
 )
 from app.retry import post_with_retry
@@ -32,6 +34,40 @@ DEFAULT_MEDIA_MIME_TYPE: str = "image/jpeg"
 
 #: The maximum media file size we allow downloading (10 MB).
 MAX_MEDIA_BYTES: int = 10 * 1024 * 1024
+
+
+def _fallback_media_extension(media_type: str) -> str:
+    """Choose an appropriate file extension for standard media types."""
+    match media_type:
+        case "photo":
+            return ".jpg"
+        case "video" | "video_note":
+            return ".mp4"
+        case "animation":
+            return ".gif"
+        case "voice":
+            return ".ogg"
+        case "audio":
+            return ".mp3"
+        case _:
+            return ".bin"
+
+
+def _safe_media_filename(
+    raw_name: Any,
+    media_type: str,
+    ticket_id: int,
+    message_id: int,
+) -> str:
+    """Sanitize user-provided filename or construct a safe fallback."""
+    if isinstance(raw_name, str):
+        normalized = raw_name.replace("\\", "/")
+        cleaned = PurePath(normalized).name.strip()
+        cleaned = "".join(c for c in cleaned if c.isprintable() and ord(c) >= 32).strip()
+        if cleaned:
+            return cleaned
+    ext = _fallback_media_extension(media_type)
+    return f"ticket-{ticket_id}-message-{message_id}{ext}"
 
 
 @dataclass(frozen=True)
@@ -398,15 +434,15 @@ class BedolagaClient:
 
         return absolute
 
-    async def download_media(self, ticket_id: int, message_id: int) -> ImageAttachment | None:
-        """Fetch a ticket screenshot, base64-encoded for the vision APIs.
-
-        The `media_file_id` on the message is a Telegram file id belonging to
-        the Bedolaga bot, which this bot's token cannot resolve — the bytes
-        have to come back through their API, under the same service key.
-        """
+    async def describe_media(
+        self,
+        ticket_id: int,
+        message_id: int,
+        fallback_media_type: str | None = None,
+    ) -> TicketMedia | None:
+        """Obtain and validate a safe media descriptor from the panel without downloading the body."""
         try:
-            described = await self.http_client.get(
+            response = await self.http_client.get(
                 f"{self.base_url}/tickets/{ticket_id}/messages/{message_id}/media",
                 headers=self.headers,
             )
@@ -414,20 +450,70 @@ class BedolagaClient:
             logger.warning("Bedolaga: could not describe media of message %d: %s", message_id, e)
             return None
 
-        if described.status_code != 200:
-            return None
-
-        media_url = (described.json() or {}).get("media_url")
-        if not media_url:
-            logger.info("Bedolaga: message %d has media the panel cannot serve", message_id)
-            return None
-
-        resolved = self.resolve_media_url(str(media_url))
-        if resolved is None:
+        if response.status_code != 200:
             return None
 
         try:
-            async with self.http_client.stream("GET", resolved, headers=self.headers) as downloaded:
+            payload = response.json()
+        except ValueError, TypeError:
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        media_url_raw = payload.get("media_url")
+        if not media_url_raw or not isinstance(media_url_raw, str):
+            logger.info("Bedolaga: message %d has media the panel cannot serve", message_id)
+            return None
+
+        resolved_url = self.resolve_media_url(media_url_raw)
+        if resolved_url is None:
+            return None
+
+        raw_media_type = payload.get("media_type")
+        if isinstance(raw_media_type, str) and raw_media_type.strip():
+            media_type = raw_media_type.strip()
+        elif fallback_media_type and fallback_media_type.strip():
+            media_type = fallback_media_type.strip()
+        else:
+            media_type = "document"
+
+        raw_filename = payload.get("file_name") or payload.get("filename")
+        filename = _safe_media_filename(raw_filename, media_type, ticket_id, message_id)
+
+        raw_mime = payload.get("mime_type")
+        mime_type = raw_mime.strip() if isinstance(raw_mime, str) and raw_mime.strip() else None
+
+        raw_size = payload.get("file_size")
+        file_size: int | None = None
+        if raw_size is not None:
+            if isinstance(raw_size, bool):
+                return None
+            try:
+                if isinstance(raw_size, str) and not raw_size.strip().isdigit():
+                    return None
+                parsed_size = int(raw_size)
+                if parsed_size < 0:
+                    return None
+                file_size = parsed_size
+            except ValueError, TypeError:
+                return None
+
+        return TicketMedia(
+            media_type=media_type,
+            media_url=resolved_url,
+            filename=filename,
+            mime_type=mime_type,
+            file_size=file_size,
+            download_headers=dict(self.headers),
+        )
+
+    async def download_image(self, media: TicketMedia) -> ImageAttachment | None:
+        """Fetch a ticket screenshot descriptor, base64-encoded for vision APIs."""
+        try:
+            async with self.http_client.stream(
+                "GET", media.media_url, headers=dict(media.download_headers)
+            ) as downloaded:
                 if downloaded.status_code != 200:
                     return None
 
@@ -436,15 +522,15 @@ class BedolagaClient:
                     try:
                         if int(declared_length) > MAX_MEDIA_BYTES:
                             logger.warning(
-                                "Bedolaga: media of message %d declares an oversized body (%s bytes)",
-                                message_id,
+                                "Bedolaga: media %s declares an oversized body (%s bytes)",
+                                media.filename,
                                 declared_length,
                             )
                             return None
                     except ValueError:
                         logger.warning(
-                            "Bedolaga: media of message %d returned invalid Content-Length %r",
-                            message_id,
+                            "Bedolaga: media %s returned invalid Content-Length %r",
+                            media.filename,
                             declared_length,
                         )
 
@@ -452,8 +538,8 @@ class BedolagaClient:
                 async for chunk in downloaded.aiter_bytes():
                     if len(content) + len(chunk) > MAX_MEDIA_BYTES:
                         logger.warning(
-                            "Bedolaga: media of message %d exceeded %d bytes while streaming",
-                            message_id,
+                            "Bedolaga: media %s exceeded %d bytes while streaming",
+                            media.filename,
                             MAX_MEDIA_BYTES,
                         )
                         return None
@@ -464,7 +550,7 @@ class BedolagaClient:
 
                 mime_type = downloaded.headers.get("content-type") or DEFAULT_MEDIA_MIME_TYPE
         except httpx.HTTPError as e:
-            logger.warning("Bedolaga: could not download media of message %d: %s", message_id, e)
+            logger.warning("Bedolaga: could not download media %s: %s", media.filename, e)
             return None
 
         return ImageAttachment(

@@ -13,7 +13,7 @@ from app.bedolaga.client import (
     BedolagaClient,
     PostedTicketReply,
 )
-from app.bedolaga.types import TELEGRAM_ID_UNKNOWN, TelegramIdLookup
+from app.bedolaga.types import TELEGRAM_ID_UNKNOWN, TelegramIdLookup, TicketMedia
 
 BASE_URL = "http://bedolaga:8080"
 API_KEY = "test-api-key"
@@ -363,129 +363,276 @@ class TestResolveTelegramId:
         assert (await client.resolve_telegram_id(55)).telegram_id == 42
 
 
-class TestDownloadMedia:
-    """A ticket screenshot lives behind the panel's own API key."""
+class TestDescribeMedia:
+    """Describing ticket media attachments into safe transport-neutral descriptors."""
 
-    async def test_returns_the_encoded_image(self) -> None:
+    async def test_describes_media_with_all_fields(self) -> None:
         media_response = _response(
-            200, {"media_type": "photo", "media_url": "http://bedolaga:8080/media/abc"}
+            200,
+            {
+                "media_type": "video",
+                "media_url": "http://bedolaga:8080/media/video.mp4",
+                "file_name": "client.log",
+                "mime_type": "video/mp4",
+                "file_size": 2048,
+            },
+        )
+        client, http_client = _client(get=AsyncMock(return_value=media_response))
+        media = await client.describe_media(17, 100, "video")
+
+        assert media is not None
+        assert media.media_type == "video"
+        assert media.media_url == "http://bedolaga:8080/media/video.mp4"
+        assert media.filename == "client.log"
+        assert media.mime_type == "video/mp4"
+        assert media.file_size == 2048
+        assert media.download_headers == {"X-API-Key": API_KEY}
+        assert (
+            http_client.get.await_args.args[0]
+            == "http://bedolaga:8080/tickets/17/messages/100/media"
+        )
+        assert http_client.get.await_args.kwargs["headers"] == {"X-API-Key": API_KEY}
+
+    async def test_accepts_filename_alias(self) -> None:
+        media_response = _response(
+            200,
+            {
+                "media_type": "document",
+                "media_url": "http://bedolaga:8080/media/doc.pdf",
+                "filename": "document.pdf",
+            },
         )
         client, _ = _client(get=AsyncMock(return_value=media_response))
+        media = await client.describe_media(17, 100)
+        assert media is not None
+        assert media.filename == "document.pdf"
 
-        attachment = await client.download_media(17, 100)
+    async def test_sanitizes_directory_traversal_and_paths_to_basename(self) -> None:
+        media_response = _response(
+            200,
+            {
+                "media_type": "document",
+                "media_url": "http://bedolaga:8080/media/log",
+                "file_name": "../../client.log",
+            },
+        )
+        client, _ = _client(get=AsyncMock(return_value=media_response))
+        media = await client.describe_media(17, 100)
+        assert media is not None
+        assert media.filename == "client.log"
+
+    @pytest.mark.parametrize(
+        ("raw_name", "media_type", "expected_filename"),
+        [
+            ("", "photo", "ticket-17-message-100.jpg"),
+            ("   \n\t", "video", "ticket-17-message-100.mp4"),
+            (None, "video_note", "ticket-17-message-100.mp4"),
+            ("\x00\x01\x02", "animation", "ticket-17-message-100.gif"),
+            (None, "voice", "ticket-17-message-100.ogg"),
+            (None, "audio", "ticket-17-message-100.mp3"),
+            (None, "document", "ticket-17-message-100.bin"),
+            (None, "unknown_type", "ticket-17-message-100.bin"),
+        ],
+    )
+    async def test_generates_safe_fallback_filename(
+        self, raw_name: str | None, media_type: str, expected_filename: str
+    ) -> None:
+        payload: dict[str, Any] = {
+            "media_type": media_type,
+            "media_url": "http://bedolaga:8080/media/test",
+        }
+        if raw_name is not None:
+            payload["file_name"] = raw_name
+        client, _ = _client(get=AsyncMock(return_value=_response(200, payload)))
+        media = await client.describe_media(17, 100)
+        assert media is not None
+        assert media.filename == expected_filename
+
+    async def test_applies_fallback_media_type_when_payload_omits_media_type(self) -> None:
+        media_response = _response(
+            200,
+            {"media_url": "http://bedolaga:8080/media/data"},
+        )
+        client, _ = _client(get=AsyncMock(return_value=media_response))
+        media = await client.describe_media(17, 100, fallback_media_type="photo")
+        assert media is not None
+        assert media.media_type == "photo"
+
+    async def test_defaults_media_type_to_document_when_both_omitted(self) -> None:
+        media_response = _response(
+            200,
+            {"media_url": "http://bedolaga:8080/media/data"},
+        )
+        client, _ = _client(get=AsyncMock(return_value=media_response))
+        media = await client.describe_media(17, 100, fallback_media_type=None)
+        assert media is not None
+        assert media.media_type == "document"
+
+    async def test_resolves_relative_media_url(self) -> None:
+        media_response = _response(200, {"media_url": "/media/file.mp4"})
+        client, _ = _client(get=AsyncMock(return_value=media_response))
+        media = await client.describe_media(17, 100)
+        assert media is not None
+        assert media.media_url == "http://bedolaga:8080/media/file.mp4"
+
+    async def test_preserves_base_url_path_prefix_for_relative_media(self) -> None:
+        media_response = _response(200, {"media_url": "media/file.mp4"})
+        http_client = MagicMock(spec=httpx.AsyncClient)
+        http_client.get = AsyncMock(return_value=media_response)
+        client = BedolagaClient("https://bedolaga/api", API_KEY, http_client)
+        media = await client.describe_media(17, 100)
+        assert media is not None
+        assert media.media_url == "https://bedolaga/api/media/file.mp4"
+
+    async def test_refuses_foreign_host(self) -> None:
+        media_response = _response(200, {"media_url": "http://evil.example.com/steal"})
+        client, _ = _client(get=AsyncMock(return_value=media_response))
+        assert await client.describe_media(17, 100) is None
+
+    async def test_refuses_https_to_http_downgrade(self) -> None:
+        media_response = _response(200, {"media_url": "http://bedolaga/file"})
+        http_client = MagicMock(spec=httpx.AsyncClient)
+        http_client.get = AsyncMock(return_value=media_response)
+        client = BedolagaClient("https://bedolaga", API_KEY, http_client)
+        assert await client.describe_media(17, 100) is None
+
+    async def test_refuses_different_port(self) -> None:
+        media_response = _response(200, {"media_url": "https://bedolaga:9000/file"})
+        http_client = MagicMock(spec=httpx.AsyncClient)
+        http_client.get = AsyncMock(return_value=media_response)
+        client = BedolagaClient("https://bedolaga:8443", API_KEY, http_client)
+        assert await client.describe_media(17, 100) is None
+
+    async def test_returns_none_on_http_error(self) -> None:
+        client, _ = _client(get=AsyncMock(side_effect=httpx.ConnectError("refused")))
+        assert await client.describe_media(17, 100) is None
+
+    async def test_returns_none_on_non_200(self) -> None:
+        client, _ = _client(get=AsyncMock(return_value=_response(404, {})))
+        assert await client.describe_media(17, 100) is None
+
+    async def test_returns_none_on_non_dict_json(self) -> None:
+        client, _ = _client(get=AsyncMock(return_value=_response(200, ["not-a-dict"])))
+        assert await client.describe_media(17, 100) is None
+
+    async def test_returns_none_on_empty_or_null_media_url(self) -> None:
+        client, _ = _client(get=AsyncMock(return_value=_response(200, {"media_url": ""})))
+        assert await client.describe_media(17, 100) is None
+
+    @pytest.mark.parametrize("invalid_size", [-1, -100, "not-a-number", "12.34"])
+    async def test_returns_none_on_negative_or_invalid_file_size(self, invalid_size: Any) -> None:
+        payload = {
+            "media_type": "photo",
+            "media_url": "http://bedolaga:8080/media/test.jpg",
+            "file_size": invalid_size,
+        }
+        client, _ = _client(get=AsyncMock(return_value=_response(200, payload)))
+        assert await client.describe_media(17, 100) is None
+
+
+class TestDownloadImage:
+    """Downloading vision attachments from TicketMedia descriptors."""
+
+    async def test_downloads_and_encodes_image(self) -> None:
+        media = TicketMedia(
+            media_type="photo",
+            media_url="http://bedolaga:8080/media/photo.jpg",
+            filename="photo.jpg",
+            download_headers={"X-API-Key": API_KEY},
+        )
+        stream = MagicMock(return_value=_StreamContext(_stream_response(b"my-image-data")))
+        client, http_client = _client(stream=stream)
+
+        attachment = await client.download_image(media)
         assert attachment is not None
+        assert attachment.base64_image == base64.b64encode(b"my-image-data").decode("ascii")
         assert attachment.mime_type == "image/png"
-        assert attachment.base64_image == "YmluYXJ5LWJ5dGVz"
+        assert http_client.stream.call_args.args[:2] == (
+            "GET",
+            "http://bedolaga:8080/media/photo.jpg",
+        )
+        assert http_client.stream.call_args.kwargs["headers"] == {"X-API-Key": API_KEY}
 
-    async def test_defaults_the_mime_type_when_the_server_omits_it(self) -> None:
-        media_response = _response(200, {"media_url": "http://bedolaga:8080/media/abc"})
-        stream = MagicMock(return_value=_StreamContext(_stream_response(b"x", headers={})))
-        client, _ = _client(get=AsyncMock(return_value=media_response), stream=stream)
-        attachment = await client.download_media(17, 100)
+    async def test_strips_parameters_from_content_type(self) -> None:
+        media = TicketMedia(
+            media_type="photo",
+            media_url="http://bedolaga:8080/media/photo.jpg",
+            filename="photo.jpg",
+            download_headers={"X-API-Key": API_KEY},
+        )
+        stream = MagicMock(
+            return_value=_StreamContext(
+                _stream_response(b"bytes", headers={"content-type": "image/jpeg; charset=utf-8"})
+            )
+        )
+        client, _ = _client(stream=stream)
+        attachment = await client.download_image(media)
         assert attachment is not None
         assert attachment.mime_type == "image/jpeg"
 
-    async def test_returns_none_without_a_media_url(self) -> None:
-        client, _ = _client(get=AsyncMock(return_value=_response(200, {"media_url": None})))
-        assert await client.download_media(17, 100) is None
-
-    async def test_returns_none_when_the_download_fails(self) -> None:
-        media_response = _response(200, {"media_url": "http://bedolaga:8080/media/abc"})
-        client, _ = _client(
-            get=AsyncMock(return_value=media_response),
-            stream=MagicMock(side_effect=httpx.ConnectError("no")),
+    async def test_defaults_mime_type_when_omitted(self) -> None:
+        media = TicketMedia(
+            media_type="photo",
+            media_url="http://bedolaga:8080/media/photo.jpg",
+            filename="photo.jpg",
+            download_headers={"X-API-Key": API_KEY},
         )
-        assert await client.download_media(17, 100) is None
-
-    async def test_resolves_a_relative_media_url_against_the_base_url(self) -> None:
-        """httpx cannot request a bare path, and the panel plausibly returns one.
-
-        Passing it through raised UnsupportedProtocol, which the handler below
-        swallowed — screenshots would have silently stopped reaching the model.
-        """
-        media_response = _response(200, {"media_url": "/media/abc"})
-        get = AsyncMock(return_value=media_response)
-        stream = MagicMock(return_value=_StreamContext(_stream_response()))
-        client, _ = _client(get=get, stream=stream)
-
-        attachment = await client.download_media(17, 100)
-
+        stream = MagicMock(return_value=_StreamContext(_stream_response(b"bytes", headers={})))
+        client, _ = _client(stream=stream)
+        attachment = await client.download_image(media)
         assert attachment is not None
-        assert attachment.base64_image == "YmluYXJ5LWJ5dGVz"
-        assert stream.call_args.args[:2] == ("GET", "http://bedolaga:8080/media/abc")
+        assert attachment.mime_type == "image/jpeg"
 
-    async def test_refuses_a_media_url_on_a_foreign_host(self) -> None:
-        """The API key goes to the configured panel and nowhere else.
+    async def test_returns_none_on_empty_body(self) -> None:
+        media = TicketMedia(
+            media_type="photo",
+            media_url="http://bedolaga:8080/media/photo.jpg",
+            filename="photo.jpg",
+        )
+        stream = MagicMock(return_value=_StreamContext(_stream_response(b"")))
+        client, _ = _client(stream=stream)
+        assert await client.download_image(media) is None
 
-        This is the only URL in the bot chosen by a remote response body, so a
-        misconfigured or compromised panel must not be able to redirect the
-        service token at a host of its choosing.
-        """
-        media_response = _response(200, {"media_url": "http://evil.example.com/steal"})
-        get = AsyncMock(side_effect=[media_response])
-        client, http_client = _client(get=get)
+    async def test_returns_none_on_declared_oversize(self) -> None:
+        media = TicketMedia(
+            media_type="photo",
+            media_url="http://bedolaga:8080/media/photo.jpg",
+            filename="photo.jpg",
+        )
+        streamed = _stream_response(headers={"content-length": str(MAX_MEDIA_BYTES + 1)})
+        client, _ = _client(stream=MagicMock(return_value=_StreamContext(streamed)))
+        assert await client.download_image(media) is None
+        streamed.aiter_bytes.assert_not_called()
 
-        assert await client.download_media(17, 100) is None
-        assert get.await_count == 1
-        http_client.stream.assert_not_called()
-
-    async def test_refuses_https_to_http_downgrade(self) -> None:
-        """Never send the API key over unencrypted HTTP when base_url is HTTPS."""
-        media_response = _response(200, {"media_url": "http://bedolaga/file"})
-        get = AsyncMock(side_effect=[media_response])
-        http_client = MagicMock(spec=httpx.AsyncClient)
-        http_client.get = get
-        client = BedolagaClient("https://bedolaga", API_KEY, http_client)
-
-        assert await client.download_media(17, 100) is None
-        # Must refuse without making the second GET to download the file
-        assert get.await_count == 1
-
-    async def test_refuses_different_effective_port(self) -> None:
-        """Refuse media pointing to a different port on the same host."""
-        media_response = _response(200, {"media_url": "https://bedolaga:9000/file"})
-        get = AsyncMock(side_effect=[media_response])
-        http_client = MagicMock(spec=httpx.AsyncClient)
-        http_client.get = get
-        client = BedolagaClient("https://bedolaga:8443", API_KEY, http_client)
-
-        assert await client.download_media(17, 100) is None
-        assert get.await_count == 1
-
-    async def test_preserves_base_url_path_prefix_for_relative_media(self) -> None:
-        """Relative media paths must remain under base_url path prefix (e.g. /api)."""
-        media_response = _response(200, {"media_url": "/media/abc"})
-        get = AsyncMock(return_value=media_response)
-        stream = MagicMock(return_value=_StreamContext(_stream_response()))
-        http_client = MagicMock(spec=httpx.AsyncClient)
-        http_client.get = get
-        http_client.stream = stream
-        client = BedolagaClient("https://bedolaga/api", API_KEY, http_client)
-
-        attachment = await client.download_media(17, 100)
-        assert attachment is not None
-        assert stream.call_args.args[:2] == ("GET", "https://bedolaga/api/media/abc")
-
-    async def test_refuses_media_exceeding_max_size(self) -> None:
-        """Never download/load into memory media exceeding MAX_MEDIA_BYTES."""
-        media_response = _response(200, {"media_url": "/media/large.png"})
+    async def test_returns_none_on_stream_exceeding_limit(self) -> None:
+        media = TicketMedia(
+            media_type="photo",
+            media_url="http://bedolaga:8080/media/photo.jpg",
+            filename="photo.jpg",
+        )
         oversized = _stream_response(
             chunks=[b"x" * (MAX_MEDIA_BYTES // 2), b"y" * (MAX_MEDIA_BYTES // 2 + 1)]
         )
-        client, _ = _client(
-            get=AsyncMock(return_value=media_response),
-            stream=MagicMock(return_value=_StreamContext(oversized)),
+        client, _ = _client(stream=MagicMock(return_value=_StreamContext(oversized)))
+        assert await client.download_image(media) is None
+
+    async def test_returns_none_on_http_error(self) -> None:
+        media = TicketMedia(
+            media_type="photo",
+            media_url="http://bedolaga:8080/media/photo.jpg",
+            filename="photo.jpg",
         )
+        client, _ = _client(stream=MagicMock(side_effect=httpx.ConnectError("refused")))
+        assert await client.download_image(media) is None
 
-        assert await client.download_media(17, 100) is None
-
-    async def test_rejects_declared_oversize_before_reading_a_chunk(self) -> None:
-        media_response = _response(200, {"media_url": "/media/large.png"})
-        streamed = _stream_response(headers={"content-length": str(MAX_MEDIA_BYTES + 1)})
-        client, _ = _client(
-            get=AsyncMock(return_value=media_response),
-            stream=MagicMock(return_value=_StreamContext(streamed)),
+    async def test_does_not_mutate_ticket_media(self) -> None:
+        media = TicketMedia(
+            media_type="photo",
+            media_url="http://bedolaga:8080/media/photo.jpg",
+            filename="photo.jpg",
+            download_headers={"X-API-Key": API_KEY},
         )
-
-        assert await client.download_media(17, 100) is None
-        streamed.aiter_bytes.assert_not_called()
+        client, _ = _client(stream=MagicMock(return_value=_StreamContext(_stream_response(b"img"))))
+        await client.download_image(media)
+        assert media.filename == "photo.jpg"
+        assert media.download_headers == {"X-API-Key": API_KEY}

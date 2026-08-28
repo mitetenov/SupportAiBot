@@ -72,11 +72,15 @@ UTC_TIMESTAMP_COLUMNS: tuple[tuple[str, str], ...] = (
 # not add columns to an existing one. The first version of the integration only
 # stored only the user-message watermark. The bot now also records its own reply
 # id and the latest human reply id, so an admin message written in Bedolaga's
-# panel can be recognised and can refresh a finite ownership window.
+# panel can be recognised and can refresh a finite ownership window. Media
+# watermarks keep an attachment retryable after the ticket itself is answered.
 BEDOLAGA_STATE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("bedolaga_ticket_state", "last_bot_reply_message_id"),
     ("bedolaga_ticket_state", "last_human_reply_message_id"),
+    ("bedolaga_ticket_state", "last_mirrored_media_message_id"),
+    ("bedolaga_ticket_state", "pending_media_message_id"),
 )
+
 
 # Unlike the legacy timestamp columns above, this field means "no human reply"
 # when it is NULL. Giving old rows DEFAULT now() would manufacture operator

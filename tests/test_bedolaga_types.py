@@ -1,6 +1,39 @@
 """Unit tests for parsing the Bedolaga ticket payloads."""
 
-from app.bedolaga.types import Ticket, TicketMessage, ticket_from_payload
+from app.bedolaga.types import Ticket, TicketMedia, TicketMessage, ticket_from_payload
+
+
+class TestTicketMedia:
+    """The transport-neutral ticket media descriptor."""
+
+    def test_stores_all_fields(self) -> None:
+        media = TicketMedia(
+            media_type="video",
+            media_url="https://bedolaga/media/video.mp4",
+            filename="video.mp4",
+            mime_type="video/mp4",
+            file_size=1024,
+            download_headers={"X-API-Key": "secret-key"},
+        )
+        assert media.media_type == "video"
+        assert media.media_url == "https://bedolaga/media/video.mp4"
+        assert media.filename == "video.mp4"
+        assert media.mime_type == "video/mp4"
+        assert media.file_size == 1024
+        assert media.download_headers == {"X-API-Key": "secret-key"}
+
+    def test_repr_does_not_contain_download_headers_or_secret_keys(self) -> None:
+        media = TicketMedia(
+            media_type="photo",
+            media_url="https://bedolaga/media/photo.jpg",
+            filename="photo.jpg",
+            download_headers={"X-API-Key": "super-secret-token"},
+        )
+        repr_str = repr(media)
+        assert "super-secret-token" not in repr_str
+        assert "X-API-Key" not in repr_str
+        assert "download_headers" not in repr_str
+
 
 PAYLOAD = {
     "id": 17,

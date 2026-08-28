@@ -4,6 +4,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
+from app.bedolaga.types import TicketMedia
 from app.bot.sender import TelegramMessageSender
 from app.bot.topic_manager import TopicManager
 from app.constants import get_message
@@ -42,8 +43,7 @@ class SupportGroupForwarder:
         needs_escalation: bool,
         illustration_message_id: int | None = None,
         ticket_id: int | None = None,
-        photo_base64: str | None = None,
-        photo_mime_type: str | None = None,
+        ticket_media: TicketMedia | None = None,
     ) -> int | None:
         """Copies batch messages into user topic and appends bot response.
 
@@ -62,11 +62,10 @@ class SupportGroupForwarder:
 
         if not user_message_ids:
             await self._set_active_ticket(user_id, topic_id, ticket_id)
-            await self._forward_ticket_photo(
+            await self._forward_ticket_media(
                 topic_id,
                 ticket_id,
-                photo_base64,
-                photo_mime_type,
+                ticket_media,
             )
             await self._send_bot_response(topic_id, user_name, bot_response, needs_escalation)
             await self._forward_illustration(user_chat_id, illustration_message_id, topic_id)
@@ -95,23 +94,73 @@ class SupportGroupForwarder:
         await self._set_active_ticket(user_id, topic_id, ticket_id)
         return topic_id
 
-    async def _forward_ticket_photo(
+    async def forward_ticket_media(
+        self,
+        user_chat_id: int,
+        user: Any,
+        ticket_id: int,
+        ticket_media: TicketMedia | None = None,
+        media_fetch_failed: bool = False,
+    ) -> int | None:
+        """Stream a ticket attachment into the operator topic, or report failure.
+
+        Returns the topic_id if resolved, or None if no topic could be found or created.
+        """
+        user_id = getattr(user, "id", user_chat_id)
+        user_name = self.resolve_user_name(user)
+        topic_id = await self.topic_manager.resolve_topic_id(user_id, user_name)
+
+        if topic_id is None:
+            logger.warning(
+                "Cannot forward ticket media to support group: no topic for user %s", user_id
+            )
+            return None
+
+        await self._set_active_ticket(user_id, topic_id, ticket_id)
+
+        if media_fetch_failed or ticket_media is None:
+            await self.sender.send_to_topic(
+                self.support_group_chat_id,
+                topic_id,
+                get_message("bedolaga.media.forward.failed", ticket_id),
+            )
+            return topic_id
+
+        msg_id = await self.sender.send_ticket_media(
+            chat_id=self.support_group_chat_id,
+            media=ticket_media,
+            message_thread_id=topic_id,
+            caption=get_message("bedolaga.media.caption", ticket_id),
+        )
+        if msg_id is None:
+            await self.sender.send_to_topic(
+                self.support_group_chat_id,
+                topic_id,
+                get_message("bedolaga.media.forward.failed", ticket_id),
+            )
+        return topic_id
+
+    async def _forward_ticket_media(
         self,
         topic_id: int,
         ticket_id: int | None,
-        photo_base64: str | None,
-        photo_mime_type: str | None,
+        ticket_media: TicketMedia | None,
     ) -> None:
-        """Upload a ticket screenshot into the operator topic when available."""
-        if ticket_id is None or photo_base64 is None or photo_mime_type is None:
+        """Stream a ticket attachment into the operator topic when available."""
+        if ticket_id is None or ticket_media is None:
             return
-        await self.sender.send_photo_bytes(
-            self.support_group_chat_id,
-            photo_base64,
-            photo_mime_type,
+        msg_id = await self.sender.send_ticket_media(
+            chat_id=self.support_group_chat_id,
+            media=ticket_media,
             message_thread_id=topic_id,
-            caption=get_message("bedolaga.photo.caption", ticket_id),
+            caption=get_message("bedolaga.media.caption", ticket_id),
         )
+        if msg_id is None:
+            await self.sender.send_to_topic(
+                self.support_group_chat_id,
+                topic_id,
+                get_message("bedolaga.media.forward.failed", ticket_id),
+            )
 
     async def _set_active_ticket(
         self,
