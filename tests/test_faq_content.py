@@ -83,6 +83,10 @@ class TestSubscriptionLink:
 
     def test_an_entry_explains_how_to_copy_the_link(self, entries: list[dict[str, Any]]) -> None:
         answer = find(entries, "ссылк", "копировать")["answer"].lower()
+        assert "отправит" in answer
+        assert "вручную" in answer
+        assert "@peipivosalesbot" in answer
+        assert "lk.peipivo.top" in answer
         assert "три точки" in answer
 
     def test_the_prompt_no_longer_denies_that_menu_exists(self) -> None:

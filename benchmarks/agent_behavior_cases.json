@@ -10,6 +10,15 @@
       "expect_escalation": false
     },
     {
+      "name": "subscription_url_is_returned_with_manual_location",
+      "user_message": "Дайте мою ссылку на подписку.",
+      "expected_tools": ["users_get_subscription_url_by_telegram_id"],
+      "forbidden_tools": ["users_get_by_telegram_id", "bedolaga_subscription_get"],
+      "must_contain_any": ["https://sub.example.test/synthetic", "@peipivosalesbot", "lk.peipivo.top", "три точки"],
+      "must_not_contain": ["не могу предоставить", "обратитесь в поддержку"],
+      "expect_escalation": false
+    },
+    {
       "name": "deposit_without_purchase",
       "user_message": "Я пополнил баланс, но подписка не продлилась. Что произошло?",
       "expected_tools": ["bedolaga_billing_get"],

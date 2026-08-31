@@ -142,6 +142,15 @@ def build_synthetic_router() -> tuple[McpRouter, list[SyntheticMcpClient]]:
             },
         ),
         McpTool(
+            "users_get_subscription_url_by_telegram_id",
+            "Return the current Telegram user's only unambiguous VPN subscription URL.",
+            {
+                "type": "object",
+                "properties": {"telegramId": {"type": "integer"}},
+                "required": ["telegramId"],
+            },
+        ),
+        McpTool(
             "subscriptions_get_by_user_id",
             "Read factual VPN-panel subscription status by panel userId.",
             {
@@ -198,6 +207,10 @@ def build_synthetic_router() -> tuple[McpRouter, list[SyntheticMcpClient]]:
                         }
                     ]
                 },
+            },
+            "users_get_subscription_url_by_telegram_id": {
+                "status": "found",
+                "subscriptionUrl": "https://sub.example.test/synthetic",
             },
             "subscriptions_get_by_user_id": {
                 "ok": True,

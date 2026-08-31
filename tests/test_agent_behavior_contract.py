@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.constants import SupportPrompt
-from app.llm.mcp_router import BEDOLAGA_READ_TOOLS
+from app.llm.mcp_router import BEDOLAGA_READ_TOOLS, REMWNAWAVE_READ_TOOLS
 
 FAQ_PATH = Path("faq/faq.json")
 
@@ -23,6 +23,18 @@ EXPECTED_BEDOLAGA_TOOLS = {
     "bedolaga_payment_status_get",
     "bedolaga_promocode_check",
     "bedolaga_gifts_get",
+}
+
+EXPECTED_REMNAWAVE_READ_TOOLS = {
+    "users_get_by_telegram_id",
+    "users_get_subscription_url_by_telegram_id",
+    "users_get",
+    "subscriptions_get_by_user_id",
+    "users_accessible_nodes",
+    "bandwidth_user_usage",
+    "hwid_devices_list",
+    "nodes_list",
+    "nodes_get",
 }
 
 
@@ -83,6 +95,20 @@ def test_router_faq_does_not_offer_a_third_party_vless_configuration() -> None:
 
 def test_bedolaga_allowlist_is_exactly_the_read_only_1_1_contract() -> None:
     assert BEDOLAGA_READ_TOOLS == frozenset(EXPECTED_BEDOLAGA_TOOLS)
+
+
+def test_remnawave_allowlist_includes_the_scoped_subscription_url_lookup() -> None:
+    assert REMWNAWAVE_READ_TOOLS == frozenset(EXPECTED_REMNAWAVE_READ_TOOLS)
+
+
+def test_subscription_link_request_returns_the_url_and_manual_locations() -> None:
+    prompt = SupportPrompt.SYSTEM
+    assert "users_get_subscription_url_by_telegram_id" in prompt
+    assert "верни саму ссылку" in prompt
+    assert "не возвращай ни одну ссылку" in prompt
+    assert "вручную" in prompt
+    assert "@PeipivoSalesBot" in prompt
+    assert "три точки" in prompt
 
 
 def test_bedolaga_effective_status_is_not_treated_as_panel_state() -> None:
