@@ -39,6 +39,7 @@ SERVER_BEDOLAGA = "bedolaga"
 REMWNAWAVE_READ_TOOLS: frozenset[str] = frozenset(
     {
         "users_get_by_telegram_id",
+        "users_get_subscription_url_by_telegram_id",
         "users_get",
         "subscriptions_get_by_user_id",
         "users_accessible_nodes",

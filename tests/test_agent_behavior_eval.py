@@ -11,10 +11,11 @@ from benchmarks.agent_behavior_eval import (
 )
 
 
-def test_behavior_cases_cover_payment_identity_panel_and_escalation() -> None:
+def test_behavior_cases_cover_subscription_link_payment_identity_panel_and_escalation() -> None:
     names = {case.name for case in load_cases()}
     assert names == {
         "installation_uses_ready_instruction",
+        "subscription_url_is_returned_with_manual_location",
         "deposit_without_purchase",
         "effective_status_requires_panel_check",
         "foreign_identity_is_rejected",

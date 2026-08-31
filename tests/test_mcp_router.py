@@ -288,6 +288,34 @@ class TestMcpRouter:
         assert client.last_arguments().get("telegramId") == CALLER
 
     @pytest.mark.asyncio
+    async def test_should_expose_subscription_url_lookup_and_pin_telegram_id(self) -> None:
+        tool_name = "users_get_subscription_url_by_telegram_id"
+        client = StubMcpClient(
+            tools=[
+                McpTool(
+                    name=tool_name,
+                    description="Return the current user's subscription URL",
+                    input_schema={
+                        "type": "object",
+                        "properties": {"telegramId": {"type": "number"}},
+                    },
+                )
+            ],
+            tool_results={tool_name: '{"status":"not_found","subscriptionUrl":null}'},
+        )
+        router = create_router([client], readonly=True)
+
+        assert [tool.name for tool in router.list_tools()] == [tool_name]
+
+        await router.call_tool(
+            tool_name,
+            {"telegramId": 999_999},
+            telegram_user_id=CALLER,
+        )
+
+        assert client.last_arguments() == {"telegramId": CALLER}
+
+    @pytest.mark.asyncio
     async def test_should_send_the_id_as_a_string_when_the_schema_declares_one(self) -> None:
         client = StubMcpClient(
             tools=[
