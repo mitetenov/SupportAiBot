@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
-VALID_LLM_PROVIDERS: list[str] = ["deepseek", "gemini", "openai"]
+VALID_LLM_PROVIDERS: list[str] = ["deepseek", "gemini", "openai", "groq"]
 VALID_EMBEDDING_PROVIDERS: list[str] = ["gemini", "openai"]
 VALID_REASONING_EFFORTS: list[str] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     openai_model: str | None = "gpt-5.6-luna"
     openai_embedding_model: str = "text-embedding-3-small"
     openai_temperature: float | None = None
+
+    # Groq
+    groq_api_key: SecretStr | None = None
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    groq_model: str | None = "llama-3.3-70b-versatile"
 
     # Remnawave MCP
     remnawave_mcp_url: str = "http://localhost:3100"
@@ -248,6 +253,17 @@ class Settings(BaseSettings):
             _require_text(
                 self.openai_model,
                 "OPENAI_MODEL не задан. Укажите модель, например: OPENAI_MODEL=gpt-5.6-luna",
+            )
+
+        elif normalized_llm == "groq":
+            _require_text(
+                self.groq_api_key,
+                "GROQ_API_KEY не задан. Получите ключ на https://console.groq.com/keys "
+                "и добавьте в .env: GROQ_API_KEY=gsk_...",
+            )
+            _require_text(
+                self.groq_model,
+                "GROQ_MODEL не задан. Укажите модель, например: GROQ_MODEL=llama-3.3-70b-versatile",
             )
 
         # 3. Validate Embedding Provider

@@ -198,7 +198,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
-| `LLM_PROVIDER` | `openai` | `openai`, `gemini` или `deepseek` |
+| `LLM_PROVIDER` | `openai` | `openai`, `gemini`, `deepseek` или `groq` |
 | `REASONING_EFFORT` | `none` | Профиль reasoning: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `auto` не поддерживается |
 | `OPENAI_API_KEY` | — | Нужен при `LLM_PROVIDER=openai` |
 | `OPENAI_MODEL` | `gpt-5.6-luna` | Модель OpenAI |
@@ -206,6 +206,9 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `GEMINI_MODEL` | — | Модель Gemini |
 | `DEEPSEEK_API_KEY` | — | Нужен при `LLM_PROVIDER=deepseek` |
 | `DEEPSEEK_MODEL` | — | Модель DeepSeek |
+| `GROQ_API_KEY` | — | Нужен при `LLM_PROVIDER=groq` |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Модель Groq |
+| `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | OpenAI-совместимый endpoint Groq |
 | `EMBEDDING_PROVIDER` | `gemini` | Провайдер поиска по базе знаний: `gemini` или `openai` |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Модель поиска при `EMBEDDING_PROVIDER=openai` |
 
@@ -468,6 +471,7 @@ curl -X POST "$PANEL_URL/webhooks" \
 | OpenAI | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | да | да |
 | Gemini | `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` | да | да |
 | DeepSeek | `deepseek-v4-flash`, `deepseek-v4-pro` | нет | нет |
+| Groq | `llama-3.3-70b-versatile` и другие модели Groq | нет | нет |
 
 ## Локальная разработка
 
