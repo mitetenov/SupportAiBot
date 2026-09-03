@@ -55,11 +55,20 @@ def test_parses_text_response():
 
 def test_parses_tool_call_response():
     client = make_client()
-    response = client.parse_response({
-        "choices": [{"message": {"content": "", "tool_calls": [{
-            "id": "call-1", "function": {"name": "nodes_list", "arguments": "{}"}
-        }]}}]
-    })
+    response = client.parse_response(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {"id": "call-1", "function": {"name": "nodes_list", "arguments": "{}"}}
+                        ],
+                    }
+                }
+            ]
+        }
+    )
     assert response.tool_calls[0].name == "nodes_list"
     assert response.tool_calls[0].id == "call-1"
 

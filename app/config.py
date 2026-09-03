@@ -137,7 +137,7 @@ class Settings(BaseSettings):
             for x in v:
                 try:
                     from_items.add(int(x))
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     continue
             return from_items
         if isinstance(v, str):
