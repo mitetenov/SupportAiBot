@@ -22,7 +22,13 @@
       "name": "deposit_without_purchase",
       "user_message": "Я пополнил баланс, но подписка не продлилась. Что произошло?",
       "expected_tools": ["bedolaga_billing_get"],
-      "forbidden_tools": [],
+      "forbidden_tools": [
+        "users_get_by_telegram_id",
+        "users_get_subscription_url_by_telegram_id",
+        "subscriptions_get_by_user_id",
+        "bedolaga_user_get",
+        "bedolaga_subscription_get"
+      ],
       "must_contain_any": ["приобрет", "куп", "период"],
       "must_not_contain": ["автоматически продлится"],
       "expect_escalation": false
@@ -57,24 +63,35 @@
     {
       "name": "vague_payment_complaint_requires_clarification",
       "user_message": "Не подключается функция оплата",
+      "expect_no_tools": true,
       "expected_tools": [],
       "forbidden_tools": [
         "bedolaga_billing_get",
         "bedolaga_user_get",
+        "bedolaga_subscription_get",
         "users_get_by_telegram_id",
+        "users_get_subscription_url_by_telegram_id",
         "subscriptions_get_by_user_id"
       ],
-      "must_contain_any": ["?", "где", "каком шаге", "какая ошибка", "уточните"],
+      "must_contain_any": ["где", "каком шаге", "каком этапе", "какая ошибка", "скриншот", "в боте или"],
       "must_not_contain": [
         "аккаунт не найден",
         "нет аккаунта",
         "happ",
         "пинг",
         "обновить подписку",
-        "отключитесь от vpn"
+        "отключитесь от vpn",
+        "роутер",
+        "перезагрузите",
+        "другой способ",
+        "криптовалют",
+        "пополните баланс",
+        "купите подписку",
+        "приобретите период"
       ],
       "expect_escalation": false,
       "require_clarification": true,
+      "reject_premature_advice": true,
       "max_questions": 2,
       "faq_candidates": [
         "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?",
@@ -84,35 +101,55 @@
     {
       "name": "general_payment_howto_uses_faq_without_tools",
       "user_message": "Как оплатить подписку?",
+      "expect_no_tools": true,
       "expected_tools": [],
       "forbidden_tools": [
         "bedolaga_billing_get",
         "bedolaga_user_get",
+        "bedolaga_subscription_get",
         "users_get_by_telegram_id",
+        "users_get_subscription_url_by_telegram_id",
         "subscriptions_get_by_user_id"
       ],
       "must_contain_any": ["@peipivosalesbot", "баланс", "подписка", "период", "lk.peipivo.top"],
-      "must_not_contain": ["аккаунт не найден", "ваш баланс", "проверил"],
+      "must_not_contain": [
+        "аккаунт не найден",
+        "ваш баланс",
+        "проверил",
+        "автоматически продлится",
+        "продлится автоматически",
+        "автоматически активируется",
+        "активируется автоматически"
+      ],
       "expect_escalation": false,
+      "require_two_step_payment": true,
       "faq_candidates": [
         "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?"
       ]
     },
     {
       "name": "followup_with_known_context_avoids_repeated_questions",
-      "user_message": "Я нажал 'Пополнить' через СБП в боте, и вылезла ошибка банка",
+      "user_message": "Выбираю СБП, и вылезает ошибка банка",
       "scenario_history": [
         {
           "role": "user",
-          "content": "Не подключается функция оплата"
+          "content": "Не могу пополнить баланс в боте"
         },
         {
           "role": "assistant",
-          "content": "Уточните, пожалуйста, где именно вы производите оплату (в боте или в личном кабинете) и какая ошибка появляется?"
+          "content": "Уточните, пожалуйста, какой способ оплаты вы выбираете и какая ошибка появляется?"
         }
       ],
+      "expect_no_tools": true,
       "expected_tools": [],
-      "forbidden_tools": ["bedolaga_billing_get", "bedolaga_user_get", "users_get_by_telegram_id"],
+      "forbidden_tools": [
+        "bedolaga_billing_get",
+        "bedolaga_user_get",
+        "bedolaga_subscription_get",
+        "users_get_by_telegram_id",
+        "users_get_subscription_url_by_telegram_id",
+        "subscriptions_get_by_user_id"
+      ],
       "must_contain_any": ["другой способ", "карт", "криптовалют", "сбп", "позже", "/operator"],
       "must_not_contain": [
         "где вы оплачиваете",
@@ -131,8 +168,15 @@
       "user_message": "Проверьте мой платёж в боте, кнопка не работает",
       "expected_tools": ["bedolaga_billing_get"],
       "forbidden_tools": [],
-      "must_contain_any": ["не найден", "не удалось найти", "аккаунт"],
+      "must_contain_any": ["не найден", "не удалось найти"],
       "must_not_contain": [
+        "у вас нет аккаунта",
+        "нет аккаунта",
+        "вы не зарегистрированы",
+        "поэтому кнопка",
+        "из-за этого кнопка",
+        "кнопка не работает из-за",
+        "кнопка не работает, потому что",
         "кнопка сломалась",
         "сбой кнопки",
         "ошибка интерфейса",
@@ -140,6 +184,7 @@
         "банк отклонил"
       ],
       "expect_escalation": false,
+      "require_scoped_user_not_found": true,
       "custom_tool_results": {
         "bedolaga_billing_get": {
           "ok": false,
@@ -158,14 +203,29 @@
       "user_message": "Посмотрите, дошли ли деньги за подписку?",
       "expected_tools": ["bedolaga_billing_get"],
       "forbidden_tools": [],
-      "must_contain_any": ["временно", "не удалось проверить", "повторите", "позже", "сервис недоступен"],
+      "must_contain_any": [
+        "временно",
+        "не удалось проверить",
+        "повторите",
+        "позже",
+        "сервис недоступен"
+      ],
       "must_not_contain": [
         "аккаунт не найден",
         "у вас нет аккаунта",
+        "нет аккаунта",
         "пользователь не найден",
-        "вы не зарегистрированы"
+        "вы не зарегистрированы",
+        "платежа нет",
+        "нет платежа",
+        "платёж отсутствует",
+        "платеж отсутствует",
+        "деньги не дошли",
+        "оплата не поступила",
+        "вы не оплатили"
       ],
       "expect_escalation": false,
+      "reject_absent_payment_on_error": true,
       "custom_tool_results": {
         "bedolaga_billing_get": {
           "ok": false,

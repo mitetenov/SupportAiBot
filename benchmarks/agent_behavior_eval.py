@@ -15,7 +15,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from app.config import get_settings
+import httpx
+
+from app.config import Settings, get_settings
 from app.llm import (
     EscalationPolicy,
     McpClientInterface,
@@ -24,6 +26,7 @@ from app.llm import (
     create_llm_client,
     is_rejection,
 )
+from app.rag.service import FaqEmbeddingService
 from app.rag.types import FaqContext, FaqResult
 
 BENCHMARK_DIR = Path(__file__).resolve().parent
@@ -60,6 +63,11 @@ class BehaviorCase:
     expected_tool_order: list[str] = field(default_factory=list)
     require_clarification: bool = False
     max_questions: int | None = None
+    expect_no_tools: bool = False
+    require_two_step_payment: bool = False
+    reject_premature_advice: bool = False
+    require_scoped_user_not_found: bool = False
+    reject_absent_payment_on_error: bool = False
 
 
 @dataclass
@@ -187,13 +195,15 @@ class ScenarioHistory:
 MemoryHistory = ScenarioHistory
 
 
-class EvaluationFaqService:
-    """Evaluation FAQ service that formats real entries from faq/faq.json using production logic."""
+class EvaluationFaqService(FaqEmbeddingService):
+    """Evaluation FAQ service that substitutes only retrieval and delegates context formatting to FaqEmbeddingService."""
 
     def __init__(self, faq_path: Path | None = None) -> None:
+        super().__init__(db_manager=None, embedding_provider=None)  # type: ignore[arg-type]
         self._path = faq_path or FAQ_PATH
         self._entries: list[dict[str, Any]] = self._load_entries()
         self._current_candidates: list[str] = []
+        self.ready = True
 
     def _load_entries(self) -> list[dict[str, Any]]:
         if not self._path.exists():
@@ -222,13 +232,12 @@ class EvaluationFaqService:
                 return entry
         return None
 
-    async def build_faq_context(
+    async def search_with_fallback(
         self,
         query: str,
-        exclude: set[str] | None = None,
-        candidates: list[str] | None = None,
-    ) -> FaqContext:
-        candidate_patterns = candidates if candidates is not None else self._current_candidates
+        exclude_questions: set[str] | None = None,
+    ) -> list[FaqResult]:
+        candidate_patterns = self._current_candidates
         if not candidate_patterns and query:
             matched = self.find_entry(query)
             if matched:
@@ -252,29 +261,29 @@ class EvaluationFaqService:
                 )
             )
 
-        if exclude:
-            results = [r for r in results if r.question not in exclude]
+        if exclude_questions:
+            results = [r for r in results if r.question not in exclude_questions]
+        return results
 
-        if not results:
-            return FaqContext.EMPTY
-
-        sb = (
-            "Кандидаты FAQ (проверь соответствие вопросу, истории и фактам инструментов; "
-            "разрешено кратко изложить подходящую часть с сохранением точных названий, "
-            "ограничений, условий и порядка шагов; если кандидаты не подходят, уточни "
-            "проблему, не давай нерелевантных инструкций):\n"
-        )
-        for r in results:
-            sb += f"Вопрос: {r.question}\nИнструкция: {r.answer}\n\n"
-
-        max_similarity = max((r.similarity for r in results), default=0.0)
-
-        return FaqContext(
-            text=sb,
-            results=results,
-            max_similarity=max_similarity,
-            best_question=results[0].question,
-        )
+    async def build_faq_context(
+        self,
+        user_query: str = "",
+        exclude_questions: set[str] | None = None,
+        *,
+        query: str | None = None,
+        exclude: set[str] | None = None,
+        candidates: list[str] | None = None,
+    ) -> FaqContext:
+        target_query = query if query is not None else user_query
+        target_exclude = exclude_questions if exclude_questions is not None else exclude
+        if candidates is not None:
+            old_candidates = self._current_candidates
+            self._current_candidates = list(candidates)
+            try:
+                return await super().build_faq_context(target_query, target_exclude)
+            finally:
+                self._current_candidates = old_candidates
+        return await super().build_faq_context(target_query, target_exclude)
 
 
 EmptyFaqService = EvaluationFaqService
@@ -623,6 +632,9 @@ def score_case(
     lowered = response.lower()
     violations: list[str] = []
 
+    if case.expect_no_tools and tools:
+        violations.append(f"expected no tools to be called, but received: {', '.join(tools)}")
+
     missing_tools = sorted(set(case.expected_tools) - set(tools))
     if missing_tools:
         violations.append(f"missing tools: {', '.join(missing_tools)}")
@@ -666,6 +678,139 @@ def score_case(
                 violations.append(
                     f"response asked {question_count} questions, maximum allowed is {case.max_questions}"
                 )
+        clarification_topics = [
+            "где",
+            "каком шаге",
+            "каком этапе",
+            "какая ошибка",
+            "текст ошибки",
+            "код ошибки",
+            "сообщение об ошибке",
+            "скриншот",
+            "в боте или",
+            "личном кабинете",
+        ]
+        if not any(topic in lowered for topic in clarification_topics):
+            violations.append(
+                "clarification lacks relevant inquiry about payment interface, step, error, or screenshot"
+            )
+
+    if case.reject_premature_advice:
+        premature_indicators = [
+            "роутер",
+            "перезагрузите",
+            "happ",
+            "пинг",
+            "обновить подписку",
+            "отключитесь от vpn",
+            "смените сервер",
+            "протокол",
+            "другой способ",
+            "криптовалют",
+            "сбп",
+            "пополните баланс",
+            "купите подписку",
+            "приобретите период",
+        ]
+        found_premature = [p for p in premature_indicators if p in lowered]
+        if found_premature:
+            violations.append(
+                f"premature advice provided before clarifying vague complaint: {', '.join(found_premature)}"
+            )
+
+    if case.require_two_step_payment:
+        has_deposit_step = any(w in lowered for w in ["пополн", "баланс", "депозит"])
+        has_purchase_step = any(
+            w in lowered for w in ["приобре", "куп", "выбер", "период", "активир"]
+        )
+        if not (has_deposit_step and has_purchase_step):
+            violations.append(
+                "response must cover both mandatory payment steps: balance top-up and subscription period purchase/activation"
+            )
+        auto_renew_claims = [
+            "автоматически продлится",
+            "продлится автоматически",
+            "автоматически активируется",
+            "активируется автоматически",
+            "автоматическое продление",
+            "автопродление",
+        ]
+        found_auto_renew = [c for c in auto_renew_claims if c in lowered]
+        if found_auto_renew:
+            violations.append(
+                f"response incorrectly claims balance top-up will automatically renew or activate subscription: {', '.join(found_auto_renew)}"
+            )
+
+    if case.require_scoped_user_not_found:
+        causal_ui_indicators = [
+            "поэтому кнопка",
+            "из-за этого кнопка",
+            "кнопка не работает из-за",
+            "кнопка не работает, потому что",
+            "кнопка сломалась",
+            "сбой кнопки",
+            "ошибка интерфейса",
+            "сбой интерфейса",
+        ]
+        found_causal = [c for c in causal_ui_indicators if c in lowered]
+        if found_causal:
+            violations.append(
+                f"causal UI diagnosis in user_not_found response: {', '.join(found_causal)}"
+            )
+
+        broad_claims = [
+            "у вас нет аккаунта",
+            "нет аккаунта",
+            "вы не зарегистрированы",
+            "аккаунт отсутствует",
+        ]
+        found_broad = [b for b in broad_claims if b in lowered]
+        if found_broad:
+            violations.append(
+                f"broad unscoped claim in user_not_found response: {', '.join(found_broad)}"
+            )
+
+        has_not_found = any(nf in lowered for nf in ["не найден", "не удалось найти"])
+        has_scope = any(
+            s in lowered
+            for s in ["telegram", "bedolaga", "биллинг", "по вашему id", "по данному id", "по id"]
+        )
+        if not (has_not_found and has_scope):
+            violations.append(
+                "user_not_found response lacks scoped explanation (must state user was not found by Telegram ID in Bedolaga/billing)"
+            )
+
+    if case.reject_absent_payment_on_error:
+        absent_payment_claims = [
+            "платежа нет",
+            "платеж отсутствует",
+            "платёж отсутствует",
+            "деньги не дошли",
+            "оплата не поступила",
+            "платеж не найден",
+            "платёж не найден",
+            "вы не оплатили",
+            "нет платежа",
+        ]
+        found_absent = [a for a in absent_payment_claims if a in lowered]
+        if found_absent:
+            violations.append(
+                f"response asserts payment is absent when verification failed due to upstream error: {', '.join(found_absent)}"
+            )
+        temporary_failure_terms = [
+            "временно",
+            "не удалось проверить",
+            "сервис недоступен",
+            "попробуйте позже",
+            "повторите попытку",
+            "повторите позже",
+            "ошибка сервиса",
+            "технические сложности",
+        ]
+        if not any(t in lowered for t in temporary_failure_terms):
+            violations.append(
+                "upstream_unavailable response lacks clear statement explaining temporary impossibility of verifying payment records"
+            )
 
     return CaseResult(
         name=case.name,
@@ -676,11 +821,15 @@ def score_case(
     )
 
 
-async def run_once() -> list[CaseResult]:
-    settings = get_settings()
+async def run_once(
+    cases: list[BehaviorCase] | None = None,
+    settings: Settings | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> list[CaseResult]:
+    active_settings = settings or get_settings()
     results: list[CaseResult] = []
-    cases = load_cases()
-    for case in cases:
+    case_list = cases if cases is not None else load_cases()
+    for case in case_list:
         history = ScenarioHistory(case.history)
         faq_service = EvaluationFaqService()
         if case.faq_candidates:
@@ -692,10 +841,11 @@ async def run_once() -> list[CaseResult]:
             trace=trace,
         )
         client = create_llm_client(
-            settings,
+            active_settings,
             router,
             history,  # type: ignore[arg-type]
-            faq_service,  # type: ignore[arg-type]
+            faq_service,
+            http_client=http_client,
         )
         try:
             reply = await client.chat(case.user_message, SYNTHETIC_TELEGRAM_ID)
