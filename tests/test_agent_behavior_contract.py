@@ -134,7 +134,7 @@ def test_prompt_payment_triage_distinguishes_three_categories() -> None:
     assert "Неопределённая жалоба на оплату" in prompt
     assert "не более одного-двух точечных" in prompt
     assert "не заявлять об отсутствии аккаунта" in prompt
-    assert "не направлять платёжные жалобы на общую диагностику VPN" in prompt
+    assert "Не направляй платёжные UI-жалобы на общую диагностику VPN" in prompt
     assert "не переспрашивай эти факты повторно" in prompt
     assert "Персональная проверка оплаты" in prompt
     assert "bedolaga_billing_get" in prompt
@@ -142,7 +142,8 @@ def test_prompt_payment_triage_distinguishes_three_categories() -> None:
 
 def test_prompt_billing_states_and_error_semantics() -> None:
     prompt = SupportPrompt.SYSTEM
-    assert "Deposit без завершённой покупки" in prompt
+    assert "Завершённый deposit без завершённой покупки периода" in prompt
+    assert "требуй подтверждённого завершения пополнения" in prompt
     assert "не является поводом для эскалации" in prompt
     assert "проверки состояния панели Remnawave после billing" in prompt
     assert "расхождение источников эскалируй" in prompt
