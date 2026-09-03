@@ -22,9 +22,17 @@
       "name": "deposit_without_purchase",
       "user_message": "Я пополнил баланс, но подписка не продлилась. Что произошло?",
       "expected_tools": ["bedolaga_billing_get"],
-      "forbidden_tools": [],
+      "forbidden_tools": [
+        "users_get_by_telegram_id",
+        "users_get_subscription_url_by_telegram_id",
+        "subscriptions_get_by_user_id",
+        "bedolaga_user_get",
+        "bedolaga_subscription_get"
+      ],
       "must_contain_any": ["приобрет", "куп", "период"],
-      "must_not_contain": ["автоматически продлится"],
+      "must_not_contain": [],
+      "require_separate_purchase": true,
+      "require_billing_first": true,
       "expect_escalation": false
     },
     {
@@ -53,6 +61,379 @@
       "must_contain_any": ["/operator", "оператор"],
       "must_not_contain": ["возврат уже оформлен"],
       "expect_escalation": true
+    },
+    {
+      "name": "vague_payment_complaint_requires_clarification",
+      "user_message": "Не подключается функция оплата",
+      "expect_no_tools": true,
+      "expected_tools": [],
+      "forbidden_tools": [
+        "bedolaga_billing_get",
+        "bedolaga_user_get",
+        "bedolaga_subscription_get",
+        "users_get_by_telegram_id",
+        "users_get_subscription_url_by_telegram_id",
+        "subscriptions_get_by_user_id"
+      ],
+      "must_contain_any": ["где", "каком шаге", "каком этапе", "какая ошибка", "скриншот", "в боте или"],
+      "must_not_contain": [
+        "аккаунт не найден",
+        "нет аккаунта",
+        "у вас нет аккаунта",
+        "аккаунт отсутствует",
+        "не удалось найти аккаунт",
+        "учётная запись не найдена",
+        "учетная запись не найдена",
+        "нет учётной записи",
+        "нет учетной записи",
+        "учётная запись отсутствует",
+        "учетная запись отсутствует",
+        "не удалось найти учётную запись",
+        "не удалось найти учетную запись",
+        "не удалось найти вашу учётную запись",
+        "не удалось найти вашу учетную запись",
+        "пользователь не найден",
+        "не удалось найти пользователя",
+        "вы не зарегистрированы",
+        "платежа нет",
+        "нет платежа",
+        "платёж отсутствует",
+        "платеж отсутствует",
+        "деньги не дошли",
+        "оплата не поступила",
+        "вы не оплатили",
+        "happ",
+        "пинг",
+        "обновить подписку",
+        "отключитесь от vpn",
+        "роутер",
+        "перезагрузите",
+        "другой способ",
+        "криптовалют",
+        "пополните баланс",
+        "купите подписку",
+        "приобретите период",
+        "сбой банка",
+        "ошибка банка",
+        "на стороне банка",
+        "банк отклонил",
+        "сбой интернета",
+        "проблема с интернетом",
+        "проблемы с интернетом",
+        "сбой vpn",
+        "сбой впн",
+        "ошибка vpn",
+        "ошибка впн",
+        "из-за vpn",
+        "из-за впн"
+      ],
+      "expect_escalation": false,
+      "require_clarification": true,
+      "reject_premature_advice": true,
+      "max_questions": 2,
+      "faq_candidates": [
+        "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?",
+        "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает"
+      ]
+    },
+    {
+      "name": "general_payment_howto_uses_faq_without_tools",
+      "user_message": "Как оплатить подписку?",
+      "expect_no_tools": true,
+      "expected_tools": [],
+      "forbidden_tools": [
+        "bedolaga_billing_get",
+        "bedolaga_user_get",
+        "bedolaga_subscription_get",
+        "users_get_by_telegram_id",
+        "users_get_subscription_url_by_telegram_id",
+        "subscriptions_get_by_user_id"
+      ],
+      "must_contain_any": ["@peipivosalesbot", "баланс", "подписка", "период", "lk.peipivo.top"],
+      "must_not_contain": [
+        "аккаунт не найден",
+        "ваш баланс",
+        "проверил"
+      ],
+      "expect_escalation": false,
+      "require_two_step_payment": true,
+      "faq_candidates": [
+        "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?"
+      ]
+    },
+    {
+      "name": "followup_with_known_context_avoids_repeated_questions",
+      "user_message": "Выбираю СБП, и вылезает ошибка банка",
+      "scenario_history": [
+        {
+          "role": "user",
+          "content": "Не могу пополнить баланс в боте"
+        },
+        {
+          "role": "assistant",
+          "content": "Уточните, пожалуйста, какой способ оплаты вы выбираете и какая ошибка появляется?"
+        }
+      ],
+      "expect_no_tools": true,
+      "expected_tools": [],
+      "forbidden_tools": [
+        "bedolaga_billing_get",
+        "bedolaga_user_get",
+        "bedolaga_subscription_get",
+        "users_get_by_telegram_id",
+        "users_get_subscription_url_by_telegram_id",
+        "subscriptions_get_by_user_id"
+      ],
+      "must_contain_any": [
+        "другой способ",
+        "другим способом",
+        "карт",
+        "криптовалют",
+        "позже",
+        "повторите",
+        "/operator",
+        "оператор"
+      ],
+      "must_not_contain": [
+        "где вы оплачиваете",
+        "в боте или в личном кабинете",
+        "в боте или на сайте",
+        "где именно",
+        "какой способ",
+        "каким способом",
+        "какой метод",
+        "через сбп?",
+        "какая ошибка",
+        "какую ошибку",
+        "ошибку показывает",
+        "ошибку выдает",
+        "ошибку выдаёт",
+        "что пишет банк",
+        "текст ошибки",
+        "код ошибки",
+        "сообщение об ошибке",
+        "аккаунт не найден"
+      ],
+      "reject_known_fact_questions": true,
+      "expect_escalation": false,
+      "faq_candidates": [
+        "Не могу пополнить баланс / ошибка при пополнении"
+      ]
+    },
+    {
+      "name": "lookup_user_not_found_explains_search_without_ui_diagnosis",
+      "user_message": "Проверьте мой платёж в боте, кнопка не работает",
+      "expected_tools": ["bedolaga_billing_get"],
+      "forbidden_tools": [],
+      "must_contain_any": ["не найден", "не удалось найти"],
+      "must_not_contain": [
+        "у вас нет аккаунта",
+        "нет аккаунта",
+        "вы не зарегистрированы",
+        "поэтому кнопка",
+        "из-за этого кнопка",
+        "кнопка не работает из-за",
+        "кнопка не работает, потому что",
+        "кнопка сломалась",
+        "сбой кнопки",
+        "ошибка интерфейса",
+        "интерфейс не работает",
+        "банк отклонил"
+      ],
+      "expect_escalation": false,
+      "require_billing_first": true,
+      "require_scoped_user_not_found": true,
+      "custom_tool_results": {
+        "bedolaga_billing_get": {
+          "ok": false,
+          "source": "bedolaga-mcp",
+          "tool": "bedolaga_billing_get",
+          "error": {
+            "code": "user_not_found",
+            "message": "User with telegram_id 424242 was not found in Bedolaga.",
+            "retryable": false
+          }
+        }
+      }
+    },
+    {
+      "name": "upstream_unavailable_reports_temporary_failure",
+      "user_message": "Посмотрите, дошли ли деньги за подписку?",
+      "expected_tools": ["bedolaga_billing_get"],
+      "forbidden_tools": [],
+      "must_contain_any": [
+        "временно",
+        "не удалось проверить",
+        "повторите",
+        "позже",
+        "сервис недоступен"
+      ],
+      "must_not_contain": [
+        "аккаунт не найден",
+        "у вас нет аккаунта",
+        "нет аккаунта",
+        "аккаунт отсутствует",
+        "не удалось найти аккаунт",
+        "учётная запись не найдена",
+        "учетная запись не найдена",
+        "нет учётной записи",
+        "нет учетной записи",
+        "учётная запись отсутствует",
+        "учетная запись отсутствует",
+        "не удалось найти учётную запись",
+        "не удалось найти учетную запись",
+        "не удалось найти вашу учётную запись",
+        "не удалось найти вашу учетную запись",
+        "пользователь не найден",
+        "не удалось найти пользователя",
+        "вы не зарегистрированы",
+        "платежа нет",
+        "нет платежа",
+        "платёж отсутствует",
+        "платеж отсутствует",
+        "деньги не дошли",
+        "оплата не поступила",
+        "вы не оплатили"
+      ],
+      "expect_escalation": false,
+      "require_billing_first": true,
+      "reject_absent_payment_on_error": true,
+      "custom_tool_results": {
+        "bedolaga_billing_get": {
+          "ok": false,
+          "source": "bedolaga-mcp",
+          "tool": "bedolaga_billing_get",
+          "error": {
+            "code": "upstream_unavailable",
+            "message": "Bedolaga billing service returned 503 Service Unavailable.",
+            "retryable": true
+          }
+        }
+      }
+    },
+    {
+      "name": "external_charge_without_record_escalates",
+      "user_message": "С карты деньги списались 500 рублей, чек есть, а в боте баланс 0 и подписки нет!",
+      "expected_tools": ["bedolaga_billing_get"],
+      "forbidden_tools": [],
+      "must_contain_any": ["/operator", "оператор"],
+      "must_not_contain": ["платёж зачислен", "подписка активна"],
+      "require_billing_first": true,
+      "expect_escalation": true,
+      "custom_tool_results": {
+        "bedolaga_billing_get": {
+          "ok": true,
+          "source": "bedolaga-mcp",
+          "tool": "bedolaga_billing_get",
+          "data": {
+            "balance_kopeks": 0,
+            "balance_rubles": 0.0,
+            "transactions": [],
+            "latest_completed_deposit": null,
+            "latest_completed_subscription_purchase": null,
+            "purchased_after_latest_deposit": null,
+            "bot_subscriptions": [],
+            "meta": "deposit = a balance credit (money added to the balance), not a purchase. Only a completed subscription_payment confirms a purchase. bot_record_status is the bot-side purchase record, not the VPN panel status; verify the actual panel state via the separate Remnawave MCP."
+          },
+          "meta": "deposit = a balance credit (money added to the balance), not a purchase. Only a completed subscription_payment confirms a purchase. bot_record_status is the bot-side purchase record, not the VPN panel status; verify the actual panel state via the separate Remnawave MCP."
+        }
+      }
+    },
+    {
+      "name": "completed_purchase_panel_discrepancy_checks_panel_and_escalates",
+      "user_message": "Я купил подписку на месяц, в боте написано что куплено, но VPN не работает и пишет истек!",
+      "expected_tools": ["bedolaga_billing_get", "users_get_by_telegram_id"],
+      "forbidden_tools": [],
+      "expected_tool_order": ["bedolaga_billing_get", "users_get_by_telegram_id"],
+      "require_billing_first": true,
+      "must_contain_any": ["/operator", "оператор"],
+      "must_not_contain": ["подписка не куплена", "вы не оплатили"],
+      "expect_escalation": true,
+      "custom_tool_results": {
+        "bedolaga_billing_get": {
+          "ok": true,
+          "source": "bedolaga-mcp",
+          "tool": "bedolaga_billing_get",
+          "data": {
+            "balance_kopeks": 0,
+            "balance_rubles": 0.0,
+            "transactions": [
+              {
+                "id": 102,
+                "category": "subscription_purchase",
+                "direction": "debit",
+                "raw_type": "subscription_payment",
+                "amount_kopeks": 50000,
+                "amount_rubles": 500.0,
+                "payment_method": "balance",
+                "is_completed": true,
+                "description": "Покупка подписки 1 месяц",
+                "created_at": "2026-09-01T10:05:00Z",
+                "completed_at": "2026-09-01T10:05:00Z"
+              },
+              {
+                "id": 101,
+                "category": "deposit",
+                "direction": "credit",
+                "raw_type": "deposit",
+                "amount_kopeks": 50000,
+                "amount_rubles": 500.0,
+                "payment_method": "card",
+                "is_completed": true,
+                "description": "Пополнение баланса",
+                "created_at": "2026-09-01T10:00:00Z",
+                "completed_at": "2026-09-01T10:01:00Z"
+              }
+            ],
+            "latest_completed_deposit": {
+              "amount_kopeks": 50000,
+              "amount_rubles": 500.0,
+              "category": "deposit",
+              "created_at": "2026-09-01T10:00:00Z",
+              "completed_at": "2026-09-01T10:01:00Z"
+            },
+            "latest_completed_subscription_purchase": {
+              "amount_kopeks": 50000,
+              "amount_rubles": 500.0,
+              "category": "subscription_purchase",
+              "created_at": "2026-09-01T10:05:00Z",
+              "completed_at": "2026-09-01T10:05:00Z"
+            },
+            "purchased_after_latest_deposit": true,
+            "bot_subscriptions": [
+              {
+                "id": 1,
+                "bot_record_status": "active",
+                "bot_record_effective_status": "active",
+                "is_trial": false,
+                "tariff_id": 1,
+                "tariff_name": "1 месяц",
+                "created_at": "2026-09-01T10:05:00Z",
+                "start_date": "2026-09-01T10:05:00Z",
+                "end_date": "2026-10-01T10:05:00Z",
+                "autopay_enabled": false,
+                "autopay_days_before": null,
+                "note": "This is the bot-side Bedolaga purchase record, not the VPN panel status. Verify the actual panel state via the separate Remnawave MCP."
+              }
+            ],
+            "meta": "deposit = a balance credit (money added to the balance), not a purchase. Only a completed subscription_payment confirms a purchase. bot_record_status is the bot-side purchase record, not the VPN panel status; verify the actual panel state via the separate Remnawave MCP."
+          },
+          "meta": "deposit = a balance credit (money added to the balance), not a purchase. Only a completed subscription_payment confirms a purchase. bot_record_status is the bot-side purchase record, not the VPN panel status; verify the actual panel state via the separate Remnawave MCP."
+        },
+        "users_get_by_telegram_id": {
+          "ok": true,
+          "response": {
+            "users": [
+              {
+                "id": 77,
+                "username": "synthetic-eval-user",
+                "status": "EXPIRED",
+                "expireAt": "2026-08-01T00:00:00Z"
+              }
+            ]
+          }
+        }
+      }
     }
   ]
 }

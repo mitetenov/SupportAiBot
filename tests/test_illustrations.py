@@ -140,3 +140,16 @@ async def test_matches_an_instruction_despite_case_and_whitespace_changes() -> N
     )
 
     assert message_id == 907
+
+
+@pytest.mark.asyncio
+async def test_does_not_send_picture_for_summarized_or_partial_faq_answer() -> None:
+    sender = _sender()
+    illustrations = IllustrationSender(sender, ConversationState())
+    context = _context("happ-buttons.png")
+
+    summarized_answer = "Обновите подписку и выполните пинг в приложении."
+    message_id = await illustrations.send_first(100, 100, context, summarized_answer)
+
+    assert message_id is None
+    sender.send_photo.assert_not_awaited()

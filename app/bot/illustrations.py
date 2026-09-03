@@ -28,14 +28,16 @@ class IllustrationSender:
     ) -> int | None:
         """Send the screenshot used by the delivered FAQ answer, returning its message id.
 
-        Retrieval supplies possible instructions to the model, not proof that it
+        Retrieval supplies candidate instructions to the model, not proof that it
         used one.  In particular, a personal-data tool can produce the final
-        answer while an only loosely related FAQ remains the top search hit.  The
-        prompt requires FAQ instructions to be copied verbatim, so the picture is
-        relevant only when the top hit's full instruction is present in the text
-        that was actually sent to the user.
+        answer while an only loosely related FAQ remains the top search hit.
+        Although the prompt allows concise summaries of FAQ instructions, illustration
+        matching remains conservative: the screenshot is sent only when the top hit's
+        full instruction text is present in the delivered answer.  A summarized or
+        adapted answer may omit the optional illustration.
 
         Sent at most once per conversation: several entries name the same
+
         picture, because pressing the two buttons is the opening step of every
         connection answer, and a user working through a problem would otherwise
         be handed the same screenshot on every turn.
@@ -68,8 +70,10 @@ class IllustrationSender:
 
         Whitespace and case are presentation details and do not change whether
         the instruction was used.  Requiring the complete instruction favours a
-        missing optional picture over attaching an unrelated one.
+        missing optional picture over attaching an unrelated one when the model
+        summarizes or adapts the answer.
         """
+
         if not isinstance(faq_answer, str) or not faq_answer.strip():
             return False
 

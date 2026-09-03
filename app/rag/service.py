@@ -516,11 +516,17 @@ class FaqEmbeddingService:
         if not results:
             return FaqContext.EMPTY
 
-        sb = "FAQ (скопируй инструкцию дословно в ответ, не добавляй своих шагов):\n"
+        sb = (
+            "Кандидаты FAQ (проверь соответствие вопросу, истории и фактам инструментов; "
+            "разрешено кратко изложить подходящую часть с сохранением точных названий, "
+            "ограничений, условий и порядка шагов; если кандидаты не подходят, уточни "
+            "проблему, не давай нерелевантных инструкций):\n"
+        )
         for r in results:
             sb += f"Вопрос: {r.question}\nИнструкция: {r.answer}\n\n"
 
         max_similarity = max((r.similarity for r in results), default=0.0)
+
         return FaqContext(
             text=sb,
             results=results,

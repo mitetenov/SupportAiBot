@@ -235,3 +235,14 @@ class TestIllustratedEntries:
         assert expected_illustrated
         missing = [q for q in expected_illustrated if not find(entries, q[:30]).get("image")]
         assert not missing, f"these instruct pressing the buttons but show nothing: {missing}"
+
+
+class TestPaymentTroubleshooting:
+    def test_payment_failure_faq_specifies_application_conditions(
+        self, entries: list[dict[str, Any]]
+    ) -> None:
+        answer = find(entries, "ошибка при пополнении")["answer"].lower()
+        assert "этапе" in answer
+        assert "выбор" in answer or "проведен" in answer
+        assert "другой способ пополнения" in answer
+        assert "@peipivosalesbot" in answer
