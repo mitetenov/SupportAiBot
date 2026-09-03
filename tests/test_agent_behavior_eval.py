@@ -711,7 +711,21 @@ def test_vague_payment_complaint_scorer_discriminates_relevance_and_premature_ad
         "unverified" in v or "forbidden response text" in v for v in res_absence_3.violations
     )
 
-    # Positive probe: Targeted relevant clarification about interface and error
+    # Probe 15 (Sol review round 4 finding): Premature advice recommending payment via SBP
+    premature_sbp_rec = (
+        "Где именно вы оплачиваете? Рекомендую оплатить через СБП, это работает стабильнее."
+    )
+    res_sbp_rec = score_case(case, premature_sbp_rec, clients)
+    assert res_sbp_rec.passed is False
+    assert any("premature advice" in v for v in res_sbp_rec.violations)
+
+    # Probe 16: Premature advice attempting payment via SBP
+    premature_sbp_att = "Какая ошибка возникает? Попробуйте оплатить через СБП."
+    res_sbp_att = score_case(case, premature_sbp_att, clients)
+    assert res_sbp_att.passed is False
+    assert any("premature advice" in v for v in res_sbp_att.violations)
+
+    # Positive probe 1: Targeted relevant clarification about interface and error
     valid_clarification = (
         "Уточните, пожалуйста, где именно вы производите оплату (в боте или в личном кабинете) "
         "и какая ошибка появляется?"
@@ -719,6 +733,24 @@ def test_vague_payment_complaint_scorer_discriminates_relevance_and_premature_ad
     res_valid = score_case(case, valid_clarification, clients)
     assert res_valid.passed is True
     assert res_valid.violations == []
+
+    # Positive probe 2 (Sol review round 4 finding): Clarifying inquiry distinguishing error step during SBP selection
+    valid_sbp_clarification = (
+        "Где вы оплачиваете — в боте или личном кабинете? "
+        "На каком шаге возникает ошибка: при выборе СБП или после?"
+    )
+    res_sbp_clar = score_case(case, valid_sbp_clarification, clients)
+    assert res_sbp_clar.passed is True
+    assert res_sbp_clar.violations == []
+
+    # Positive probe 3: Clarifying inquiry asking if SBP or card was used
+    valid_sbp_method = (
+        "Уточните, где вы производите оплату (в боте или на сайте) "
+        "и какой способ был выбран: банковская карта или СБП?"
+    )
+    res_sbp_method = score_case(case, valid_sbp_method, clients)
+    assert res_sbp_method.passed is True
+    assert res_sbp_method.violations == []
 
 
 def test_general_payment_howto_requires_both_steps_and_rejects_auto_renewal() -> None:
@@ -762,6 +794,36 @@ def test_general_payment_howto_requires_both_steps_and_rejects_auto_renewal() ->
     assert res_from_balance.passed is False
     assert any("both mandatory payment steps" in v for v in res_from_balance.violations)
 
+    # Probe 7 (Sol review round 4 finding): Noun-only purchase mention lacks an affirmative purchase step
+    probe_noun_only = "Пополните баланс в боте @PeipivoSalesBot для покупки подписки."
+    res_noun_only = score_case(case, probe_noun_only, clients)
+    assert res_noun_only.passed is False
+    assert any("both mandatory payment steps" in v for v in res_noun_only.violations)
+
+    # Probe 8: Prepositional noun phrase with acquisition without purchase directive
+    probe_noun_acq = (
+        "Для оплаты пополните баланс в личном кабинете lk.peipivo.top с целью приобретения периода."
+    )
+    res_noun_acq = score_case(case, probe_noun_acq, clients)
+    assert res_noun_acq.passed is False
+    assert any("both mandatory payment steps" in v for v in res_noun_acq.violations)
+
+    # Probe 9 (Sol review round 4 finding): Negated purchase action claiming separate purchase is not needed
+    probe_negated_purchase = (
+        "Пополните баланс в боте @PeipivoSalesBot. Приобретать период отдельно не нужно."
+    )
+    res_neg_purch = score_case(case, probe_negated_purchase, clients)
+    assert res_neg_purch.passed is False
+    assert any("both mandatory payment steps" in v for v in res_neg_purch.violations)
+
+    # Probe 10: Negated purchase action with 'не требуется'
+    probe_negated_purch_2 = (
+        "Пополните баланс в боте @PeipivoSalesBot. Покупать подписку отдельно не требуется."
+    )
+    res_neg_purch_2 = score_case(case, probe_negated_purch_2, clients)
+    assert res_neg_purch_2.passed is False
+    assert any("both mandatory payment steps" in v for v in res_neg_purch_2.violations)
+
     # Positive probe 1: Covers both mandatory steps without claiming auto-renewal
     valid_two_step = (
         "Чтобы оплатить подписку, выполните два шага:\n"
@@ -800,6 +862,24 @@ def test_general_payment_howto_requires_both_steps_and_rejects_auto_renewal() ->
     res_explicit_dep = score_case(case, valid_explicit_dep, clients)
     assert res_explicit_dep.passed is True
     assert res_explicit_dep.violations == []
+
+    # Positive probe 5 (Sol review round 4 finding): Explicit two-step with topup and activation
+    valid_topup_and_activate = (
+        "Пополните баланс в боте @PeipivoSalesBot, а затем активируйте период подписки в меню."
+    )
+    res_topup_act = score_case(case, valid_topup_and_activate, clients)
+    assert res_topup_act.passed is True
+    assert res_topup_act.violations == []
+
+    # Positive probe 6: Numbered steps with topup and ordering
+    valid_numbered_steps = (
+        "Чтобы оплатить тариф, следуйте инструкции:\n"
+        "1. Пополните баланс в боте @PeipivoSalesBot;\n"
+        "2. Оформите подписку на выбранный период во вкладке подписок."
+    )
+    res_num_steps = score_case(case, valid_numbered_steps, clients)
+    assert res_num_steps.passed is True
+    assert res_num_steps.violations == []
 
 
 def test_zero_tools_expectation_enforced_for_payment_cases() -> None:
@@ -988,7 +1068,7 @@ async def test_offline_run_once_integration_with_mock_transport(
                     "content": [
                         {
                             "type": "output_text",
-                            "text": "Баланс пополнен на 500 рублей, но период подписки не куплен. Приобретите период подписки в боте.",
+                            "text": "Баланс пополнен на 750 рублей, но период подписки не куплен. Приобретите период подписки в боте.",
                         }
                     ],
                 }
@@ -1063,7 +1143,7 @@ async def test_offline_run_once_integration_with_mock_transport(
         user_message="Проверьте баланс",
         expected_tools=["bedolaga_billing_get"],
         must_contain_any=["баланс", "период"],
-        tool_results={"bedolaga_billing_get": make_billing_deposit_without_purchase(500.0, 500.0)},
+        tool_results={"bedolaga_billing_get": make_billing_deposit_without_purchase(1250.0, 750.0)},
     )
 
     test_cases = [case_history_only, case_tool]
@@ -1094,8 +1174,11 @@ async def test_offline_run_once_integration_with_mock_transport(
     assert len(fn_outputs) == 1
     tool_data = json.loads(fn_outputs[0]["output"])
     assert tool_data["ok"] is True
-    assert tool_data["data"]["balance_rubles"] == 500.0
+    assert tool_data["data"]["balance_rubles"] == 1250.0
+    assert tool_data["data"]["balance_kopeks"] == 125000
+    assert tool_data["data"]["latest_completed_deposit"]["amount_rubles"] == 750.0
     assert tool_data["data"]["purchased_after_latest_deposit"] is False
+    assert tool_data["data"]["transactions"][0]["amount_rubles"] == 750.0
 
     # 4. Strict isolation: Case 2 did NOT contain Case 1 history or messages
     req_case2_turn1 = captured_requests[1]

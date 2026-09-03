@@ -667,6 +667,44 @@ def _find_affirmative_auto_renew_claims(lowered: str, claims: list[str]) -> list
     return sorted(set(affirmative_claims))
 
 
+_PURCHASE_ACTION_PATTERNS = [
+    r"\b(?:купите|купи|покупайте|покупай|купить|покупать)\b",
+    r"\b(?:приобретите|приобрети|приобретайте|приобретай|приобрести|приобретать)\b",
+    r"\b(?:активируйте|активируй|активировать)\b",
+    r"\b(?:оформите|оформи|оформляйте|оформляй|оформить|оформлять)\b",
+    r"\b(?:выберите|выбери|выбирайте|выбирай|выбрать|выбирать)\b[^.!?;\n]{0,50}\b(?:период\w*|тариф\w*|подписк\w*|план\w*|доступ\w*)",
+    r"\b(?:период\w*|тариф\w*|подписк\w*|план\w*|доступ\w*)\b[^.!?;\n]{0,50}\b(?:выберите|выбери|выбирайте|выбирай|выбрать|выбирать)\b",
+    r"\b(?:подключите|подключи|подключайте|подключай|подключить|подключать)\b[^.!?;\n]{0,50}\b(?:период\w*|тариф\w*|подписк\w*|план\w*|доступ\w*)",
+    r"\b(?:период\w*|тариф\w*|подписк\w*|план\w*|доступ\w*)\b[^.!?;\n]{0,50}\b(?:подключите|подключи|подключайте|подключай|подключить|подключать)\b",
+    r"\b(?:перейдите|зайти|зайдите)\b[^.!?;\n]{0,40}\b(?:к\s+покупке|к\s+оформлению|к\s+активации)\b",
+    r"\b(?:нажмите|выберите)\s+(?:кнопку\s+)?[\"']?(?:купить|приобрести|оформить|активировать|оплатить)[\"']?\b",
+]
+
+_PRE_NEGATION_PATTERNS = [
+    r"\bне\s*$",
+    r"\b(?:не\s+(?:нужно|надо|требуется|потребуется|следует|обязательно|стоит)|нет\s+необходимости)\s+(?:отдельно\s+|самостоятельно\s+)?$",
+    r"\b(?:не\s+(?:нужно|надо|требуется|потребуется|следует|обязательно|стоит)|нет\s+необходимости)\b[^,:.!?;\n]{0,40}$",
+]
+
+_POST_NEGATION_PATTERNS = [
+    r"^[^,:.!?;\n]{0,40}\b(?:не\s+(?:нужно|надо|требуется|потребуется|следует|обязательно|стоит|прид[её]тся)|нет\s+необходимости)\b",
+]
+
+
+def _has_affirmative_purchase_step(lowered: str) -> bool:
+    for pat in _PURCHASE_ACTION_PATTERNS:
+        for m in re.finditer(pat, lowered):
+            start, end = m.start(), m.end()
+            preceding = lowered[max(0, start - 60) : start]
+            following = lowered[end : min(len(lowered), end + 60)]
+            if any(re.search(p, preceding) for p in _PRE_NEGATION_PATTERNS):
+                continue
+            if any(re.search(p, following) for p in _POST_NEGATION_PATTERNS):
+                continue
+            return True
+    return False
+
+
 def score_case(
     case: BehaviorCase,
     response: str,
@@ -795,12 +833,29 @@ def score_case(
             "протокол",
             "другой способ",
             "криптовалют",
-            "сбп",
             "пополните баланс",
             "купите подписку",
             "приобретите период",
         ]
         found_premature = [p for p in premature_indicators if p in lowered]
+        sbp_advice_patterns = [
+            r"\b(?:попробуйте|попробуй)\b[^.!?;\n]{0,40}\b(?:оплатить\s+)?(?:через\s+)?сбп\b",
+            r"\b(?:рекоменду\w*|совету\w*|предлага\w*)\b[^.!?;\n]{0,40}\b(?:оплатить\s+)?(?:через\s+)?сбп\b",
+            r"\b(?:воспользуйтесь|используйте)\b[^.!?;\n]{0,40}\b(?:оплатой\s+)?(?:через\s+)?сбп\b",
+            r"\b(?:выберите|выбрать)\s+сбп\s+(?:для\s+оплаты|как\s+способ|в\s+качестве)\b",
+            r"\b(?:оплатите|оплачивайте)\s+(?:через\s+)?сбп\b",
+            r"\bперейдите\s+к\s+оплате\s+через\s+сбп\b",
+            r"\b(?:способ\w*|вариант\w*)\b[^.!?;\n]{0,30}\b(?:например|к\s+примеру)\b[^.!?;\n]{0,20}\bсбп\b",
+            r"\b(?:как\s+альтернативу|в\s+качестве\s+альтернативы)\b[^.!?;\n]{0,40}\bсбп\b",
+            r"\bсбп\s+(?:как\s+альтернатив\w*|в\s+качестве\s+альтернатив\w*)\b",
+            r"\b(?:лучше|стоит)\s+(?:оплатить\s+)?через\s+сбп\b",
+            r"\b(?:другой|альтернативн\w*)\s+способ\w*\b[^.!?;\n]{0,40}\bсбп\b",
+        ]
+        found_sbp_advice = [
+            m.group(0) for pat in sbp_advice_patterns if (m := re.search(pat, lowered))
+        ]
+        if found_sbp_advice:
+            found_premature.extend([f"сбп ({item})" for item in found_sbp_advice])
         if found_premature:
             violations.append(
                 f"premature advice provided before clarifying vague complaint: {', '.join(found_premature)}"
@@ -842,12 +897,7 @@ def score_case(
             r"\b(?:средств\w*|деньг\w*|рубл\w*|сумму?)\b[^.!?;\n]{0,30}\bна\s+баланс\w*",
         ]
         has_deposit_step = any(bool(re.search(pat, lowered)) for pat in deposit_action_patterns)
-        purchase_action_roots = ["куп", "приобре", "активир", "оформ"]
-        has_explicit_purchase = any(w in lowered for w in purchase_action_roots)
-        has_selection_action = bool(
-            re.search(r"\b(выберите|выбрать|выбор)\b.*?\b(период|тариф|подписк)", lowered)
-        )
-        has_purchase_step = has_explicit_purchase or has_selection_action
+        has_purchase_step = _has_affirmative_purchase_step(lowered)
         if not (has_deposit_step and has_purchase_step):
             violations.append(
                 "response must cover both mandatory payment steps: balance top-up and subscription period purchase/activation"
