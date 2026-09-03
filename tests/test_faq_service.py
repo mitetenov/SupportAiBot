@@ -308,7 +308,11 @@ class TestFaqSearchLogic:
         assert ctx.is_empty() is False
         assert ctx.max_similarity == 0.88
         assert ctx.best_question == "Вопрос 1"
-        assert "FAQ (скопируй инструкцию дословно в ответ, не добавляй своих шагов):\n" in ctx.text
+        assert (
+            "Кандидаты FAQ (проверь соответствие вопросу, истории и фактам инструментов" in ctx.text
+        )
+        assert "разрешено кратко изложить" in ctx.text
+        assert "дословно" not in ctx.text
         assert "Вопрос: Вопрос 1\nИнструкция: Инструкция 1\n\n" in ctx.text
         assert "Вопрос: Вопрос 2\nИнструкция: Инструкция 2\n\n" in ctx.text
 
@@ -328,9 +332,28 @@ class TestFaqSearchLogic:
         assert ctx3.is_empty() is True
         assert ctx3 == FaqContext.EMPTY
 
+    @pytest.mark.asyncio
+    async def test_build_faq_context_header_allows_summary_and_clarification(self) -> None:
+        provider = DummyEmbeddingProvider(dimension=4)
+        service = FaqEmbeddingService(db_manager=MagicMock(), embedding_provider=provider)
+        service.mark_ready()
+
+        r1 = FaqResult("В1", "И1", 0.9, 0.05)
+        service.search_with_fallback = AsyncMock(return_value=[r1])  # type: ignore[method-assign]
+
+        ctx = await service.build_faq_context("тест")
+        assert "Кандидаты FAQ" in ctx.text
+        assert "проверь соответствие" in ctx.text
+        assert "разрешено кратко изложить" in ctx.text
+        assert "точных названий" in ctx.text
+        assert "порядка шагов" in ctx.text
+        assert "уточни проблему" in ctx.text
+        assert "дословно" not in ctx.text
+
 
 class TestExclusionHappensInTheQuery:
     """Already-shown entries must be excluded by the query, not after it.
+
 
     The system prompt promises the model that "уже показанные инструкции
     исключаются из подборки автоматически". Filtering the result set afterwards

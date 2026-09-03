@@ -114,3 +114,40 @@ def test_subscription_link_request_returns_the_url_and_manual_locations() -> Non
 def test_bedolaga_effective_status_is_not_treated_as_panel_state() -> None:
     assert "bot_record_effective_status" in SupportPrompt.SYSTEM
     assert "не подтверждают фактическую активность подписки" in SupportPrompt.SYSTEM
+
+
+def test_prompt_and_faq_layer_do_not_require_mandatory_full_quote() -> None:
+    prompt = SupportPrompt.SYSTEM
+    assert "дословно и целиком" not in prompt
+    assert "дословно" not in prompt
+    assert "кратко излагать" in prompt
+    assert "точные названия" in prompt
+    assert "уточняющий вопрос" in prompt
+    assert "не выдумывай шаги" in prompt
+
+
+def test_prompt_payment_triage_distinguishes_three_categories() -> None:
+    prompt = SupportPrompt.SYSTEM
+    assert "три категории обращений" in prompt
+    assert "Общий вопрос об оплате" in prompt
+    assert "без вызова персональных инструментов" in prompt
+    assert "Неопределённая жалоба на оплату" in prompt
+    assert "не более одного-двух точечных" in prompt
+    assert "не заявлять об отсутствии аккаунта" in prompt
+    assert "не направлять платёжные жалобы на общую диагностику VPN" in prompt
+    assert "не переспрашивай эти факты повторно" in prompt
+    assert "Персональная проверка оплаты" in prompt
+    assert "bedolaga_billing_get" in prompt
+
+
+def test_prompt_billing_states_and_error_semantics() -> None:
+    prompt = SupportPrompt.SYSTEM
+    assert "Deposit без завершённой покупки" in prompt
+    assert "не является поводом для эскалации" in prompt
+    assert "проверки состояния панели Remnawave после billing" in prompt
+    assert "расхождение источников эскалируй" in prompt
+    assert "Внешнее списание без записи Bedolaga эскалируй" in prompt
+    assert "временную невозможность проверить соответствующие данные" in prompt
+    assert "user_not_found" in prompt
+    assert "не являются причиной неисправности кнопки" in prompt
+    assert "приоритет перед обычным уточнением" in prompt
