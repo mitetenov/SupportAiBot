@@ -16,6 +16,7 @@ from app.llm.base import (
 from app.llm.deepseek import DeepSeekClient
 from app.llm.escalation import EscalationPolicy
 from app.llm.gemini import GeminiClient, sanitize_schema_params
+from app.llm.groq import GroqClient
 from app.llm.mcp_client import (
     HttpMcpClient,
     McpClientInterface,
@@ -60,6 +61,15 @@ def create_llm_client(
             db_manager=db_manager,
             http_client=http_client,
         )
+    if provider == "groq":
+        return GroqClient(
+            settings=settings,
+            mcp_router=mcp_router,
+            chat_history_service=chat_history_service,
+            faq_embedding_service=faq_service,
+            db_manager=db_manager,
+            http_client=http_client,
+        )
     if provider == "openai":
         return OpenAiClient(
             settings=settings,
@@ -77,6 +87,7 @@ __all__ = [
     "DeepSeekClient",
     "EscalationPolicy",
     "GeminiClient",
+    "GroqClient",
     "HttpMcpClient",
     "LlmClient",
     "LlmProcessingException",
