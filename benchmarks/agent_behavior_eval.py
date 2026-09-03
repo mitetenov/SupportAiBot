@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,19 @@ UNCONFIRMED_ABSENCE_PATTERNS: tuple[str, ...] = (
 )
 
 
+AUTO_RENEW_CLAIMS: tuple[str, ...] = (
+    "автоматически продлится",
+    "продлится автоматически",
+    "автоматически активируется",
+    "активируется автоматически",
+    "автоматическое продление",
+    "автоматического продления",
+    "автопродление",
+    "автопродления",
+    "автопродлением",
+)
+
+
 @dataclass(frozen=True)
 class BehaviorCase:
     name: str
@@ -91,6 +105,8 @@ class BehaviorCase:
     reject_absent_payment_on_error: bool = False
     require_billing_first: bool = False
     reject_known_fact_questions: bool = False
+    require_separate_purchase: bool = False
+    require_affirmative_purchase: bool = False
 
 
 @dataclass
@@ -638,7 +654,7 @@ def load_cases(path: Path | None = None) -> list[BehaviorCase]:
     return cases
 
 
-def _find_affirmative_auto_renew_claims(lowered: str, claims: list[str]) -> list[str]:
+def _find_affirmative_auto_renew_claims(lowered: str, claims: Sequence[str]) -> list[str]:
     present = [c for c in claims if c in lowered]
     if not present:
         return []
@@ -678,6 +694,11 @@ _PURCHASE_ACTION_PATTERNS = [
     r"\b(?:период\w*|тариф\w*|подписк\w*|план\w*|доступ\w*)\b[^.!?;\n]{0,50}\b(?:подключите|подключи|подключайте|подключай|подключить|подключать)\b",
     r"\b(?:перейдите|зайти|зайдите)\b[^.!?;\n]{0,40}\b(?:к\s+покупке|к\s+оформлению|к\s+активации)\b",
     r"\b(?:нажмите|выберите)\s+(?:кнопку\s+)?[\"']?(?:купить|приобрести|оформить|активировать|оплатить)[\"']?\b",
+    # Explicit separate purchase navigation to sections/tabs/menus dedicated to subscriptions, tariffs, or purchases
+    r"\b(?:раздел\w*|вкладк\w*|меню|пункт\w*)\s+[«\"']?(?:подписк\w*|тариф\w*|покупк\w*)[»\"']?[^.!?;\n]{0,50}\b(?:для\s+(?:покупки|приобретения|активации|оформления|продления|выбора|подключения)|(?:чтобы|где)\s+(?:купить|приобрести|активировать|оформить|продлить|выбрать|подключить))\b",
+    r"\b(?:для\s+(?:покупки|приобретения|активации|оформления|продления|выбора|подключения)|(?:чтобы|где)\s+(?:купить|приобрести|активировать|оформить|продлить|выбрать|подключить))\b[^.!?;\n]{0,50}\b(?:раздел\w*|вкладк\w*|меню|пункт\w*)\s+[«\"']?(?:подписк\w*|тариф\w*|покупк\w*)[»\"']?",
+    r"\b(?:перейдите|зайдите|зайти|откройте|открыть)\b[^.!?;\n]{0,40}\b(?:в|во)\s+(?:раздел\w*|вкладк\w*|меню|пункт\w*)\s+[«\"']?(?:подписк\w*|тариф\w*|покупк\w*)[»\"']?",
+    r"\b(?:раздел\w*|вкладк\w*|меню|пункт\w*)\s+[«\"']?(?:подписк\w*|тариф\w*|покупк\w*)[»\"']?[^.!?;\n]{0,40}\b(?:покупк\w*|приобретени\w*|активаци\w*|оформлени\w*|выбор\w*)\s+(?:период\w*|подписк\w*|тариф\w*|доступ\w*)",
 ]
 
 _PRE_NEGATION_PATTERNS = [
@@ -902,18 +923,18 @@ def score_case(
             violations.append(
                 "response must cover both mandatory payment steps: balance top-up and subscription period purchase/activation"
             )
-        auto_renew_claims = [
-            "автоматически продлится",
-            "продлится автоматически",
-            "автоматически активируется",
-            "активируется автоматически",
-            "автоматическое продление",
-            "автоматического продления",
-            "автопродление",
-            "автопродления",
-            "автопродлением",
-        ]
-        found_auto_renew = _find_affirmative_auto_renew_claims(lowered, auto_renew_claims)
+        found_auto_renew = _find_affirmative_auto_renew_claims(lowered, AUTO_RENEW_CLAIMS)
+        if found_auto_renew:
+            violations.append(
+                f"response incorrectly claims balance top-up will automatically renew or activate subscription: {', '.join(found_auto_renew)}"
+            )
+    elif case.require_separate_purchase or case.require_affirmative_purchase:
+        has_purchase_step = _has_affirmative_purchase_step(lowered)
+        if not has_purchase_step:
+            violations.append(
+                "response must provide an affirmative instruction to separately purchase or activate a subscription period"
+            )
+        found_auto_renew = _find_affirmative_auto_renew_claims(lowered, AUTO_RENEW_CLAIMS)
         if found_auto_renew:
             violations.append(
                 f"response incorrectly claims balance top-up will automatically renew or activate subscription: {', '.join(found_auto_renew)}"

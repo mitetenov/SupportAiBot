@@ -881,6 +881,21 @@ def test_general_payment_howto_requires_both_steps_and_rejects_auto_renewal() ->
     assert res_num_steps.passed is True
     assert res_num_steps.violations == []
 
+    # Positive probe 7 (Sol review round 5 finding): Approved FAQ cabinet-only instruction excerpt
+    faq_cabinet_excerpt = (
+        "В личном кабинете https://lk.peipivo.top: раздел «Баланс и платежи» для пополнения, "
+        "раздел «Подписки» для покупки периода."
+    )
+    res_faq = score_case(case, faq_cabinet_excerpt, clients)
+    assert res_faq.passed is True
+    assert res_faq.violations == []
+
+    # Negative probe 11: Cabinet top-up section only with purpose noun, lacking separate purchase navigation
+    probe_cabinet_deposit_only = "В личном кабинете https://lk.peipivo.top перейдите в раздел «Баланс и платежи» для покупки периода."
+    res_cab_dep = score_case(case, probe_cabinet_deposit_only, clients)
+    assert res_cab_dep.passed is False
+    assert any("both mandatory payment steps" in v for v in res_cab_dep.violations)
+
 
 def test_zero_tools_expectation_enforced_for_payment_cases() -> None:
     cases = {c.name: c for c in load_cases()}
@@ -944,6 +959,101 @@ def test_deposit_without_purchase_forbids_remnawave_lookups() -> None:
     res = score_case(case, reply, clients, trace=trace_panel)
     assert res.passed is False
     assert any("forbidden tools: users_get_by_telegram_id" in v for v in res.violations)
+
+
+def test_deposit_without_purchase_requires_affirmative_purchase_and_rejects_auto_renewal() -> None:
+    case = next(c for c in load_cases() if c.name == "deposit_without_purchase")
+    assert case.require_separate_purchase is True
+    _, clients = build_synthetic_router()
+    valid_trace: list[tuple[str, dict[str, Any]]] = [
+        ("bedolaga_billing_get", {"telegram_id": SYNTHETIC_TELEGRAM_ID})
+    ]
+
+    # Negative Probe 1 (Sol review round 5 probe): Stating separate purchase is unneeded and claiming auto-renewal
+    probe_sol = (
+        "Баланс пополнен. Приобретать период отдельно не нужно — подписка продлится автоматически."
+    )
+    res_sol = score_case(case, probe_sol, clients, trace=valid_trace)
+    assert res_sol.passed is False
+    assert any(
+        "separately purchase" in v or "affirmative instruction" in v for v in res_sol.violations
+    )
+    assert any("automatically renew" in v for v in res_sol.violations)
+
+    # Negative Probe 2: Claiming separate purchase is not needed without auto-renewal claim
+    probe_no_purchase = "Баланс пополнен на 500 рублей. Покупать подписку отдельно не требуется."
+    res_np = score_case(case, probe_no_purchase, clients, trace=valid_trace)
+    assert res_np.passed is False
+    assert any(
+        "separately purchase" in v or "affirmative instruction" in v for v in res_np.violations
+    )
+
+    # Negative Probe 3: Negating period acquisition with 'не нужно'
+    probe_unneeded = "Ваш баланс пополнен. Приобретать период не нужно."
+    res_un = score_case(case, probe_unneeded, clients, trace=valid_trace)
+    assert res_un.passed is False
+    assert any(
+        "separately purchase" in v or "affirmative instruction" in v for v in res_un.violations
+    )
+
+    # Negative Probe 4: Claiming automatic renewal without purchase instruction
+    probe_auto = "Баланс пополнен. Подписка продлится автоматически."
+    res_auto = score_case(case, probe_auto, clients, trace=valid_trace)
+    assert res_auto.passed is False
+    assert any("automatically renew" in v for v in res_auto.violations)
+    assert any(
+        "separately purchase" in v or "affirmative instruction" in v for v in res_auto.violations
+    )
+
+    # Negative Probe 5: Claiming automatic activation
+    probe_auto_act = "Баланс пополнен на 500 рублей. Подписка автоматически активируется."
+    res_aa = score_case(case, probe_auto_act, clients, trace=valid_trace)
+    assert res_aa.passed is False
+    assert any("automatically renew" in v for v in res_aa.violations)
+
+    # Negative Probe 6: Affirmative purchase instruction accompanied by auto-renewal claim
+    probe_purch_with_auto = (
+        "Баланс пополнен, приобретите период подписки в боте — подписка продлится автоматически."
+    )
+    res_pwa = score_case(case, probe_purch_with_auto, clients, trace=valid_trace)
+    assert res_pwa.passed is False
+    assert any("automatically renew" in v for v in res_pwa.violations)
+
+    # Positive Probe 1: Valid response directing user to separately purchase/activate subscription
+    valid_purchase = (
+        "Баланс пополнен на 500 рублей. Чтобы активировать VPN, перейдите в бот @PeipivoSalesBot "
+        "и приобретите период подписки."
+    )
+    res_vp = score_case(case, valid_purchase, clients, trace=valid_trace)
+    assert res_vp.passed is True
+    assert res_vp.violations == []
+
+    # Positive Probe 2: Valid response clarifying that deposit does not auto-renew and directing to purchase
+    valid_negation = (
+        "Баланс успешно пополнен. Однако пополнение баланса не означает автоматическое продление "
+        "подписки. Вам необходимо отдельно выбрать и купить период подписки в боте."
+    )
+    res_vn = score_case(case, valid_negation, clients, trace=valid_trace)
+    assert res_vn.passed is True
+    assert res_vn.violations == []
+
+    # Positive Probe 3: Valid response clarifying auto-renewal negation with 'автоматически не продлится'
+    valid_negation_v2 = (
+        "Средства зачислены на баланс. Подписка автоматически не продлится, поэтому перейдите "
+        "во вкладку подписок и активируйте необходимый период."
+    )
+    res_vn2 = score_case(case, valid_negation_v2, clients, trace=valid_trace)
+    assert res_vn2.passed is True
+    assert res_vn2.violations == []
+
+    # Positive Probe 4: Explicit cabinet navigation to separate purchase section
+    valid_nav = (
+        "Баланс пополнен. В личном кабинете https://lk.peipivo.top перейдите в раздел «Подписки» "
+        "для покупки периода."
+    )
+    res_nav = score_case(case, valid_nav, clients, trace=valid_trace)
+    assert res_nav.passed is True
+    assert res_nav.violations == []
 
 
 def test_user_not_found_rejects_causal_ui_diagnosis_and_unscoped_claims() -> None:

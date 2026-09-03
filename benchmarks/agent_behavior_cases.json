@@ -30,7 +30,8 @@
         "bedolaga_subscription_get"
       ],
       "must_contain_any": ["приобрет", "куп", "период"],
-      "must_not_contain": ["автоматически продлится"],
+      "must_not_contain": [],
+      "require_separate_purchase": true,
       "require_billing_first": true,
       "expect_escalation": false
     },
