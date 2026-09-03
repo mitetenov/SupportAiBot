@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,14 @@ BOT_RECORD_NOTE = (
     "Verify the actual panel state via the separate Remnawave MCP."
 )
 SUBSCRIPTION_META_NOTE = "Bedolaga subscription records are not the VPN panel status."
+PROFILE_PANEL_TOOLS: tuple[str, ...] = (
+    "bedolaga_user_get",
+    "bedolaga_billing_get",
+    "bedolaga_subscription_get",
+    "users_get_by_telegram_id",
+    "users_get_subscription_url_by_telegram_id",
+    "subscriptions_get_by_user_id",
+)
 
 
 @dataclass(frozen=True)
@@ -68,6 +77,8 @@ class BehaviorCase:
     reject_premature_advice: bool = False
     require_scoped_user_not_found: bool = False
     reject_absent_payment_on_error: bool = False
+    require_billing_first: bool = False
+    reject_known_fact_questions: bool = False
 
 
 @dataclass
@@ -615,6 +626,35 @@ def load_cases(path: Path | None = None) -> list[BehaviorCase]:
     return cases
 
 
+def _find_affirmative_auto_renew_claims(lowered: str, claims: list[str]) -> list[str]:
+    present = [c for c in claims if c in lowered]
+    if not present:
+        return []
+
+    negated_patterns = [
+        r"\b(?:не\s+(?:означает|является|влечет|вед[её]т|гарантирует|включает|дает))\b[^.!?;\n]{0,80}\b(?:автоматическ\w*\s+продлен\w*|автопродлен\w*|автоматическ\w*\s+активац\w*|(?:подписк\w*\s+)?продлится\s+автоматически|автоматически\s+(?:подписк\w*\s+)?продлится|активируется\s+автоматически|автоматически\s+активируется)",
+        r"\b(?:нет|без|отсутствует)\b[^.!?;\n]{0,40}\b(?:автоматическ\w*\s+продлен\w*|автопродлен\w*)",
+        r"\b(?:автоматическ\w*\s+продлен\w*|автопродлен\w*)\b[^.!?;\n]{0,40}\b(?:нет|не\s+(?:произойд[её]т|будет|включен\w*|сработает|предусмотрен\w*|работает)|отключен\w*)",
+        r"\bне\s+(?:автоматически\s+)?(?:продл\w+|активир\w+)(?:\s+автоматически)?\b",
+        r"\bавтоматически\s+не\s+(?:продл\w+|активир\w+)\b",
+    ]
+
+    sentences = re.split(r"[.!?;\n]+", lowered)
+    affirmative_claims: list[str] = []
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        sentence_claims = [c for c in claims if c in sentence]
+        if not sentence_claims:
+            continue
+        if any(re.search(pat, sentence) for pat in negated_patterns):
+            continue
+        affirmative_claims.extend(sentence_claims)
+
+    return sorted(set(affirmative_claims))
+
+
 def score_case(
     case: BehaviorCase,
     response: str,
@@ -669,6 +709,13 @@ def score_case(
             if idx_a >= idx_b:
                 violations.append(f"incorrect tool ordering: {tool_b} was called before {tool_a}")
 
+    if case.require_billing_first:
+        profile_tools = [t for t in tools if t in PROFILE_PANEL_TOOLS]
+        if profile_tools and profile_tools[0] != "bedolaga_billing_get":
+            violations.append(
+                f"bedolaga_billing_get must be the first profile tool called, but {profile_tools[0]} was called first"
+            )
+
     if case.require_clarification:
         if "?" not in response:
             violations.append("response lacks clarification for vague input")
@@ -695,6 +742,28 @@ def score_case(
                 "clarification lacks relevant inquiry about payment interface, step, error, or screenshot"
             )
 
+    if case.reject_known_fact_questions:
+        known_fact_question_patterns = [
+            r"какой\s+(?:способ|метод)",
+            r"каким\s+способом",
+            r"(?:вы\s+)?оплачива\w*\s+через\s+сбп",
+            r"через\s+сбп\?",
+            r"где\s+(?:вы\s+)?оплачива\w*",
+            r"в\s+боте\s+или\s+(?:в\s+)?(?:лк|личн\w*\s+кабинет\w*|сайт\w*|приложен\w*)",
+            r"как(?:ая|ую)\s+ошибк\w*",
+            r"текст\s+ошибки",
+            r"код\s+ошибки",
+            r"сообщение\s+об\s+ошибке",
+            r"ошибку\s+(?:показывает|выдает|выдаёт)",
+            r"что\s+пишет\s+банк",
+        ]
+        for pattern in known_fact_question_patterns:
+            if re.search(pattern, lowered):
+                violations.append(
+                    f"response asks redundant question about already known facts matching pattern: {pattern}"
+                )
+                break
+
     if case.reject_premature_advice:
         premature_indicators = [
             "роутер",
@@ -717,12 +786,36 @@ def score_case(
             violations.append(
                 f"premature advice provided before clarifying vague complaint: {', '.join(found_premature)}"
             )
+        unsupported_diagnosis_patterns = [
+            r"\b(?:сбой|ошибк\w*|проблем\w*)\s+(?:на\s+стороне\s+)?банк\w*",
+            r"\bбанк\w*\s+(?:отклонил|блокирует|сбоит|не\s+пропускает)",
+            r"\bдело\s+в\s+банк\w*",
+            r"\bна\s+стороне\s+банк\w*",
+            r"\b(?:сбой|проблем\w*)\s+(?:с\s+)?интернет\w*",
+            r"\b(?:сбой|проблем\w*)\s+(?:с\s+)?сеть\w*",
+            r"\bдело\s+в\s+интернет\w*",
+            r"\b(?:нестабильн\w*|плох\w*)\s+(?:интернет\w*|соединен\w*)",
+            r"\b(?:сбой|ошибк\w*|проблем\w*)\s+(?:с\s+)?(?:vpn|впн)\b",
+            r"\bдело\s+в\s+(?:vpn|впн)\b",
+            r"\b(?:vpn|впн)\s+(?:блокирует|сбоит|виноват)\b",
+            r"\bиз-за\s+(?:vpn|впн)\b",
+        ]
+        found_diagnoses = [
+            m.group(0) for p in unsupported_diagnosis_patterns if (m := re.search(p, lowered))
+        ]
+        if found_diagnoses:
+            violations.append(
+                f"unsupported causal diagnosis provided for vague complaint: {', '.join(found_diagnoses)}"
+            )
 
     if case.require_two_step_payment:
         has_deposit_step = any(w in lowered for w in ["пополн", "баланс", "депозит"])
-        has_purchase_step = any(
-            w in lowered for w in ["приобре", "куп", "выбер", "период", "активир"]
+        purchase_action_roots = ["куп", "приобре", "активир", "оформ"]
+        has_explicit_purchase = any(w in lowered for w in purchase_action_roots)
+        has_selection_action = bool(
+            re.search(r"\b(выберите|выбрать|выбор)\b.*?\b(период|тариф|подписк)", lowered)
         )
+        has_purchase_step = has_explicit_purchase or has_selection_action
         if not (has_deposit_step and has_purchase_step):
             violations.append(
                 "response must cover both mandatory payment steps: balance top-up and subscription period purchase/activation"
@@ -733,9 +826,12 @@ def score_case(
             "автоматически активируется",
             "активируется автоматически",
             "автоматическое продление",
+            "автоматического продления",
             "автопродление",
+            "автопродления",
+            "автопродлением",
         ]
-        found_auto_renew = [c for c in auto_renew_claims if c in lowered]
+        found_auto_renew = _find_affirmative_auto_renew_claims(lowered, auto_renew_claims)
         if found_auto_renew:
             violations.append(
                 f"response incorrectly claims balance top-up will automatically renew or activate subscription: {', '.join(found_auto_renew)}"

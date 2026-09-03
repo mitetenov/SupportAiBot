@@ -31,6 +31,7 @@
       ],
       "must_contain_any": ["приобрет", "куп", "период"],
       "must_not_contain": ["автоматически продлится"],
+      "require_billing_first": true,
       "expect_escalation": false
     },
     {
@@ -87,7 +88,20 @@
         "криптовалют",
         "пополните баланс",
         "купите подписку",
-        "приобретите период"
+        "приобретите период",
+        "сбой банка",
+        "ошибка банка",
+        "на стороне банка",
+        "банк отклонил",
+        "сбой интернета",
+        "проблема с интернетом",
+        "проблемы с интернетом",
+        "сбой vpn",
+        "сбой впн",
+        "ошибка vpn",
+        "ошибка впн",
+        "из-за vpn",
+        "из-за впн"
       ],
       "expect_escalation": false,
       "require_clarification": true,
@@ -115,11 +129,7 @@
       "must_not_contain": [
         "аккаунт не найден",
         "ваш баланс",
-        "проверил",
-        "автоматически продлится",
-        "продлится автоматически",
-        "автоматически активируется",
-        "активируется автоматически"
+        "проверил"
       ],
       "expect_escalation": false,
       "require_two_step_payment": true,
@@ -150,14 +160,40 @@
         "users_get_subscription_url_by_telegram_id",
         "subscriptions_get_by_user_id"
       ],
-      "must_contain_any": ["другой способ", "карт", "криптовалют", "сбп", "позже", "/operator"],
+      "must_contain_any": [
+        "другой способ",
+        "другим способом",
+        "карт",
+        "криптовалют",
+        "позже",
+        "повторите",
+        "/operator",
+        "оператор"
+      ],
       "must_not_contain": [
         "где вы оплачиваете",
         "в боте или в личном кабинете",
         "в боте или на сайте",
-        "какая ошибка появляется",
+        "где именно",
+        "какой способ",
+        "каким способом",
+        "какой метод",
+        "вы оплачиваете через сбп",
+        "оплачиваете через сбп",
+        "оплачиваете сбп",
+        "через сбп?",
+        "какая ошибка",
+        "какую ошибку",
+        "ошибку показывает",
+        "ошибку выдает",
+        "ошибку выдаёт",
+        "что пишет банк",
+        "текст ошибки",
+        "код ошибки",
+        "сообщение об ошибке",
         "аккаунт не найден"
       ],
+      "reject_known_fact_questions": true,
       "expect_escalation": false,
       "faq_candidates": [
         "Не могу пополнить баланс / ошибка при пополнении"
@@ -184,6 +220,7 @@
         "банк отклонил"
       ],
       "expect_escalation": false,
+      "require_billing_first": true,
       "require_scoped_user_not_found": true,
       "custom_tool_results": {
         "bedolaga_billing_get": {
@@ -225,6 +262,7 @@
         "вы не оплатили"
       ],
       "expect_escalation": false,
+      "require_billing_first": true,
       "reject_absent_payment_on_error": true,
       "custom_tool_results": {
         "bedolaga_billing_get": {
@@ -246,6 +284,7 @@
       "forbidden_tools": [],
       "must_contain_any": ["/operator", "оператор"],
       "must_not_contain": ["платёж зачислен", "подписка активна"],
+      "require_billing_first": true,
       "expect_escalation": true,
       "custom_tool_results": {
         "bedolaga_billing_get": {
@@ -272,6 +311,7 @@
       "expected_tools": ["bedolaga_billing_get", "users_get_by_telegram_id"],
       "forbidden_tools": [],
       "expected_tool_order": ["bedolaga_billing_get", "users_get_by_telegram_id"],
+      "require_billing_first": true,
       "must_contain_any": ["/operator", "оператор"],
       "must_not_contain": ["подписка не куплена", "вы не оплатили"],
       "expect_escalation": true,

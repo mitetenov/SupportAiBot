@@ -177,11 +177,61 @@ def test_scorer_rejects_repeating_questions_from_history() -> None:
     )
     _, clients = build_synthetic_router()
 
-    # Repeating questions that user already answered in history
-    repeat_reply = "Уточните, где вы оплачиваете: в боте или в личном кабинете?"
-    result = score_case(case, repeat_reply, clients)
-    assert result.passed is False
-    assert any("forbidden response text" in v for v in result.violations)
+    # Negative Probe 1: Review finding probe repeating known method and asking about bank error
+    probe_review = "Вы оплачиваете через СБП? Какую ошибку показывает банк?"
+    res_review = score_case(case, probe_review, clients)
+    assert res_review.passed is False
+    assert any(
+        "forbidden response text" in v or "redundant question" in v or "response lacks any of" in v
+        for v in res_review.violations
+    )
+
+    # Negative Probe 2: Asking which payment method is used
+    probe_method = "Уточните, какой способ оплаты вы используете?"
+    res_method = score_case(case, probe_method, clients)
+    assert res_method.passed is False
+
+    # Negative Probe 3: Asking what error the bank shows
+    probe_bank_err = "Какую ошибку показывает банк?"
+    res_bank_err = score_case(case, probe_bank_err, clients)
+    assert res_bank_err.passed is False
+
+    # Negative Probe 4: Asking if payment is via SBP
+    probe_sbp_q = "Вы оплачиваете через СБП?"
+    res_sbp_q = score_case(case, probe_sbp_q, clients)
+    assert res_sbp_q.passed is False
+
+    # Negative Probe 5: Asking interface where user already specified bot
+    probe_interface = "Уточните, где вы оплачиваете: в боте или в личном кабинете?"
+    res_interface = score_case(case, probe_interface, clients)
+    assert res_interface.passed is False
+
+    # Negative Probe 6: Merely echoing SBP without providing applicable assistance
+    probe_echo = "Оплата через СБП."
+    res_echo = score_case(case, probe_echo, clients)
+    assert res_echo.passed is False
+    assert any("response lacks any of" in v for v in res_echo.violations)
+
+    # Positive Probe 1: Suggesting alternative payment options and trying later
+    valid_alt = (
+        "Если при оплате через СБП возникает ошибка банка, попробуйте другой способ оплаты "
+        "(например, банковской картой или криптовалютой) либо повторите попытку позже."
+    )
+    res_valid_alt = score_case(case, valid_alt, clients)
+    assert res_valid_alt.passed is True
+    assert res_valid_alt.violations == []
+
+    # Positive Probe 2: Suggesting card payment or operator escalation
+    valid_op = "Попробуйте оплатить банковской картой или обратитесь к оператору: /operator."
+    res_valid_op = score_case(case, valid_op, clients)
+    assert res_valid_op.passed is True
+    assert res_valid_op.violations == []
+
+    # Positive Probe 3: Recommending other method in bot or trying later
+    valid_bot_later = "Рекомендуем выбрать другой способ оплаты в боте или повторить попытку позже."
+    res_valid_bot = score_case(case, valid_bot_later, clients)
+    assert res_valid_bot.passed is True
+    assert res_valid_bot.violations == []
 
 
 def test_scorer_rejects_unnecessary_personal_tools_for_howto() -> None:
@@ -198,25 +248,64 @@ def test_scorer_rejects_unnecessary_personal_tools_for_howto() -> None:
 
 
 def test_scorer_rejects_incorrect_tool_ordering() -> None:
-    case = next(
-        c
-        for c in load_cases()
-        if c.name == "completed_purchase_panel_discrepancy_checks_panel_and_escalates"
-    )
+    cases = {c.name: c for c in load_cases()}
     _, clients = build_synthetic_router()
 
-    # Inverted order: Remnawave called before billing
+    # 1. completed_purchase_panel_discrepancy: panel called before billing
+    disc_case = cases["completed_purchase_panel_discrepancy_checks_panel_and_escalates"]
     inverted_trace: list[tuple[str, dict[str, Any]]] = [
         ("users_get_by_telegram_id", {"telegramId": SYNTHETIC_TELEGRAM_ID}),
         ("bedolaga_billing_get", {"telegram_id": SYNTHETIC_TELEGRAM_ID}),
     ]
-    reply = "Вижу расхождение. Передаю оператору /operator [ESCALATE]"
-    result = score_case(case, reply, clients, trace=inverted_trace)
-    assert result.passed is False
+    reply_disc = "Вижу расхождение. Передаю оператору /operator [ESCALATE]"
+    result_disc = score_case(disc_case, reply_disc, clients, trace=inverted_trace)
+    assert result_disc.passed is False
     assert any(
-        "incorrect tool ordering: users_get_by_telegram_id was called before bedolaga_billing_get"
-        in v
-        for v in result.violations
+        "bedolaga_billing_get must be the first profile tool called" in v
+        or "incorrect tool ordering" in v
+        for v in result_disc.violations
+    )
+
+    # 2. external_charge_without_record_escalates: panel lookup called before billing
+    ext_case = cases["external_charge_without_record_escalates"]
+    reply_ext = "Передаю оператору для ручной проверки платежа. /operator [ESCALATE]"
+    result_ext = score_case(ext_case, reply_ext, clients, trace=inverted_trace)
+    assert result_ext.passed is False
+    assert any(
+        "bedolaga_billing_get must be the first profile tool called" in v
+        for v in result_ext.violations
+    )
+
+    # 2b. external_charge_without_record_escalates: bedolaga_user_get called before billing
+    user_first_trace: list[tuple[str, dict[str, Any]]] = [
+        ("bedolaga_user_get", {"telegram_id": SYNTHETIC_TELEGRAM_ID}),
+        ("bedolaga_billing_get", {"telegram_id": SYNTHETIC_TELEGRAM_ID}),
+    ]
+    result_user_first = score_case(ext_case, reply_ext, clients, trace=user_first_trace)
+    assert result_user_first.passed is False
+    assert any(
+        "bedolaga_billing_get must be the first profile tool called" in v
+        for v in result_user_first.violations
+    )
+
+    # 3. lookup_user_not_found_explains_search_without_ui_diagnosis: reversed trace
+    not_found_case = cases["lookup_user_not_found_explains_search_without_ui_diagnosis"]
+    reply_nf = "Пользователь с вашим Telegram ID не найден в сервисе Bedolaga."
+    result_nf = score_case(not_found_case, reply_nf, clients, trace=inverted_trace)
+    assert result_nf.passed is False
+    assert any(
+        "bedolaga_billing_get must be the first profile tool called" in v
+        for v in result_nf.violations
+    )
+
+    # 4. upstream_unavailable_reports_temporary_failure: reversed trace
+    upstream_case = cases["upstream_unavailable_reports_temporary_failure"]
+    reply_up = "Сервис временно недоступен, не удалось проверить платежи. Попробуйте позже."
+    result_up = score_case(upstream_case, reply_up, clients, trace=inverted_trace)
+    assert result_up.passed is False
+    assert any(
+        "bedolaga_billing_get must be the first profile tool called" in v
+        for v in result_up.violations
     )
 
 
@@ -496,6 +585,66 @@ def test_vague_payment_complaint_scorer_discriminates_relevance_and_premature_ad
     assert res_steps.passed is False
     assert any("premature advice" in v for v in res_steps.violations)
 
+    # Probe 5: Unsupported bank diagnosis accompanying valid question (Sol review finding)
+    probe_bank_1 = "Где именно не получается оплатить? Это сбой банка."
+    res_bank_1 = score_case(case, probe_bank_1, clients)
+    assert res_bank_1.passed is False
+    assert any(
+        "unsupported causal diagnosis" in v or "forbidden response text" in v
+        for v in res_bank_1.violations
+    )
+
+    # Probe 6: Unsupported bank diagnosis (claim that bank rejected payment)
+    probe_bank_2 = "Уточните, где вы оплачиваете? Скорее всего, банк отклонил платёж."
+    res_bank_2 = score_case(case, probe_bank_2, clients)
+    assert res_bank_2.passed is False
+    assert any(
+        "unsupported causal diagnosis" in v or "forbidden response text" in v
+        for v in res_bank_2.violations
+    )
+
+    # Probe 7: Unsupported bank diagnosis (claim issue is on bank side)
+    probe_bank_3 = "Какая ошибка появляется? Это проблема на стороне банка."
+    res_bank_3 = score_case(case, probe_bank_3, clients)
+    assert res_bank_3.passed is False
+    assert any(
+        "unsupported causal diagnosis" in v or "forbidden response text" in v
+        for v in res_bank_3.violations
+    )
+
+    # Probe 8: Unsupported internet diagnosis accompanying valid question
+    probe_inet_1 = "Где вы оплачиваете? Возможно, у вас проблема с интернетом."
+    res_inet_1 = score_case(case, probe_inet_1, clients)
+    assert res_inet_1.passed is False
+    assert any(
+        "unsupported causal diagnosis" in v or "forbidden response text" in v
+        for v in res_inet_1.violations
+    )
+
+    # Probe 9: Unsupported internet diagnosis (unstable connection)
+    probe_inet_2 = "На каком этапе ошибка? Наверное, нестабильное соединение."
+    res_inet_2 = score_case(case, probe_inet_2, clients)
+    assert res_inet_2.passed is False
+    assert any("unsupported causal diagnosis" in v for v in res_inet_2.violations)
+
+    # Probe 10: Unsupported VPN diagnosis accompanying valid question
+    probe_vpn_diag_1 = "Какая ошибка появляется? Это сбой VPN."
+    res_vpn_diag_1 = score_case(case, probe_vpn_diag_1, clients)
+    assert res_vpn_diag_1.passed is False
+    assert any(
+        "unsupported causal diagnosis" in v or "forbidden response text" in v
+        for v in res_vpn_diag_1.violations
+    )
+
+    # Probe 11: Unsupported VPN diagnosis (attributing failure to VPN)
+    probe_vpn_diag_2 = "Где именно не получается оплатить? Оплата не проходит из-за VPN."
+    res_vpn_diag_2 = score_case(case, probe_vpn_diag_2, clients)
+    assert res_vpn_diag_2.passed is False
+    assert any(
+        "unsupported causal diagnosis" in v or "forbidden response text" in v
+        for v in res_vpn_diag_2.violations
+    )
+
     # Positive probe: Targeted relevant clarification about interface and error
     valid_clarification = (
         "Уточните, пожалуйста, где именно вы производите оплату (в боте или в личном кабинете) "
@@ -529,7 +678,13 @@ def test_general_payment_howto_requires_both_steps_and_rejects_auto_renewal() ->
     assert res_purch.passed is False
     assert any("both mandatory payment steps" in v for v in res_purch.violations)
 
-    # Positive probe: Covers both mandatory steps without claiming auto-renewal
+    # Probe 4: Mentioning period only as topup amount calculation without a purchase step (Sol review finding)
+    topup_amount_only = "Пополните баланс в боте @PeipivoSalesBot на сумму выбранного периода."
+    res_topup_only = score_case(case, topup_amount_only, clients)
+    assert res_topup_only.passed is False
+    assert any("both mandatory payment steps" in v for v in res_topup_only.violations)
+
+    # Positive probe 1: Covers both mandatory steps without claiming auto-renewal
     valid_two_step = (
         "Чтобы оплатить подписку, выполните два шага:\n"
         "1. Пополните баланс в боте @PeipivoSalesBot или на сайте lk.peipivo.top;\n"
@@ -538,6 +693,26 @@ def test_general_payment_howto_requires_both_steps_and_rejects_auto_renewal() ->
     res_valid = score_case(case, valid_two_step, clients)
     assert res_valid.passed is True
     assert res_valid.violations == []
+
+    # Positive probe 2: Correct two-step answer concluding with explicit explanation that top-up does not auto-renew (Sol review finding)
+    valid_with_negated_auto_renew = (
+        "Чтобы оплатить подписку, выполните два шага:\n"
+        "1. Пополните баланс в боте @PeipivoSalesBot или на сайте lk.peipivo.top;\n"
+        "2. Перейдите в раздел подписки и приобретите необходимый период.\n"
+        "Пополнение само по себе не означает автоматическое продление."
+    )
+    res_neg = score_case(case, valid_with_negated_auto_renew, clients)
+    assert res_neg.passed is True
+    assert res_neg.violations == []
+
+    # Positive probe 3: Another legitimate phrasing negating auto-renewal
+    valid_negated_v2 = (
+        "Пополните баланс в боте @PeipivoSalesBot, затем выберите период подписки во вкладке подписок. "
+        "Помните: подписка не продлится автоматически без покупки периода."
+    )
+    res_neg_v2 = score_case(case, valid_negated_v2, clients)
+    assert res_neg_v2.passed is True
+    assert res_neg_v2.violations == []
 
 
 def test_zero_tools_expectation_enforced_for_payment_cases() -> None:
