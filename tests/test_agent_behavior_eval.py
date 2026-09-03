@@ -233,6 +233,43 @@ def test_scorer_rejects_repeating_questions_from_history() -> None:
     assert res_valid_bot.passed is True
     assert res_valid_bot.violations == []
 
+    # Positive Probe 4 (Coordinator review finding): Affirmative statement acknowledging SBP with applicable next step
+    valid_sbp_affirmative = "Вижу, что вы оплачиваете через СБП. Попробуйте другой способ оплаты."
+    res_affirmative = score_case(case, valid_sbp_affirmative, clients)
+    assert res_affirmative.passed is True
+    assert res_affirmative.violations == []
+
+    # Positive Probe 5: Affirmative statement acknowledging both SBP and bank error with operator next step
+    valid_sbp_bank_err = (
+        "Вижу, что вы оплачиваете через СБП и возникает ошибка банка. "
+        "Рекомендуем выбрать другой способ оплаты или обратиться к оператору: /operator."
+    )
+    res_sbp_bank = score_case(case, valid_sbp_bank_err, clients)
+    assert res_sbp_bank.passed is True
+    assert res_sbp_bank.violations == []
+
+    # Negative Probe 7: Repeating SBP question paired with advice
+    probe_sbp_q_adv = "Вы оплачиваете через СБП? Попробуйте другой способ оплаты."
+    res_sbp_adv = score_case(case, probe_sbp_q_adv, clients)
+    assert res_sbp_adv.passed is False
+    assert any(
+        "redundant question" in v or "forbidden response text" in v for v in res_sbp_adv.violations
+    )
+
+    # Negative Probe 8: Repeating bank error question paired with advice
+    probe_err_adv = "Какую ошибку показывает банк? Попробуйте другой способ оплаты."
+    res_err_adv = score_case(case, probe_err_adv, clients)
+    assert res_err_adv.passed is False
+    assert any(
+        "redundant question" in v or "forbidden response text" in v for v in res_err_adv.violations
+    )
+
+    # Negative Probe 9: Prompting to clarify SBP
+    probe_clarify_sbp = "Уточните, вы оплачиваете через СБП? Попробуйте другой способ оплаты."
+    res_clarify = score_case(case, probe_clarify_sbp, clients)
+    assert res_clarify.passed is False
+    assert any("redundant question" in v for v in res_clarify.violations)
+
 
 def test_scorer_rejects_unnecessary_personal_tools_for_howto() -> None:
     case = next(c for c in load_cases() if c.name == "general_payment_howto_uses_faq_without_tools")
@@ -645,6 +682,35 @@ def test_vague_payment_complaint_scorer_discriminates_relevance_and_premature_ad
         for v in res_vpn_diag_2.violations
     )
 
+    # Probe 12 (Coordinator review finding): Unconfirmed absence claim asserting failure to find account
+    probe_absence_1 = (
+        "Не удалось найти вашу учётную запись в системе оплаты. "
+        "Где вы оплачиваете: в боте или в личном кабинете?"
+    )
+    res_absence_1 = score_case(case, probe_absence_1, clients)
+    assert res_absence_1.passed is False
+    assert any(
+        "unverified" in v or "forbidden response text" in v for v in res_absence_1.violations
+    )
+
+    # Probe 13: Unconfirmed absence claim with 'учетная запись не найдена'
+    probe_absence_2 = "Учётная запись не найдена. На каком шаге возникает сбой?"
+    res_absence_2 = score_case(case, probe_absence_2, clients)
+    assert res_absence_2.passed is False
+    assert any(
+        "unverified" in v or "forbidden response text" in v for v in res_absence_2.violations
+    )
+
+    # Probe 14: Unconfirmed absence claim with 'пользователь не найден'
+    probe_absence_3 = (
+        "Пользователь не найден. Уточните, где вы производите оплату: в боте или на сайте?"
+    )
+    res_absence_3 = score_case(case, probe_absence_3, clients)
+    assert res_absence_3.passed is False
+    assert any(
+        "unverified" in v or "forbidden response text" in v for v in res_absence_3.violations
+    )
+
     # Positive probe: Targeted relevant clarification about interface and error
     valid_clarification = (
         "Уточните, пожалуйста, где именно вы производите оплату (в боте или в личном кабинете) "
@@ -684,6 +750,18 @@ def test_general_payment_howto_requires_both_steps_and_rejects_auto_renewal() ->
     assert res_topup_only.passed is False
     assert any("both mandatory payment steps" in v for v in res_topup_only.violations)
 
+    # Probe 5 (Coordinator review finding): Purchasing from balance without an explicit balance top-up step
+    probe_balance_no_deposit = "В боте @PeipivoSalesBot приобретите подписку за счёт баланса."
+    res_balance_no_dep = score_case(case, probe_balance_no_deposit, clients)
+    assert res_balance_no_dep.passed is False
+    assert any("both mandatory payment steps" in v for v in res_balance_no_dep.violations)
+
+    # Probe 6: Purchasing with "с баланса" without explicit deposit instruction
+    probe_from_balance = "В боте @PeipivoSalesBot приобретите подписку с баланса."
+    res_from_balance = score_case(case, probe_from_balance, clients)
+    assert res_from_balance.passed is False
+    assert any("both mandatory payment steps" in v for v in res_from_balance.violations)
+
     # Positive probe 1: Covers both mandatory steps without claiming auto-renewal
     valid_two_step = (
         "Чтобы оплатить подписку, выполните два шага:\n"
@@ -713,6 +791,15 @@ def test_general_payment_howto_requires_both_steps_and_rejects_auto_renewal() ->
     res_neg_v2 = score_case(case, valid_negated_v2, clients)
     assert res_neg_v2.passed is True
     assert res_neg_v2.violations == []
+
+    # Positive probe 4: Explicit deposit action with "Внесите средства на баланс..."
+    valid_explicit_dep = (
+        "Внесите средства на баланс в боте @PeipivoSalesBot или на сайте lk.peipivo.top, "
+        "а затем приобретите необходимый период подписки."
+    )
+    res_explicit_dep = score_case(case, valid_explicit_dep, clients)
+    assert res_explicit_dep.passed is True
+    assert res_explicit_dep.violations == []
 
 
 def test_zero_tools_expectation_enforced_for_payment_cases() -> None:
@@ -843,6 +930,33 @@ def test_upstream_unavailable_rejects_absent_payment_assertions() -> None:
     res_unpaid = score_case(case, probe_unpaid, clients, trace=trace)
     assert res_unpaid.passed is False
     assert any("asserts payment is absent" in v for v in res_unpaid.violations)
+
+    # Probe 4 (Coordinator review finding): False account absence claim on upstream technical failure
+    probe_absence_up_1 = "Не удалось найти вашу учётную запись в системе оплаты. Попробуйте позже."
+    res_absence_up_1 = score_case(case, probe_absence_up_1, clients, trace=trace)
+    assert res_absence_up_1.passed is False
+    assert any(
+        "asserts payment is absent" in v or "forbidden response text" in v
+        for v in res_absence_up_1.violations
+    )
+
+    # Probe 5: Claiming account not found on upstream error
+    probe_absence_up_2 = "Учётная запись не найдена, сервис временно недоступен. Попробуйте позже."
+    res_absence_up_2 = score_case(case, probe_absence_up_2, clients, trace=trace)
+    assert res_absence_up_2.passed is False
+    assert any(
+        "asserts payment is absent" in v or "forbidden response text" in v
+        for v in res_absence_up_2.violations
+    )
+
+    # Probe 6: Claiming user not found on upstream error
+    probe_absence_up_3 = "Пользователь не найден в системе. Попробуйте позже."
+    res_absence_up_3 = score_case(case, probe_absence_up_3, clients, trace=trace)
+    assert res_absence_up_3.passed is False
+    assert any(
+        "asserts payment is absent" in v or "forbidden response text" in v
+        for v in res_absence_up_3.violations
+    )
 
     # Positive probe: Explaining temporary impossibility of verifying records
     valid_reply = (

@@ -56,6 +56,18 @@ PROFILE_PANEL_TOOLS: tuple[str, ...] = (
     "subscriptions_get_by_user_id",
 )
 
+UNCONFIRMED_ABSENCE_PATTERNS: tuple[str, ...] = (
+    r"не\s+удалось\s+найти\s+(?:вашу\s+)?(?:учётн\w*|учетн\w*|аккаунт\w*|пользовател\w*|профил\w*|запис\w*|плат[её]ж\w*)",
+    r"(?:учётн\w*|учетн\w*|аккаунт\w*|пользовател\w*|профил\w*|плат[её]ж\w*)\s+(?:не\s+найден\w*|отсутству\w*)",
+    r"(?:не\s+найден\w*|отсутству\w*)\s+(?:ваша?\s+)?(?:учётн\w*|учетн\w*|аккаунт\w*|пользовател\w*|профил\w*|плат[её]ж\w*)",
+    r"\bнет\s+(?:вашей\s+|вашего\s+)?(?:учётн\w*|учетн\w*|аккаунт\w*|профил\w*|плат[её]ж\w*)",
+    r"\bу\s+вас\s+нет\s+(?:учётн\w*|учетн\w*|аккаунт\w*|профил\w*)",
+    r"\bвы\s+не\s+зарегистрирован\w*",
+    r"\bвы\s+не\s+оплатили\b",
+    r"\bденьги\s+не\s+дошли\b",
+    r"\bоплата\s+не\s+поступила\b",
+)
+
 
 @dataclass(frozen=True)
 class BehaviorCase:
@@ -744,18 +756,25 @@ def score_case(
 
     if case.reject_known_fact_questions:
         known_fact_question_patterns = [
-            r"какой\s+(?:способ|метод)",
-            r"каким\s+способом",
-            r"(?:вы\s+)?оплачива\w*\s+через\s+сбп",
-            r"через\s+сбп\?",
-            r"где\s+(?:вы\s+)?оплачива\w*",
-            r"в\s+боте\s+или\s+(?:в\s+)?(?:лк|личн\w*\s+кабинет\w*|сайт\w*|приложен\w*)",
-            r"как(?:ая|ую)\s+ошибк\w*",
-            r"текст\s+ошибки",
-            r"код\s+ошибки",
-            r"сообщение\s+об\s+ошибке",
-            r"ошибку\s+(?:показывает|выдает|выдаёт)",
-            r"что\s+пишет\s+банк",
+            # Inquiries with explicit question marks about known facts
+            r"(?:вы\s+)?оплачива\w*\s+(?:ли\s+)?через\s+сбп\b[^.!?;\n]*\?",
+            r"\bчерез\s+сбп\b[^.!?;\n]*\?",
+            r"\b(?:какой|каким)\s+(?:способ\w*|метод\w*)\b[^.!?;\n]*\?",
+            r"\bгде\s+(?:именно\s+)?(?:вы\s+)?оплачива\w*[^.!?;\n]*\?",
+            r"\bв\s+боте\s+или\s+(?:в\s+)?(?:лк|личн\w*\s+кабинет\w*|сайт\w*|приложен\w*)[^.!?;\n]*\?",
+            r"\bкак(?:ая|ую)\s+ошибк\w*[^.!?;\n]*\?",
+            r"\bчто\s+пишет\s+банк[^.!?;\n]*\?",
+            r"\bошибк\w*[^.!?;\n]*\?",
+            # Question words inherently indicating inquiries about known facts
+            r"\bкакой\s+(?:способ|метод)\b",
+            r"\bкаким\s+способом\b",
+            r"\bгде\s+(?:именно\s+)?(?:вы\s+)?оплачива\w*",
+            r"\bв\s+боте\s+или\s+(?:в\s+)?(?:лк|личн\w*\s+кабинет\w*|сайт\w*|приложен\w*)",
+            r"\bкак(?:ая|ую)\s+ошибк\w*",
+            r"\bчто\s+пишет\s+банк\b",
+            # Imperative clarification requests asking user about already provided facts
+            r"\b(?:уточните|подскажите|напишите|сообщите|укажите|пришлите|расскажите)\b[^.!?;\n]{0,60}\b(?:способ\w*|метод\w*|сбп|где\s+оплачива\w*|ошибк\w*|код\w*\s+ошибки|текст\w*\s+ошибки)",
+            r"\bоплачива\w*\s+ли\s+(?:вы\s+)?через\s+сбп\b",
         ]
         for pattern in known_fact_question_patterns:
             if re.search(pattern, lowered):
@@ -807,9 +826,22 @@ def score_case(
             violations.append(
                 f"unsupported causal diagnosis provided for vague complaint: {', '.join(found_diagnoses)}"
             )
+        found_unconfirmed = [
+            m.group(0) for p in UNCONFIRMED_ABSENCE_PATTERNS if (m := re.search(p, lowered))
+        ]
+        if found_unconfirmed:
+            violations.append(
+                f"unverified user, account, or payment absence claim provided for vague complaint: {', '.join(found_unconfirmed)}"
+            )
 
     if case.require_two_step_payment:
-        has_deposit_step = any(w in lowered for w in ["пополн", "баланс", "депозит"])
+        deposit_action_patterns = [
+            r"\bпополн\w*",
+            r"\bдепозит\w*",
+            r"\b(?:внести|внесени\w*|зачислить|зачислени\w*|положить|перевести|перечислить|добавить)\b[^.!?;\n]{0,40}\b(?:на\s+)?баланс\w*",
+            r"\b(?:средств\w*|деньг\w*|рубл\w*|сумму?)\b[^.!?;\n]{0,30}\bна\s+баланс\w*",
+        ]
+        has_deposit_step = any(bool(re.search(pat, lowered)) for pat in deposit_action_patterns)
         purchase_action_roots = ["куп", "приобре", "активир", "оформ"]
         has_explicit_purchase = any(w in lowered for w in purchase_action_roots)
         has_selection_action = bool(
@@ -887,11 +919,33 @@ def score_case(
             "платёж не найден",
             "вы не оплатили",
             "нет платежа",
+            "у вас нет аккаунта",
+            "нет аккаунта",
+            "аккаунт не найден",
+            "аккаунт отсутствует",
+            "не удалось найти аккаунт",
+            "учётная запись не найдена",
+            "учетная запись не найдена",
+            "нет учётной записи",
+            "нет учетной записи",
+            "учётная запись отсутствует",
+            "учетная запись отсутствует",
+            "не удалось найти учётную запись",
+            "не удалось найти учетную запись",
+            "не удалось найти вашу учётную запись",
+            "не удалось найти вашу учетную запись",
+            "пользователь не найден",
+            "не удалось найти пользователя",
+            "вы не зарегистрированы",
         ]
         found_absent = [a for a in absent_payment_claims if a in lowered]
-        if found_absent:
+        found_unconfirmed = [
+            m.group(0) for p in UNCONFIRMED_ABSENCE_PATTERNS if (m := re.search(p, lowered))
+        ]
+        all_found_absent = list(dict.fromkeys(found_absent + found_unconfirmed))
+        if all_found_absent:
             violations.append(
-                f"response asserts payment is absent when verification failed due to upstream error: {', '.join(found_absent)}"
+                f"response asserts payment is absent when verification failed due to upstream error: {', '.join(all_found_absent)}"
             )
         temporary_failure_terms = [
             "временно",
