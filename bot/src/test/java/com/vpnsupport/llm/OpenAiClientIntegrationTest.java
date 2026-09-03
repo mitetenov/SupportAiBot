@@ -252,4 +252,24 @@ class OpenAiClientIntegrationTest {
         // Check temperature
         assertEquals(0.3, requestJson.get("temperature").asDouble(), 0.001);
     }
+
+    @Test
+    void shouldSerializeToolCallArgumentsAsJsonStringForFollowUpRequest() throws Exception {
+        client.buildInitialConversation("Get user", 123L, null, null, null);
+        List<Map<String, Object>> conversation = new java.util.ArrayList<>();
+        LlmResponse response = new LlmResponse("", List.of(
+                new LlmResponse.ToolCall("users_get", "call_1", Map.of("telegramId", 123L))
+        ));
+
+        var method = OpenAiClient.class.getDeclaredMethod(
+                "addToolCallsToConversation", List.class, LlmResponse.class);
+        method.setAccessible(true);
+        method.invoke(client, conversation, response);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> toolCalls = (List<Map<String, Object>>) conversation.get(0).get("tool_calls");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> function = (Map<String, Object>) toolCalls.get(0).get("function");
+        assertEquals("{\"telegramId\":123}", function.get("arguments"));
+    }
 }

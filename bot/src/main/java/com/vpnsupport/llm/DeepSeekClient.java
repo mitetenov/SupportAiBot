@@ -151,7 +151,7 @@ public class DeepSeekClient extends AbstractLlmClient {
                     "id", tc.id(),
                     "type", "function",
                     "function", Map.of("name", tc.name(), "arguments",
-                            objectMapper.convertValue(tc.arguments(), Map.class))
+                            objectMapper.valueToTree(tc.arguments()).toString())
             ));
         }
         conversation.add(Map.of("role", "assistant", "tool_calls", toolCallMaps));

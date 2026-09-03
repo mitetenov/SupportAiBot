@@ -1,18 +1,18 @@
 # VPN Support Bot
 
-Telegram-бот техподдержки VPN-сервиса. Принимает текстовые вопросы и скриншоты, ищет ответы в базе знаний (RAG через PGVector), получает данные пользователя через Remnawave (MCP-инструменты) и отвечает через LLM (DeepSeek или Gemini). Форвардит диалоги в форум-группу поддержки с автоэскалацией.
+Telegram-бот техподдержки VPN-сервиса. Принимает текстовые вопросы и скриншоты, ищет ответы в базе знаний (RAG через PGVector), получает данные пользователя через Remnawave (MCP-инструменты) и отвечает через LLM (DeepSeek, Gemini, OpenAI или Groq). Форвардит диалоги в форум-группу поддержки с автоэскалацией.
 
 ## Архитектура
 
 ```
-Пользователь → Telegram Bot → LLM (DeepSeek/Gemini) ↔ MCP Client (stdio) → Remnawave
+Пользователь → Telegram Bot → LLM (DeepSeek/Gemini/OpenAI/Groq) ↔ MCP Client (stdio) → Remnawave
                                 ↕
                            PGVector (RAG/FAQ)
                                 ↓
                         Форум-группа поддержки
 ```
 
-- **LLM**: DeepSeek V4 Flash или Gemini 2.5 Flash (переключается через `LLM_PROVIDER`)
+- **LLM**: DeepSeek, Gemini, OpenAI или Groq (переключается через `LLM_PROVIDER`)
 - **MCP**: 153 инструмента Remnawave через [mcp-remnawave](https://github.com/TrackLine/mcp-remnawave) (stdio-транспорт)
 - **RAG**: семантический поиск по FAQ-базе (Gemini embeddings 3072d + PGVector)
 - **Форвардинг**: каждому пользователю — отдельный топик в форум-группе
@@ -41,7 +41,7 @@ docker compose up -d
 
 | Переменная | Обязательна | По умолчанию | Описание |
 |---|---|---|---|
-| `LLM_PROVIDER` | — | `deepseek` | `deepseek` или `gemini` |
+| `LLM_PROVIDER` | — | `deepseek` | `deepseek`, `gemini`, `openai` или `groq` |
 | `TELEGRAM_BOT_TOKEN` | да | — | Токен бота от @BotFather |
 | `TELEGRAM_SUPPORT_GROUP_CHAT_ID` | да | — | ID форум-группы (отрицательный, напр. `-1001234567890`) |
 | `TELEGRAM_SUPPORT_ADMIN_USERNAME` | — | — | Username админа без `@` для эскалации |
@@ -50,6 +50,11 @@ docker compose up -d
 | `DEEPSEEK_MODEL` | при deepseek | — | Модель DeepSeek |
 | `GEMINI_API_KEY` | при gemini | — | OAuth-токен Google Gemini |
 | `GEMINI_MODEL` | при gemini | — | Модель Gemini |
+| `OPENAI_API_KEY` | при openai | — | API-ключ OpenAI |
+| `OPENAI_MODEL` | при openai | `gpt-5.4-mini` | Модель OpenAI |
+| `GROQ_API_KEY` | при groq | — | API-ключ Groq |
+| `GROQ_MODEL` | при groq | `llama-3.3-70b-versatile` | Модель Groq |
+| `GROQ_BASE_URL` | — | `https://api.groq.com/openai/v1` | Переопределение OpenAI-совместимого endpoint Groq |
 | `REMNAWAVE_BASE_URL` | да | — | URL панели Remnawave |
 | `REMNAWAVE_API_TOKEN` | да | — | JWT API-токен Remnawave |
 | `REMNAWAVE_READONLY` | — | `true` | `false` — разрешить удаление HWID-устройств |
@@ -102,6 +107,24 @@ export $(grep -v '^#' .env | xargs)
 mvn -pl bot spring-boot:run
 ```
 
+## Проверка Groq
+
+Автоматические тесты Groq используют только локальный HTTP-сервер и Mockito; внешний API и реальный ключ не нужны:
+
+```bash
+mvn -pl bot -Dtest=GroqPropertiesTest,GroqClientIntegrationTest,StartupValidatorTest test
+```
+
+Опциональная smoke-проверка выполняет один минимальный запрос к Groq. Запускайте её только когда `GROQ_API_KEY` явно передан в окружение; ключ не выводится и не сохраняется:
+
+```bash
+test -n "${GROQ_API_KEY:-}" || { echo 'GROQ_API_KEY is required'; exit 1; }
+curl --fail --silent --show-error https://api.groq.com/openai/v1/chat/completions \
+  -H "Authorization: Bearer $GROQ_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"model":"'"${GROQ_MODEL:-llama-3.3-70b-versatile}"'","messages":[{"role":"user","content":"Reply with OK."}],"max_tokens":1,"temperature":0}'
+```
+
 ## Хранилище
 
 - PostgreSQL 17 + PGVector — маппинг пользователь↔топик, FAQ-эмбеддинги
@@ -115,9 +138,11 @@ mvn -pl bot spring-boot:run
 |---|---|
 | **DeepSeek** | `deepseek-v4-flash`, `deepseek-chat` |
 | **Gemini** | `gemini-2.5-flash`, `gemini-3.1-flash-lite`, `gemini-3.5-flash`, `gemini-2.5-pro`, `gemini-flash-latest` |
+| **OpenAI** | `gpt-5.4-mini` |
+| **Groq** | `llama-3.3-70b-versatile` |
 
-| | DeepSeek | Gemini |
-|---|---|---|
-| Текст и tool calling | ✓ | ✓ |
-| Изображения (скриншоты) | ✗ | ✓ |
-| Эмбеддинги (для FAQ) | ✗ | только Gemini |
+|| DeepSeek | Gemini | OpenAI | Groq |
+|---|---|---|---|---|
+| Текст и tool calling | ✓ | ✓ | ✓ | ✓ |
+| Изображения (скриншоты) | ✗ | ✓ | ✓ | ✗ |
+| Эмбеддинги (для FAQ) | ✗ | только Gemini | ✗ | ✗ |

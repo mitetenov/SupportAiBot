@@ -152,6 +152,7 @@ class DeepSeekClientRoundtripTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> fn2 = (Map<String, Object>) call2.get("function");
         assertEquals("users_get", fn2.get("name"));
+        assertEquals("{\"telegramId\":555}", fn2.get("arguments"));
     }
 
     @Test

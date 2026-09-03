@@ -2,6 +2,7 @@ package com.vpnsupport.config;
 
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -14,6 +15,24 @@ public class StartupValidator implements ApplicationRunner {
     private final GeminiProperties geminiProperties;
     private final RemnawaveMcpProperties remnawaveMcpProperties;
     private final OpenAiProperties openAiProperties;
+    private final GroqProperties groqProperties;
+
+    @Autowired
+    public StartupValidator(TelegramProperties telegramProperties,
+                            LlmProperties llmProperties,
+                            DeepSeekProperties deepSeekProperties,
+                            GeminiProperties geminiProperties,
+                            RemnawaveMcpProperties remnawaveMcpProperties,
+                            OpenAiProperties openAiProperties,
+                            GroqProperties groqProperties) {
+        this.telegramProperties = telegramProperties;
+        this.llmProperties = llmProperties;
+        this.deepSeekProperties = deepSeekProperties;
+        this.geminiProperties = geminiProperties;
+        this.remnawaveMcpProperties = remnawaveMcpProperties;
+        this.openAiProperties = openAiProperties;
+        this.groqProperties = groqProperties;
+    }
 
     public StartupValidator(TelegramProperties telegramProperties,
                             LlmProperties llmProperties,
@@ -21,12 +40,8 @@ public class StartupValidator implements ApplicationRunner {
                             GeminiProperties geminiProperties,
                             RemnawaveMcpProperties remnawaveMcpProperties,
                             OpenAiProperties openAiProperties) {
-        this.telegramProperties = telegramProperties;
-        this.llmProperties = llmProperties;
-        this.deepSeekProperties = deepSeekProperties;
-        this.geminiProperties = geminiProperties;
-        this.remnawaveMcpProperties = remnawaveMcpProperties;
-        this.openAiProperties = openAiProperties;
+        this(telegramProperties, llmProperties, deepSeekProperties, geminiProperties,
+                remnawaveMcpProperties, openAiProperties, new GroqProperties());
     }
 
     @Override
@@ -46,6 +61,9 @@ public class StartupValidator implements ApplicationRunner {
         } else if ("openai".equalsIgnoreCase(provider)) {
             requireText(openAiProperties.getApiKey(), "OPENAI_API_KEY");
             requireText(openAiProperties.getModel(), "OPENAI_MODEL");
+        } else if ("groq".equalsIgnoreCase(provider)) {
+            requireText(groqProperties.getApiKey(), "GROQ_API_KEY");
+            requireText(groqProperties.getModel(), "GROQ_MODEL");
         } else {
             throw new IllegalStateException("Unknown LLM provider: " + provider);
         }

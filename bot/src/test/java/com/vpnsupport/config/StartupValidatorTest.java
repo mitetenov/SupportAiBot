@@ -81,6 +81,49 @@ class StartupValidatorTest {
     }
 
     @Test
+    void shouldValidateGroqProvider() {
+        TelegramProperties telegram = new TelegramProperties();
+        telegram.setBotToken("token123");
+        telegram.setSupportGroupChatId(123L);
+
+        LlmProperties llm = new LlmProperties();
+        llm.setProvider("groq");
+
+        DeepSeekProperties deepSeek = new DeepSeekProperties();
+        GeminiProperties gemini = new GeminiProperties();
+        OpenAiProperties openAi = new OpenAiProperties();
+        GroqProperties groq = new GroqProperties();
+        groq.setApiKey("groq-key");
+        groq.setModel("llama-3.3-70b-versatile");
+        RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
+        remnawave.setBaseUrl("https://example.com");
+        remnawave.setApiToken("api-token");
+
+        StartupValidator validator = new StartupValidator(
+                telegram, llm, deepSeek, gemini, remnawave, openAi, groq);
+
+        assertDoesNotThrow(() -> validator.run(null));
+    }
+
+    @Test
+    void shouldThrowWhenGroqApiKeyMissing() {
+        StartupValidator validator = groqValidator(null, "llama-3.3-70b-versatile");
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
+
+        assertEquals("GROQ_API_KEY is required", ex.getMessage());
+    }
+
+    @Test
+    void shouldThrowWhenGroqModelMissing() {
+        StartupValidator validator = groqValidator("groq-key", " ");
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
+
+        assertEquals("GROQ_MODEL is required", ex.getMessage());
+    }
+
+    @Test
     void shouldThrowWhenBotTokenMissing() {
         TelegramProperties telegram = new TelegramProperties();
         telegram.setSupportGroupChatId(123L);
@@ -292,5 +335,25 @@ class StartupValidatorTest {
 
         IllegalStateException ex = assertThrows(IllegalStateException.class, () -> validator.run(null));
         assertEquals("Unknown LLM provider: unknown", ex.getMessage());
+    }
+
+    private StartupValidator groqValidator(String apiKey, String model) {
+        TelegramProperties telegram = new TelegramProperties();
+        telegram.setBotToken("token123");
+        telegram.setSupportGroupChatId(123L);
+
+        LlmProperties llm = new LlmProperties();
+        llm.setProvider("groq");
+
+        GroqProperties groq = new GroqProperties();
+        groq.setApiKey(apiKey);
+        groq.setModel(model);
+
+        RemnawaveMcpProperties remnawave = new RemnawaveMcpProperties();
+        remnawave.setBaseUrl("https://example.com");
+        remnawave.setApiToken("api-token");
+
+        return new StartupValidator(telegram, llm, new DeepSeekProperties(), new GeminiProperties(), remnawave,
+                new OpenAiProperties(), groq);
     }
 }

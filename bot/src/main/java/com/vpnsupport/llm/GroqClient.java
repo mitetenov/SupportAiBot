@@ -7,13 +7,15 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.vpnsupport.bot.ChatHistoryService;
 import com.vpnsupport.bot.LlmTokenUsage;
 import com.vpnsupport.bot.LlmTokenUsageRepository;
-import com.vpnsupport.config.OpenAiProperties;
+import com.vpnsupport.config.GroqProperties;
 import com.vpnsupport.rag.FaqEmbeddingService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
 
@@ -24,26 +26,29 @@ import java.util.List;
 import java.util.Map;
 
 @Component
-@ConditionalOnProperty(name = "llm.provider", havingValue = "openai")
-public class OpenAiClient extends AbstractLlmClient {
+@ConditionalOnProperty(name = "llm.provider", havingValue = "groq")
+public class GroqClient extends AbstractLlmClient {
 
-    private static final Logger log = LoggerFactory.getLogger(OpenAiClient.class);
+    private static final Logger log = LoggerFactory.getLogger(GroqClient.class);
     private static final double TEMPERATURE = 0.3;
 
     private final WebClient webClient;
     private final String model;
     private volatile List<Map<String, Object>> cachedToolDefinitions;
 
-    public OpenAiClient(OpenAiProperties properties, ObjectMapper objectMapper,
-                        McpRouter mcpRouter, ChatHistoryService chatHistoryService,
-                        FaqEmbeddingService faqEmbeddingService,
-                        LlmTokenUsageRepository tokenUsageRepository) {
+    public GroqClient(GroqProperties properties, ObjectMapper objectMapper,
+                      McpRouter mcpRouter, ChatHistoryService chatHistoryService,
+                      FaqEmbeddingService faqEmbeddingService,
+                      LlmTokenUsageRepository tokenUsageRepository) {
         super(objectMapper, mcpRouter, chatHistoryService, faqEmbeddingService, tokenUsageRepository);
         String apiKey = properties.getApiKey();
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalArgumentException("OpenAI API key must not be null or blank");
+            throw new IllegalArgumentException("Groq API key must not be null or blank");
         }
         this.model = properties.getModel();
+        if (model == null || model.isBlank()) {
+            throw new IllegalArgumentException("Groq model must not be null or blank");
+        }
         this.webClient = WebClient.builder()
                 .baseUrl(properties.getBaseUrl())
                 .defaultHeader("Authorization", "Bearer " + apiKey)
@@ -51,6 +56,11 @@ public class OpenAiClient extends AbstractLlmClient {
                 .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(
                         HttpClient.create().responseTimeout(Duration.ofSeconds(60))))
                 .build();
+    }
+
+    @Override
+    public boolean supportsImages() {
+        return false;
     }
 
     private List<Map<String, Object>> getToolDefinitions() {
@@ -64,11 +74,6 @@ public class OpenAiClient extends AbstractLlmClient {
             }
         }
         return tools;
-    }
-
-    @Override
-    public boolean supportsImages() {
-        return true;
     }
 
     @Override
@@ -86,22 +91,7 @@ public class OpenAiClient extends AbstractLlmClient {
         messages.add(Map.of("role", "system", "content", dynamicContext));
 
         messages.addAll(chatHistoryService.getHistory(telegramUserId));
-
-        if (base64Image != null && !base64Image.isEmpty()) {
-            List<Object> parts = new ArrayList<>();
-            if (userMessage != null && !userMessage.isBlank()) {
-                parts.add(Map.of("type", "text", "text", userMessage));
-            }
-            String dataUri = "data:" + (mimeType != null ? mimeType : "image/jpeg") + ";base64," + base64Image;
-            parts.add(Map.of(
-                    "type", "image_url",
-                    "image_url", Map.of("url", dataUri)
-            ));
-            messages.add(Map.of("role", "user", "content", parts));
-        } else {
-            messages.add(Map.of("role", "user", "content", userMessage));
-        }
-
+        messages.add(Map.of("role", "user", "content", userMessage));
         return messages;
     }
 
@@ -109,18 +99,41 @@ public class OpenAiClient extends AbstractLlmClient {
     @SuppressWarnings("unused")
     protected String callApi(List<Map<String, Object>> conversation, String faqContext, long telegramUserId) {
         ObjectNode requestBody = buildRequestBody(conversation);
-        log.debug("OpenAI request ({} tools available)", getToolDefinitions().size());
+        log.debug("Groq request ({} tools available)", getToolDefinitions().size());
 
         return webClient.post()
                 .uri("/chat/completions")
                 .bodyValue(requestBody)
                 .retrieve()
                 .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
-                        clientResponse -> clientResponse.bodyToMono(String.class)
-                                .flatMap(err -> Mono.error(new RuntimeException(
-                                        "OpenAI API error: " + clientResponse.statusCode() + " - " + err))))
+                        clientResponse -> Mono.error(toGroqException(clientResponse.statusCode())))
                 .bodyToMono(String.class)
+                .onErrorMap(WebClientRequestException.class, this::toNetworkException)
                 .block();
+    }
+
+    private LlmProcessingException toGroqException(HttpStatusCode status) {
+        int statusCode = status.value();
+        if (statusCode == 401 || statusCode == 403) {
+            return new LlmProcessingException("Groq authentication failed with HTTP " + statusCode,
+                    "Не удалось авторизоваться в Groq. Проверьте GROQ_API_KEY.");
+        }
+        if (statusCode == 429) {
+            return new LlmProcessingException("Groq request failed with HTTP 429",
+                    "Превышен лимит запросов к Groq. Попробуйте позже.");
+        }
+        return new LlmProcessingException("Groq request failed with HTTP " + statusCode,
+                "Сервис Groq временно недоступен. Попробуйте позже.");
+    }
+
+    private LlmProcessingException toNetworkException(WebClientRequestException exception) {
+        Throwable cause = exception.getCause();
+        if (cause != null && cause.getClass().getSimpleName().contains("Timeout")) {
+            return new LlmProcessingException("Groq request timed out",
+                    "Groq не ответил вовремя. Попробуйте позже.", exception);
+        }
+        return new LlmProcessingException("Groq network request failed",
+                "Не удалось связаться с Groq. Проверьте подключение и попробуйте позже.", exception);
     }
 
     @Override
@@ -129,7 +142,7 @@ public class OpenAiClient extends AbstractLlmClient {
             JsonNode jsonResponse = objectMapper.readTree(rawResponse);
             JsonNode choices = jsonResponse.get("choices");
             if (choices == null || !choices.isArray() || choices.isEmpty()) {
-                log.error("Empty choices in OpenAI response: {}", rawResponse);
+                log.error("Empty choices in Groq response");
                 throw new LlmProcessingException("Empty choices",
                         "Не удалось получить ответ от модели. Попробуйте позже.");
             }
@@ -183,7 +196,7 @@ public class OpenAiClient extends AbstractLlmClient {
 
     @Override
     protected void addToolResultToConversation(List<Map<String, Object>> conversation,
-                                                LlmResponse.ToolCall toolCall, String toolResult) {
+                                               LlmResponse.ToolCall toolCall, String toolResult) {
         conversation.add(Map.of("role", "tool", "tool_call_id", toolCall.id(), "content", toolResult));
     }
 
@@ -206,7 +219,7 @@ public class OpenAiClient extends AbstractLlmClient {
 
     @Override
     protected String getProviderName() {
-        return "OpenAI";
+        return "Groq";
     }
 
     private List<Map<String, Object>> buildToolDefinitions() {
