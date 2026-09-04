@@ -1307,3 +1307,229 @@ async def test_offline_run_once_integration_with_mock_transport(
     assert len(req_run2_case1["input"]) == len(messages_case1)
 
     await mock_http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_offline_run_once_openrouter_eval(
+    valid_settings_dict: dict[str, Any],
+) -> None:
+    """Offline eval integration test for OpenRouter with synthetic router and history."""
+    captured_requests: list[dict[str, Any]] = []
+
+    def mock_handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://openrouter.invalid/v1/chat/completions"
+        assert request.headers.get("authorization") == "Bearer sk-synthetic-openrouter"
+        data = json.loads(request.content.decode("utf-8"))
+        captured_requests.append(data)
+        messages = data.get("messages", [])
+
+        last_message = messages[-1] if messages else {}
+        if last_message.get("role") == "tool":
+            output = {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": (
+                                "Баланс пополнен на 750 рублей, но период подписки не куплен. "
+                                "Приобретите период подписки в боте."
+                            ),
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60},
+            }
+            return httpx.Response(200, json=output)
+
+        output = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_or_bill_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "bedolaga_billing_get",
+                                    "arguments": json.dumps({"telegram_id": SYNTHETIC_TELEGRAM_ID}),
+                                },
+                            }
+                        ],
+                        "reasoning": "Checking billing record in bedolaga",
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 25, "completion_tokens": 15, "total_tokens": 40},
+        }
+        return httpx.Response(200, json=output)
+
+    mock_transport = httpx.MockTransport(mock_handler)
+    mock_http_client = httpx.AsyncClient(transport=mock_transport)
+
+    test_settings = Settings(
+        **{
+            **valid_settings_dict,
+            "llm_provider": "openrouter",
+            "openrouter_api_key": SecretStr("sk-synthetic-openrouter"),
+            "openrouter_model": "z-ai/glm-4.7",
+            "openrouter_base_url": "https://openrouter.invalid/v1",
+            "reasoning_effort": "none",
+        }
+    )
+
+    case = BehaviorCase(
+        name="case_openrouter_eval",
+        user_message="Проверьте мой баланс",
+        history=[
+            {"role": "user", "content": "Оплачивал через СБП"},
+            {"role": "assistant", "content": "Сейчас проверю информацию о платеже."},
+        ],
+        faq_candidates=[
+            "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?"
+        ],
+        expected_tools=["bedolaga_billing_get"],
+        must_contain_any=["баланс", "период"],
+        tool_results={"bedolaga_billing_get": make_billing_deposit_without_purchase(1250.0, 750.0)},
+    )
+
+    results = await run_once(cases=[case], settings=test_settings, http_client=mock_http_client)
+
+    assert len(results) == 1
+    assert results[0].passed is True
+    assert results[0].violations == []
+    assert results[0].tools == ["bedolaga_billing_get"]
+    assert len(captured_requests) == 2
+
+    # Verify request payload format and model
+    first_req = captured_requests[0]
+    assert first_req["model"] == "z-ai/glm-4.7"
+    assert first_req["reasoning"] == {"enabled": False}
+    system_messages = [m["content"] for m in first_req["messages"] if m.get("role") == "system"]
+    assert any("Кандидаты FAQ" in sm for sm in system_messages)
+    assert any("Как пополнить баланс" in sm for sm in system_messages)
+    assert {"role": "user", "content": "Оплачивал через СБП"} in first_req["messages"]
+
+    # Verify tool result returned to model in second turn
+    second_req = captured_requests[1]
+    tool_msg = second_req["messages"][-1]
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["tool_call_id"] == "call_or_bill_1"
+    tool_data = json.loads(tool_msg["content"])
+    assert tool_data["data"]["balance_rubles"] == 1250.0
+
+    await mock_http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_offline_run_once_zai_eval(
+    valid_settings_dict: dict[str, Any],
+) -> None:
+    """Offline eval integration test for Z.AI with synthetic router and history."""
+    captured_requests: list[dict[str, Any]] = []
+
+    def mock_handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://zai.invalid/api/paas/v4/chat/completions"
+        assert request.headers.get("authorization") == "Bearer sk-synthetic-zai"
+        data = json.loads(request.content.decode("utf-8"))
+        captured_requests.append(data)
+        messages = data.get("messages", [])
+
+        last_message = messages[-1] if messages else {}
+        if last_message.get("role") == "tool":
+            output = {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": (
+                                "Баланс пополнен на 750 рублей, но период подписки не куплен. "
+                                "Приобретите период подписки в боте."
+                            ),
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 40, "completion_tokens": 20, "total_tokens": 60},
+            }
+            return httpx.Response(200, json=output)
+
+        output = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_zai_bill_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "bedolaga_billing_get",
+                                    "arguments": json.dumps({"telegram_id": SYNTHETIC_TELEGRAM_ID}),
+                                },
+                            }
+                        ],
+                        "reasoning_content": "Checking billing record in bedolaga",
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 25, "completion_tokens": 15, "total_tokens": 40},
+        }
+        return httpx.Response(200, json=output)
+
+    mock_transport = httpx.MockTransport(mock_handler)
+    mock_http_client = httpx.AsyncClient(transport=mock_transport)
+
+    test_settings = Settings(
+        **{
+            **valid_settings_dict,
+            "llm_provider": "zai",
+            "zai_api_key": SecretStr("sk-synthetic-zai"),
+            "zai_model": "glm-4.7",
+            "zai_base_url": "https://zai.invalid/api/paas/v4",
+            "reasoning_effort": "none",
+        }
+    )
+
+    case = BehaviorCase(
+        name="case_zai_eval",
+        user_message="Проверьте мой баланс",
+        history=[
+            {"role": "user", "content": "Оплачивал через СБП"},
+            {"role": "assistant", "content": "Сейчас проверю информацию о платеже."},
+        ],
+        faq_candidates=[
+            "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?"
+        ],
+        expected_tools=["bedolaga_billing_get"],
+        must_contain_any=["баланс", "период"],
+        tool_results={"bedolaga_billing_get": make_billing_deposit_without_purchase(1250.0, 750.0)},
+    )
+
+    results = await run_once(cases=[case], settings=test_settings, http_client=mock_http_client)
+
+    assert len(results) == 1
+    assert results[0].passed is True
+    assert results[0].violations == []
+    assert results[0].tools == ["bedolaga_billing_get"]
+    assert len(captured_requests) == 2
+
+    # Verify request payload format and model
+    first_req = captured_requests[0]
+    assert first_req["model"] == "glm-4.7"
+    assert first_req["thinking"] == {"type": "disabled"}
+    system_messages = [m["content"] for m in first_req["messages"] if m.get("role") == "system"]
+    assert any("Кандидаты FAQ" in sm for sm in system_messages)
+    assert any("Как пополнить баланс" in sm for sm in system_messages)
+    assert {"role": "user", "content": "Оплачивал через СБП"} in first_req["messages"]
+
+    # Verify tool result returned to model in second turn
+    second_req = captured_requests[1]
+    tool_msg = second_req["messages"][-1]
+    assert tool_msg["role"] == "tool"
+    assert tool_msg["tool_call_id"] == "call_zai_bill_1"
+    tool_data = json.loads(tool_msg["content"])
+    assert tool_data["data"]["balance_rubles"] == 1250.0
+
+    await mock_http_client.aclose()

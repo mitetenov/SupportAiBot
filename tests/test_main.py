@@ -111,12 +111,193 @@ def test_create_llm_client(mock_settings: Settings) -> None:
     )
     assert client_openai.get_provider_name() == "OpenAI"
 
+    # OpenRouter
+    mock_settings.llm_provider = "openrouter"
+    mock_settings.openrouter_api_key = "test-openrouter-key"  # type: ignore[assignment]
+    mock_settings.openrouter_model = "z-ai/glm-4.7"
+    client_openrouter = create_llm_client(
+        mock_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert client_openrouter.get_provider_name() == "OpenRouter"
+
+    # Z.AI
+    mock_settings.llm_provider = "zai"
+    mock_settings.zai_api_key = "test-zai-key"  # type: ignore[assignment]
+    mock_settings.zai_model = "glm-4.7"
+    client_zai = create_llm_client(
+        mock_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert client_zai.get_provider_name() == "Z.AI"
+
     # Invalid provider
     mock_settings.llm_provider = "unsupported"
     with pytest.raises(ValueError, match="Unknown LLM provider"):
         create_llm_client(
             mock_settings, mcp_router, chat_history, faq_service, db_manager, http_client
         )
+
+
+def test_create_llm_client_openrouter_factory(mock_settings: Settings) -> None:
+    from app.config import LlmProviderTarget
+    from app.llm.fallback import LlmFallbackClient
+    from app.llm.openrouter import OpenRouterClient
+
+    mcp_router = MagicMock()
+    chat_history = MagicMock()
+    faq_service = MagicMock()
+    db_manager = MagicMock()
+    http_client = MagicMock()
+
+    mock_settings.llm_provider = "openrouter"
+    mock_settings.openrouter_api_key = "test-openrouter-key"  # type: ignore[assignment]
+    mock_settings.openrouter_model = "z-ai/glm-4.7"
+
+    primary_client = create_llm_client(
+        mock_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert isinstance(primary_client, OpenRouterClient)
+    assert not isinstance(primary_client, LlmFallbackClient)
+    assert primary_client.model == "z-ai/glm-4.7"
+    assert primary_client.get_provider_name() == "OpenRouter"
+
+    fallback_settings = mock_settings.model_copy(
+        update={
+            "llm_provider": "openrouter",
+            "openrouter_model": "z-ai/glm-4.7",
+            "llm_fallback_chain": (LlmProviderTarget(provider="openrouter", model="z-ai/glm-5.3"),),
+            "reasoning_effort": "low",
+        }
+    )
+    fallback_coord = create_llm_client(
+        fallback_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert isinstance(fallback_coord, LlmFallbackClient)
+    assert len(fallback_coord._clients) == 2
+    c1, c2 = fallback_coord._clients
+    assert isinstance(c1, OpenRouterClient)
+    assert isinstance(c2, OpenRouterClient)
+    assert c1.model == "z-ai/glm-4.7"
+    assert c2.model == "z-ai/glm-5.3"
+    assert c1._http_client is http_client
+    assert c2._http_client is http_client
+    assert fallback_settings.openrouter_model == "z-ai/glm-4.7"
+
+
+def test_create_llm_client_zai_factory(mock_settings: Settings) -> None:
+    from app.config import LlmProviderTarget
+    from app.llm.fallback import LlmFallbackClient
+    from app.llm.zai import ZaiClient
+
+    mcp_router = MagicMock()
+    chat_history = MagicMock()
+    faq_service = MagicMock()
+    db_manager = MagicMock()
+    http_client = MagicMock()
+
+    mock_settings.llm_provider = "zai"
+    mock_settings.zai_api_key = "test-zai-key"  # type: ignore[assignment]
+    mock_settings.zai_model = "glm-4.7"
+
+    primary_client = create_llm_client(
+        mock_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert isinstance(primary_client, ZaiClient)
+    assert not isinstance(primary_client, LlmFallbackClient)
+    assert primary_client.model == "glm-4.7"
+    assert primary_client.get_provider_name() == "Z.AI"
+
+    fallback_settings = mock_settings.model_copy(
+        update={
+            "llm_provider": "zai",
+            "zai_model": "glm-4.7",
+            "llm_fallback_chain": (LlmProviderTarget(provider="zai", model="glm-5.3"),),
+            "reasoning_effort": "low",
+        }
+    )
+    fallback_coord = create_llm_client(
+        fallback_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert isinstance(fallback_coord, LlmFallbackClient)
+    assert len(fallback_coord._clients) == 2
+    c1, c2 = fallback_coord._clients
+    assert isinstance(c1, ZaiClient)
+    assert isinstance(c2, ZaiClient)
+    assert c1.model == "glm-4.7"
+    assert c2.model == "glm-5.3"
+    assert c1._http_client is http_client
+    assert c2._http_client is http_client
+    assert fallback_settings.zai_model == "glm-4.7"
+
+
+@pytest.mark.parametrize(
+    ("fallback_chain", "expected_err_substring"),
+    [
+        ("openrouter:z-ai/glm-5.3", "z-ai/glm-5.3"),
+        ("zai:glm-5.3", "glm-5.3"),
+    ],
+)
+def test_create_llm_client_fallback_rejects_glm_5_3_with_effort_none(
+    mock_settings: Settings,
+    fallback_chain: str,
+    expected_err_substring: str,
+) -> None:
+    """Verify create_llm_client raises ValueError before HTTP when fallback has glm-5.3 with effort none."""
+    from app.config import _parse_fallback_chain
+
+    mcp_router = MagicMock()
+    chat_history = MagicMock()
+    faq_service = MagicMock()
+    db_manager = MagicMock()
+    http_client = MagicMock()
+
+    # 1. Verify when parsed from LLM_FALLBACK_CHAIN string via Settings constructor
+    settings_from_str = Settings(
+        telegram_bot_token=mock_settings.telegram_bot_token,
+        telegram_support_group_chat_id=mock_settings.telegram_support_group_chat_id,
+        telegram_support_admin_username=mock_settings.telegram_support_admin_username,
+        telegram_support_admin_telegram_ids=mock_settings.telegram_support_admin_telegram_ids,
+        llm_provider="deepseek",
+        deepseek_api_key="sk-test-deepseek-key",
+        deepseek_model="deepseek-chat",
+        openrouter_api_key="test-openrouter-key",
+        zai_api_key="test-zai-key",
+        embedding_provider="gemini",
+        gemini_api_key="test-gemini-key",
+        remnawave_mcp_url="http://localhost:3100",
+        healthcheck_port=8080,
+        reasoning_effort="none",
+        llm_fallback_chain=fallback_chain,
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        create_llm_client(
+            settings_from_str, mcp_router, chat_history, faq_service, db_manager, http_client
+        )
+
+    err = str(exc_info.value)
+    assert expected_err_substring in err
+    assert "REASONING_EFFORT='none'" in err
+    assert http_client.mock_calls == []
+
+    # 2. Also verify when configured via model_copy with parsed fallback targets
+    settings_from_tuple = mock_settings.model_copy(
+        update={
+            "openrouter_api_key": "test-openrouter-key",
+            "zai_api_key": "test-zai-key",
+            "reasoning_effort": "none",
+            "llm_fallback_chain": _parse_fallback_chain(fallback_chain),
+        }
+    )
+
+    with pytest.raises(ValueError) as exc_info_tuple:
+        create_llm_client(
+            settings_from_tuple, mcp_router, chat_history, faq_service, db_manager, http_client
+        )
+
+    err_tuple = str(exc_info_tuple.value)
+    assert expected_err_substring in err_tuple
+    assert "REASONING_EFFORT='none'" in err_tuple
+    assert http_client.mock_calls == []
 
 
 @pytest.mark.asyncio

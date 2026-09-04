@@ -543,3 +543,340 @@ class TestBotLogLevelSettings:
         monkeypatch.setenv("BOT_LOG_LEVEL", "  trace  ")
         settings = Settings(**valid_settings_dict)
         assert settings.bot_log_level == "TRACE"
+
+
+class TestOpenRouterSettings:
+    """Tests for OpenRouter provider configuration and startup validation."""
+
+    def test_should_validate_openrouter_provider(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openrouter"
+        valid_settings_dict["openrouter_api_key"] = "test-openrouter-key"
+        valid_settings_dict["openrouter_model"] = "z-ai/glm-4.7"
+
+        settings = Settings(**valid_settings_dict)
+        assert settings.llm_provider == "openrouter"
+        assert reveal(settings.openrouter_api_key) == "test-openrouter-key"
+        assert settings.openrouter_model == "z-ai/glm-4.7"
+        assert settings.openrouter_base_url == "https://openrouter.ai/api/v1"
+        assert settings.openrouter_timeout_seconds == 120.0
+
+    def test_should_normalize_openrouter_provider_case(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = " OpenRouter "
+        valid_settings_dict["openrouter_api_key"] = "test-openrouter-key"
+        valid_settings_dict["openrouter_model"] = "z-ai/glm-4.7"
+
+        settings = Settings(**valid_settings_dict)
+        assert settings.llm_provider == "openrouter"
+
+    def test_should_have_four_new_fields_with_defaults(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        settings = Settings(**valid_settings_dict)
+        assert settings.openrouter_api_key is None
+        assert settings.openrouter_model is None
+        assert settings.openrouter_base_url == "https://openrouter.ai/api/v1"
+        assert settings.openrouter_timeout_seconds == 120.0
+
+    @pytest.mark.parametrize("blank_key", [None, "", "   "])
+    def test_should_reject_missing_or_blank_openrouter_api_key(
+        self, valid_settings_dict: dict[str, object], blank_key: str | None
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openrouter"
+        valid_settings_dict["openrouter_model"] = "z-ai/glm-4.7"
+        valid_settings_dict["openrouter_api_key"] = blank_key
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "OPENROUTER_API_KEY" in str(exc_info.value)
+
+    @pytest.mark.parametrize("blank_model", [None, "", "   "])
+    def test_should_reject_missing_or_blank_openrouter_model(
+        self, valid_settings_dict: dict[str, object], blank_model: str | None
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openrouter"
+        valid_settings_dict["openrouter_api_key"] = "test-openrouter-key"
+        valid_settings_dict["openrouter_model"] = blank_model
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "OPENROUTER_MODEL" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "invalid_url",
+        [
+            "",
+            "   ",
+            "ftp://openrouter.ai/api/v1",
+            "https://",
+            "https://user:pass@openrouter.ai/api/v1",
+            "https://openrouter.ai/api/v1?query=1",
+            "https://openrouter.ai/api/v1#hash",
+            "https://openrouter.ai/api/v1/chat/completions",
+            "https://openrouter.ai/api/v1/chat/completions/",
+        ],
+    )
+    def test_should_reject_blank_or_invalid_openrouter_base_url(
+        self, valid_settings_dict: dict[str, object], invalid_url: str
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openrouter"
+        valid_settings_dict["openrouter_api_key"] = "test-openrouter-key"
+        valid_settings_dict["openrouter_model"] = "z-ai/glm-4.7"
+        valid_settings_dict["openrouter_base_url"] = invalid_url
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "OPENROUTER_BASE_URL" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "invalid_timeout",
+        [0, 0.0, -1, -0.5, float("nan"), float("inf"), float("-inf")],
+    )
+    def test_should_reject_invalid_openrouter_timeout(
+        self, valid_settings_dict: dict[str, object], invalid_timeout: float
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openrouter"
+        valid_settings_dict["openrouter_api_key"] = "test-openrouter-key"
+        valid_settings_dict["openrouter_model"] = "z-ai/glm-4.7"
+        valid_settings_dict["openrouter_timeout_seconds"] = invalid_timeout
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "OPENROUTER_TIMEOUT_SECONDS" in str(exc_info.value)
+
+    def test_should_require_key_when_openrouter_in_fallback_chain(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openai"
+        valid_settings_dict["openai_api_key"] = "sk-test"
+        valid_settings_dict["openrouter_api_key"] = None
+        valid_settings_dict["llm_fallback_chain"] = "openrouter:z-ai/glm-4.7"
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "OPENROUTER_API_KEY" in str(exc_info.value)
+
+    def test_should_not_require_openrouter_key_when_inactive(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openai"
+        valid_settings_dict["openai_api_key"] = "sk-test"
+        valid_settings_dict["openrouter_api_key"] = None
+        settings = Settings(**valid_settings_dict)
+        assert settings.openrouter_api_key is None
+
+    def test_should_allow_model_with_namespace_and_internal_colons(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openai"
+        valid_settings_dict["openai_api_key"] = "sk-test"
+        valid_settings_dict["openrouter_api_key"] = "test-openrouter-key"
+        valid_settings_dict["groq_api_key"] = "gsk_test"
+        valid_settings_dict["llm_fallback_chain"] = (
+            "openrouter:vendor/model:variant,groq:llama-3.3-70b-versatile"
+        )
+        settings = Settings(**valid_settings_dict)
+        targets = settings.llm_provider_targets
+        assert len(targets) == 3
+        assert targets[1].provider == "openrouter"
+        assert targets[1].model == "vendor/model:variant"
+
+    def test_fallback_only_openrouter_does_not_need_openrouter_model(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openai"
+        valid_settings_dict["openai_api_key"] = "sk-test"
+        valid_settings_dict["openrouter_api_key"] = "test-openrouter-key"
+        valid_settings_dict["openrouter_model"] = None
+        valid_settings_dict["llm_fallback_chain"] = "openrouter:z-ai/glm-4.7"
+        settings = Settings(**valid_settings_dict)
+        assert settings.openrouter_model is None
+        assert settings.llm_provider_targets[1].model == "z-ai/glm-4.7"
+
+    def test_embedding_provider_cannot_be_openrouter(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["embedding_provider"] = "openrouter"
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "EMBEDDING_PROVIDER" in str(exc_info.value)
+
+    def test_openrouter_key_does_not_satisfy_embedding_provider(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openrouter"
+        valid_settings_dict["openrouter_api_key"] = "test-openrouter-key"
+        valid_settings_dict["openrouter_model"] = "z-ai/glm-4.7"
+        valid_settings_dict["embedding_provider"] = "openai"
+        valid_settings_dict["openai_api_key"] = None
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "OPENAI_API_KEY" in str(exc_info.value)
+
+
+class TestZaiSettings:
+    """Tests for Z.AI provider configuration and startup validation."""
+
+    def test_should_validate_zai_provider(self, valid_settings_dict: dict[str, object]) -> None:
+        valid_settings_dict["llm_provider"] = "zai"
+        valid_settings_dict["zai_api_key"] = "test-zai-key"
+        valid_settings_dict["zai_model"] = "glm-4.7"
+        settings = Settings(**valid_settings_dict)
+        assert settings.llm_provider == "zai"
+        assert reveal(settings.zai_api_key) == "test-zai-key"
+        assert settings.zai_model == "glm-4.7"
+        assert settings.zai_base_url == "https://api.z.ai/api/paas/v4"
+        assert settings.zai_timeout_seconds == 120.0
+
+    def test_should_normalize_zai_provider_case(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = " ZAI "
+        valid_settings_dict["zai_api_key"] = "test-zai-key"
+        valid_settings_dict["zai_model"] = "glm-4.7"
+        settings = Settings(**valid_settings_dict)
+        assert settings.llm_provider == "zai"
+
+    def test_should_have_zai_defaults(self, valid_settings_dict: dict[str, object]) -> None:
+        settings = Settings(**valid_settings_dict)
+        assert settings.zai_api_key is None
+        assert settings.zai_model is None
+        assert settings.zai_base_url == "https://api.z.ai/api/paas/v4"
+        assert settings.zai_timeout_seconds == 120.0
+
+    @pytest.mark.parametrize("blank_key", [None, "", "   "])
+    def test_should_reject_missing_or_blank_zai_api_key(
+        self, valid_settings_dict: dict[str, object], blank_key: str | None
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "zai"
+        valid_settings_dict["zai_model"] = "glm-4.7"
+        valid_settings_dict["zai_api_key"] = blank_key
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "ZAI_API_KEY" in str(exc_info.value)
+
+    @pytest.mark.parametrize("blank_model", [None, "", "   "])
+    def test_should_reject_missing_or_blank_zai_model(
+        self, valid_settings_dict: dict[str, object], blank_model: str | None
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "zai"
+        valid_settings_dict["zai_api_key"] = "test-zai-key"
+        valid_settings_dict["zai_model"] = blank_model
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "ZAI_MODEL" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "invalid_url",
+        [
+            "",
+            "   ",
+            "ftp://api.z.ai/api/paas/v4",
+            "not-a-url",
+            "https://user:pass@api.z.ai/api/paas/v4",
+            "https://api.z.ai/api/paas/v4?query=1",
+            "https://api.z.ai/api/paas/v4#hash",
+            "https://api.z.ai/api/paas/v4/chat/completions",
+            "https://api.z.ai/api/paas/v4/chat/completions/",
+        ],
+    )
+    def test_should_reject_blank_or_invalid_zai_base_url(
+        self, valid_settings_dict: dict[str, object], invalid_url: str
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "zai"
+        valid_settings_dict["zai_api_key"] = "test-zai-key"
+        valid_settings_dict["zai_model"] = "glm-4.7"
+        valid_settings_dict["zai_base_url"] = invalid_url
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "ZAI_BASE_URL" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "invalid_timeout",
+        [0, 0.0, -1, -0.5, float("nan"), float("inf"), float("-inf")],
+    )
+    def test_should_reject_invalid_zai_timeout(
+        self, valid_settings_dict: dict[str, object], invalid_timeout: float
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "zai"
+        valid_settings_dict["zai_api_key"] = "test-zai-key"
+        valid_settings_dict["zai_model"] = "glm-4.7"
+        valid_settings_dict["zai_timeout_seconds"] = invalid_timeout
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "ZAI_TIMEOUT_SECONDS" in str(exc_info.value)
+
+    def test_should_require_key_when_zai_in_fallback_chain(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openai"
+        valid_settings_dict["openai_api_key"] = "sk-test"
+        valid_settings_dict["zai_api_key"] = None
+        valid_settings_dict["llm_fallback_chain"] = "zai:glm-4.7"
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "ZAI_API_KEY" in str(exc_info.value)
+
+    def test_should_not_require_zai_key_when_inactive(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openai"
+        valid_settings_dict["openai_api_key"] = "sk-test"
+        valid_settings_dict["zai_api_key"] = None
+        settings = Settings(**valid_settings_dict)
+        assert settings.zai_api_key is None
+
+    def test_fallback_only_zai_does_not_need_zai_model(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openai"
+        valid_settings_dict["openai_api_key"] = "sk-test"
+        valid_settings_dict["zai_api_key"] = "test-zai-key"
+        valid_settings_dict["zai_model"] = None
+        valid_settings_dict["llm_fallback_chain"] = "zai:glm-4.7"
+        settings = Settings(**valid_settings_dict)
+        assert settings.zai_model is None
+        assert settings.llm_provider_targets[1].model == "glm-4.7"
+
+    def test_embedding_provider_cannot_be_zai(self, valid_settings_dict: dict[str, object]) -> None:
+        valid_settings_dict["embedding_provider"] = "zai"
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "EMBEDDING_PROVIDER" in str(exc_info.value)
+
+    def test_zai_key_does_not_satisfy_embedding_provider(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "zai"
+        valid_settings_dict["zai_api_key"] = "test-zai-key"
+        valid_settings_dict["zai_model"] = "glm-4.7"
+        valid_settings_dict["embedding_provider"] = "openai"
+        valid_settings_dict["openai_api_key"] = None
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "OPENAI_API_KEY" in str(exc_info.value)
+
+    def test_should_reject_z_ai_provider_as_unknown(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "z.ai"
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "Неизвестный LLM_PROVIDER" in str(exc_info.value)
+
+    def test_should_reject_z_ai_in_fallback_chain_as_unknown(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        valid_settings_dict["llm_provider"] = "openai"
+        valid_settings_dict["openai_api_key"] = "sk-test"
+        valid_settings_dict["llm_fallback_chain"] = "z.ai:glm-4.7"
+        with pytest.raises((ValueError, ValidationError)) as exc_info:
+            Settings(**valid_settings_dict)
+        assert "Неизвестный провайдер в LLM_FALLBACK_CHAIN" in str(exc_info.value)
+
+    def test_zai_environment_variable_isolation(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        from tests.conftest import _SETTINGS_ENV_PREFIXES
+
+        assert "ZAI_" in _SETTINGS_ENV_PREFIXES
+        settings = Settings(**valid_settings_dict)
+        assert settings.zai_api_key is None
