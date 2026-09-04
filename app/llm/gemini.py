@@ -16,6 +16,9 @@ from app.llm.base import (
     ToolCall,
     is_balance_exhaustion_message,
 )
+from app.logging_config import TRACE
+from app.logging_http import create_logging_hooks
+from app.logging_redaction import safe_serialize
 from app.retry import post_with_retry
 
 if TYPE_CHECKING:
@@ -239,7 +242,9 @@ class GeminiClient(AbstractLlmClient):
     @property
     def http_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(60.0), event_hooks=create_logging_hooks()
+            )
             self._own_client = True
         return self._http_client
 
@@ -349,6 +354,15 @@ class GeminiClient(AbstractLlmClient):
             "x-goog-api-key": self.api_key,
         }
         body = self.build_request_body(conversation)
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Gemini API request (model=%s, configured_effort=%s, thinking_config=%s): %s",
+                self.model,
+                self.reasoning_effort,
+                self._thinking_config(),
+                safe_serialize(body),
+            )
         logger.debug("Gemini request (%d tools available)", len(self.sanitized_tools))
 
         response = await post_with_retry(
@@ -426,11 +440,28 @@ class GeminiClient(AbstractLlmClient):
                         )
                     )
 
-            return LlmResponse(
+            resp = LlmResponse(
                 text="".join(text_builder),
                 tool_calls=function_calls,
                 raw_parts=raw_parts,
             )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Gemini API parsed response (model=%s): text=%s tool_calls=%s",
+                    self.model,
+                    resp.text,
+                    [
+                        {
+                            "name": tc.name,
+                            "id": tc.id,
+                            "arguments": tc.arguments,
+                            "thought_signature": bool(tc.thought_signature),
+                        }
+                        for tc in function_calls
+                    ],
+                )
+            return resp
         except LlmProcessingException:
             raise
         except Exception as e:

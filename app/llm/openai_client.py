@@ -16,6 +16,9 @@ from app.llm.base import (
     ToolCall,
     is_balance_exhaustion_message,
 )
+from app.logging_config import TRACE
+from app.logging_http import create_logging_hooks
+from app.logging_redaction import safe_serialize
 from app.retry import post_with_retry
 
 if TYPE_CHECKING:
@@ -125,7 +128,9 @@ class OpenAiClient(AbstractLlmClient):
     @property
     def http_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(60.0), event_hooks=create_logging_hooks()
+            )
             self._own_client = True
         return self._http_client
 
@@ -217,6 +222,16 @@ class OpenAiClient(AbstractLlmClient):
             "Content-Type": "application/json",
         }
         body = self.build_request_body(conversation)
+        if logger.isEnabledFor(TRACE):
+            effective_effort = self.reasoning_effort if self.reasoning_supported else "none"
+            logger.log(
+                TRACE,
+                "OpenAI Responses API request (model=%s, configured_effort=%s, effective_effort=%s): %s",
+                self.model,
+                self.reasoning_effort,
+                effective_effort,
+                safe_serialize(body),
+            )
         logger.debug(
             "OpenAI Responses API request (%d tools available)", len(self.tool_definitions)
         )
@@ -290,11 +305,23 @@ class OpenAiClient(AbstractLlmClient):
                     "Модель не вернула ответа. Попробуйте переформулировать вопрос.",
                 )
 
-            return LlmResponse(
+            resp = LlmResponse(
                 text=full_text,
                 tool_calls=tool_calls,
                 raw_parts=[item for item in output if isinstance(item, dict)],
             )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "OpenAI Responses API parsed response (model=%s): text=%s tool_calls=%s",
+                    self.model,
+                    full_text,
+                    [
+                        {"name": tc.name, "id": tc.id, "arguments": tc.arguments}
+                        for tc in tool_calls
+                    ],
+                )
+            return resp
         except LlmProcessingException:
             raise
         except Exception as e:

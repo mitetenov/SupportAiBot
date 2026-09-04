@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 import httpx
 
 from app.llm.rejection import is_rejection
+from app.logging_config import TRACE
 from app.rag.types import FaqContext
 from app.storage.models import LlmTokenUsage
 
@@ -279,6 +280,14 @@ class AbstractLlmClient(ABC, LlmClient):
             )
 
         while iteration < self.MAX_TOOL_ITERATIONS:
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "%s conversational turn iteration %d for user %s",
+                    self.get_provider_name(),
+                    iteration + 1,
+                    telegram_user_id,
+                )
             try:
                 payload = await self.call_api(conversation, faq_context.text, telegram_user_id)
                 await self.save_usage(payload, telegram_user_id)
@@ -343,6 +352,16 @@ class AbstractLlmClient(ABC, LlmClient):
             self.get_provider_name(),
             len(llm_response.tool_calls),
         )
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "%s requested tool calls: %s",
+                self.get_provider_name(),
+                [
+                    {"name": tc.name, "id": tc.id, "arguments": tc.arguments}
+                    for tc in llm_response.tool_calls
+                ],
+            )
         self.add_tool_calls_to_conversation(conversation, llm_response)
 
         for tc in llm_response.tool_calls:
@@ -354,11 +373,23 @@ class AbstractLlmClient(ABC, LlmClient):
             )
             if tool_result is None:
                 logger.info("Executing tool: %s", tc.name)
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "Executing tool %s for user %s with arguments: %s",
+                        tc.name,
+                        telegram_user_id,
+                        tc.arguments,
+                    )
                 try:
                     tool_result = await self.mcp_router.call_tool(
                         tc.name, tc.arguments, telegram_user_id
                     )
                 except Exception as error:
+                    if logger.isEnabledFor(TRACE):
+                        logger.log(
+                            TRACE, "Tool %s execution failed with exception: %s", tc.name, error
+                        )
                     raise LlmToolExecutionException(
                         f"MCP tool {tc.name} failed with unknown outcome", cause=error
                     ) from error
@@ -366,6 +397,9 @@ class AbstractLlmClient(ABC, LlmClient):
                     completed_tool_results[tool_key] = tool_result
             else:
                 logger.info("Reusing completed tool result: %s", tc.name)
+
+            if logger.isEnabledFor(TRACE):
+                logger.log(TRACE, "Tool %s full result: %s", tc.name, tool_result)
             logger.info("Tool %s result: %s", tc.name, self._truncate(tool_result))
             self.add_tool_result_to_conversation(conversation, tc, tool_result)
 

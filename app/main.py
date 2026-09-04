@@ -29,6 +29,7 @@ from app.llm import create_llm_client
 from app.llm.mcp_client import HttpMcpClient, McpClientInterface
 from app.llm.mcp_router import McpRouter
 from app.logging_config import setup_logging
+from app.logging_http import create_logging_hooks
 from app.logging_redaction import register_settings_secrets
 from app.rag.embedding import create_embedding_provider
 from app.rag.initializer import FaqInitializer
@@ -115,7 +116,10 @@ async def main() -> None:
         settings.telegram_support_group_chat_id,
     )
 
-    http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+    http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(30.0),
+        event_hooks=create_logging_hooks(),
+    )
     bot = Bot(token=reveal(settings.telegram_bot_token))
     sender = TelegramMessageSender(bot)
     db_manager = get_db_manager(settings.database_url)

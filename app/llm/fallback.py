@@ -14,6 +14,7 @@ from app.llm.base import (
     LlmToolExecutionException,
     is_balance_exhaustion_message,
 )
+from app.logging_config import TRACE
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +112,15 @@ class LlmFallbackClient:
         turn_state = await candidates[0].prepare_turn(user_message, telegram_user_id)
         for attempt, client in enumerate(candidates):
             turn_state.replay_completed_tool_results = attempt > 0
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "LlmFallbackClient: attempting provider %s (attempt %d/%d, replaying_tools=%s)",
+                    client.get_provider_name(),
+                    attempt + 1,
+                    len(candidates),
+                    turn_state.replay_completed_tool_results,
+                )
             try:
                 reply = await client.do_chat(
                     user_message,
@@ -122,12 +132,27 @@ class LlmFallbackClient:
             except Exception as error:
                 if not is_fallback_eligible(error):
                     raise
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "LlmFallbackClient: provider %s failed with error (%s): %s; falling back to next provider",
+                        client.get_provider_name(),
+                        type(error).__name__,
+                        error,
+                    )
                 logger.warning(
                     "LLM provider %s is unavailable; trying the next configured target",
                     client.get_provider_name(),
                 )
                 continue
 
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "LlmFallbackClient: provider %s succeeded for user %s",
+                    client.get_provider_name(),
+                    telegram_user_id,
+                )
             await self._persist_success(client, telegram_user_id, history_message, reply)
             return reply
         raise LlmFallbackExhaustedError()

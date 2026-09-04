@@ -136,8 +136,14 @@ def redact_credentials_in_text(text: str) -> str:
 def is_sensitive_key(key: str) -> bool:
     """Check if a dictionary or attribute key indicates sensitive credential data."""
     str_key = str(key).lower()
-    return str_key in SENSITIVE_KEYS or any(
-        s in str_key for s in ("password", "secret", "token", "api_key", "apikey", "auth", "cookie")
+    norm_key = str_key.replace("-", "_")
+    return (
+        str_key in SENSITIVE_KEYS
+        or norm_key in SENSITIVE_KEYS
+        or any(
+            s in norm_key
+            for s in ("password", "secret", "token", "api_key", "apikey", "auth", "cookie")
+        )
     )
 
 

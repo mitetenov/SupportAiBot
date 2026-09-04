@@ -7,6 +7,8 @@ from typing import Any
 
 from aiogram import Bot
 
+from app.logging_config import TRACE
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +27,12 @@ class TypingSession:
     async def _run(self) -> None:
         while not self._stopped:
             try:
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "Telegram API send_chat_action: chat_id=%s, action=typing",
+                        self.chat_id,
+                    )
                 await self.bot.send_chat_action(chat_id=self.chat_id, action="typing")
             except Exception as e:
                 logger.debug("Failed to send typing action to %d: %s", self.chat_id, e)

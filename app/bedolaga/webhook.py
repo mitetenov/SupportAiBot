@@ -8,6 +8,9 @@ import logging
 from aiohttp import web
 
 from app.bedolaga.pipeline import TicketAnswerer
+from app.logging_config import TRACE
+from app.logging_http import sanitize_headers
+from app.logging_redaction import safe_serialize
 
 logger = logging.getLogger(__name__)
 
@@ -53,39 +56,93 @@ class BedolagaWebhookEndpoint:
         """
         body = await request.read()
 
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Bedolaga webhook incoming request: method=%s, path=%s, headers=%s, body=%s",
+                request.method,
+                request.path,
+                safe_serialize(sanitize_headers(request.headers)),
+                body.decode("utf-8", errors="replace") if body else "",
+            )
+
         if not signature_matches(self.secret, body, request.headers.get("X-Webhook-Signature")):
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga webhook outcome: rejected bad signature (403)",
+                )
             logger.warning("Bedolaga webhook: rejected a delivery with a bad signature")
             return web.json_response({"status": "forbidden"}, status=403)
 
         event = request.headers.get("X-Webhook-Event", "")
         if event not in self.HANDLED_EVENTS:
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga webhook outcome: ignored unhandled event '%s'",
+                    event,
+                )
             return web.json_response({"status": "ignored"})
 
         try:
             payload = json.loads(body or b"{}")
         except json.JSONDecodeError, UnicodeDecodeError:
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga webhook outcome: bad request (body was not valid JSON)",
+                )
             logger.warning("Bedolaga webhook: body was not JSON")
             return web.json_response({"status": "bad request"}, status=400)
 
         if not isinstance(payload, dict):
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga webhook outcome: bad request (payload was not a dict)",
+                )
             logger.warning("Bedolaga webhook: body was not a JSON object")
             return web.json_response({"status": "bad request"}, status=400)
 
         if payload.get("is_from_admin"):
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga webhook outcome: ignored admin message",
+                )
             # Our own reply is stored as an admin message and comes straight
             # back as an event. Answering it would answer ourselves, forever.
             return web.json_response({"status": "ignored"})
 
         ticket_id = payload.get("ticket_id")
         if ticket_id is None:
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga webhook outcome: bad request (missing ticket_id)",
+                )
             logger.warning("Bedolaga webhook: %s carried no ticket_id", event)
             return web.json_response({"status": "bad request"}, status=400)
 
         try:
             numeric_ticket_id = int(ticket_id)
         except TypeError, ValueError:
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga webhook outcome: bad request (non-numeric ticket_id=%r)",
+                    ticket_id,
+                )
             logger.warning("Bedolaga webhook: ticket_id is not convertible to int")
             return web.json_response({"status": "bad request"}, status=400)
 
         self.answerer.schedule(numeric_ticket_id)
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Bedolaga webhook outcome: accepted event '%s' for ticket_id=%d",
+                event,
+                numeric_ticket_id,
+            )
         return web.json_response({"status": "accepted"})

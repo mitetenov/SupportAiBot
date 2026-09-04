@@ -16,6 +16,7 @@ from aiohttp import ClientTimeout
 
 from app.bedolaga.types import TicketMedia
 from app.bot.formatting import markdown_to_telegram_html, split_telegram_html, strip_html_tags
+from app.logging_config import TRACE
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,16 @@ class TelegramMessageSender:
 
         formatted = markdown_to_telegram_html(text)
         chunks = self.split(formatted or "")
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram send_message: chat_id=%s, thread_id=%s, reply_to=%s, chunks=%d, text=%r",
+                chat_id,
+                message_thread_id,
+                reply_to_message_id,
+                len(chunks),
+                text,
+            )
 
         for index, chunk in enumerate(chunks):
             kwargs: dict[str, Any] = {
@@ -200,7 +211,16 @@ class TelegramMessageSender:
                 kwargs["disable_notification"] = True
 
             try:
-                await self.bot.send_message(**kwargs)
+                sent = await self.bot.send_message(**kwargs)
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "Telegram send_message chunk %d/%d sent: chat_id=%s, message_id=%s",
+                        index + 1,
+                        len(chunks),
+                        chat_id,
+                        getattr(sent, "message_id", None),
+                    )
             except Exception as e:
                 if _is_entity_parse_error(e):
                     logger.warning(
@@ -211,11 +231,58 @@ class TelegramMessageSender:
                     try:
                         kwargs["text"] = strip_html_tags(chunk)
                         kwargs["parse_mode"] = None
-                        await self.bot.send_message(**kwargs)
+                        fallback_sent = await self.bot.send_message(**kwargs)
+                        if logger.isEnabledFor(TRACE):
+                            logger.log(
+                                TRACE,
+                                "Telegram send_message fallback plain text sent: chat_id=%s, message_id=%s",
+                                chat_id,
+                                getattr(fallback_sent, "message_id", None),
+                            )
                     except Exception as plain_err:
                         logger.error("Failed to send message to %s: %s", chat_id, plain_err)
                 else:
                     logger.error("Failed to send message to %s: %s", chat_id, e)
+
+    async def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+    ) -> bool:
+        """Edit text of an existing message with TRACE logging."""
+        formatted = markdown_to_telegram_html(text)
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram edit_message: chat_id=%s, message_id=%s, text=%r",
+                chat_id,
+                message_id,
+                text,
+            )
+        try:
+            await self.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=formatted or text,
+                parse_mode="HTML",
+            )
+            return True
+        except Exception as e:
+            if _is_entity_parse_error(e):
+                try:
+                    await self.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        text=strip_html_tags(formatted or text),
+                        parse_mode=None,
+                    )
+                    return True
+                except Exception as plain_err:
+                    logger.error("Failed to edit message in %s: %s", chat_id, plain_err)
+                    return False
+            logger.error("Failed to edit message in %s: %s", chat_id, e)
+            return False
 
     async def send_photo(
         self,
@@ -245,6 +312,16 @@ class TelegramMessageSender:
         if message_thread_id is not None:
             kwargs["message_thread_id"] = message_thread_id
 
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram send_photo request: chat_id=%s, thread_id=%s, path=%s, cached_file_id=%s",
+                chat_id,
+                message_thread_id,
+                path,
+                cached,
+            )
+
         try:
             result = await self.bot.send_photo(**kwargs)
         except Exception as e:
@@ -253,7 +330,15 @@ class TelegramMessageSender:
 
         if cached is None:
             self._remember_file_id(key, result)
-        return getattr(result, "message_id", None)
+        msg_id = getattr(result, "message_id", None)
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram send_photo success: chat_id=%s, message_id=%s",
+                chat_id,
+                msg_id,
+            )
+        return msg_id
 
     async def send_photo_bytes(
         self,
@@ -287,12 +372,31 @@ class TelegramMessageSender:
         if caption:
             kwargs["caption"] = caption
 
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram send_photo_bytes request: chat_id=%s, thread_id=%s, mime_type=%s, byte_size=%d, caption=%r",
+                chat_id,
+                message_thread_id,
+                mime_type,
+                len(content),
+                caption,
+            )
+
         try:
             result = await self.bot.send_photo(**kwargs)
         except Exception as e:
             logger.warning("Failed to upload ticket photo to %s: %s", chat_id, e)
             return None
-        return getattr(result, "message_id", None)
+        msg_id = getattr(result, "message_id", None)
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram send_photo_bytes success: chat_id=%s, message_id=%s",
+                chat_id,
+                msg_id,
+            )
+        return msg_id
 
     async def send_ticket_media(
         self,
@@ -326,6 +430,20 @@ class TelegramMessageSender:
         if caption:
             kwargs["caption"] = caption
 
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram send_ticket_media request: chat_id=%s, thread_id=%s, method=%s, filename=%s, media_type=%s, mime_type=%s, file_size=%s, caption=%r",
+                chat_id,
+                message_thread_id,
+                method,
+                media.filename,
+                media.media_type,
+                media.mime_type,
+                media.file_size,
+                caption,
+            )
+
         try:
             if method == "photo":
                 result = await self.bot.send_photo(photo=_create_input_file(), **kwargs)
@@ -350,7 +468,15 @@ class TelegramMessageSender:
             else:
                 result = await self.bot.send_document(document=_create_input_file(), **kwargs)
 
-            return getattr(result, "message_id", None)
+            msg_id = getattr(result, "message_id", None)
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Telegram send_ticket_media success: chat_id=%s, message_id=%s",
+                    chat_id,
+                    msg_id,
+                )
+            return msg_id
         except Exception as e:
             logger.warning(
                 "Failed to send ticket media %s (type %s) to %s: %s",
@@ -384,12 +510,30 @@ class TelegramMessageSender:
         if message_thread_id is not None:
             kwargs["message_thread_id"] = message_thread_id
 
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram copy_message request: chat_id=%s, from_chat_id=%s, message_id=%s, thread_id=%s",
+                chat_id,
+                from_chat_id,
+                message_id,
+                message_thread_id,
+            )
+
         try:
             result = await self.bot.copy_message(**kwargs)
         except Exception as e:
             logger.warning("Failed to copy message %d to %s: %s", message_id, chat_id, e)
             return None
-        return getattr(result, "message_id", None)
+        msg_id = getattr(result, "message_id", None)
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram copy_message success: chat_id=%s, new_message_id=%s",
+                chat_id,
+                msg_id,
+            )
+        return msg_id
 
     async def set_reaction(
         self,
@@ -398,12 +542,28 @@ class TelegramMessageSender:
         reactions: Sequence[Any] | None,
     ) -> None:
         """Mirror reactions onto a message. An empty sequence clears them."""
+        reaction_list = list(reactions) if reactions else []
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram set_reaction request: chat_id=%s, message_id=%s, count=%d",
+                chat_id,
+                message_id,
+                len(reaction_list),
+            )
         try:
             await self.bot.set_message_reaction(
                 chat_id=chat_id,
                 message_id=message_id,
-                reaction=list(reactions) if reactions else [],
+                reaction=reaction_list,
             )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Telegram set_reaction success: chat_id=%s, message_id=%s",
+                    chat_id,
+                    message_id,
+                )
         except Exception as e:
             logger.error(
                 "Error setting reaction on message %d in chat %s: %s", message_id, chat_id, e

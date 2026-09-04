@@ -18,6 +18,9 @@ from app.llm.base import (
     ToolCall,
     is_balance_exhaustion_message,
 )
+from app.logging_config import TRACE
+from app.logging_http import create_logging_hooks
+from app.logging_redaction import safe_serialize
 from app.retry import post_with_retry
 
 if TYPE_CHECKING:
@@ -129,7 +132,9 @@ class GroqClient(AbstractLlmClient):
     @property
     def http_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(60.0), event_hooks=create_logging_hooks()
+            )
             self._own_client = True
         return self._http_client
 
@@ -216,6 +221,16 @@ class GroqClient(AbstractLlmClient):
             "Content-Type": "application/json",
         }
         body = self.build_request_body(conversation)
+        if logger.isEnabledFor(TRACE):
+            r_params = reasoning_parameters(self.model, self.reasoning_effort)
+            logger.log(
+                TRACE,
+                "Groq API request (model=%s, configured_effort=%s, reasoning_params=%s): %s",
+                self.model,
+                self.reasoning_effort,
+                r_params,
+                safe_serialize(body),
+            )
         logger.debug("Groq request (%d tools available)", len(self.tool_definitions))
 
         response = await post_with_retry(
@@ -274,13 +289,26 @@ class GroqClient(AbstractLlmClient):
                     tool_calls.append(ToolCall(name=fn_name, id=tc_id, arguments=args))
 
             reasoning_content = message.get("reasoning")
-            return LlmResponse(
+            resp = LlmResponse(
                 text=content,
                 tool_calls=tool_calls,
                 reasoning_content=(
                     reasoning_content if isinstance(reasoning_content, str) else None
                 ),
             )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Groq API parsed response (model=%s): text=%s tool_calls=%s reasoning_content=%s",
+                    self.model,
+                    content,
+                    [
+                        {"name": tc.name, "id": tc.id, "arguments": tc.arguments}
+                        for tc in tool_calls
+                    ],
+                    resp.reasoning_content,
+                )
+            return resp
         except LlmProcessingException:
             raise
         except Exception as e:

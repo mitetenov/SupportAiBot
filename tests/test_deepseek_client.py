@@ -1,14 +1,15 @@
-"""Tests for DeepSeekClient (OpenAI-compatible completions, tool calling, image refusal)."""
-
+import io
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from app.config import Settings
 from app.llm.base import LlmProcessingException, ToolCall
 from app.llm.deepseek import DeepSeekClient
 from app.llm.mcp_router import McpRouter
+from app.logging_config import setup_logging
 from app.rag.service import FaqEmbeddingService
 from app.storage.chat_history import ChatHistoryService
 from app.storage.database import DatabaseSessionManager
@@ -311,3 +312,102 @@ class TestDeepSeekClient:
 
     def test_get_provider_name(self, deepseek_client: DeepSeekClient):
         assert deepseek_client.get_provider_name() == "DeepSeek"
+
+
+class TestDeepSeekTraceLogging:
+    """Verify TRACE logging captures final request body and response with reasoning_content."""
+
+    @pytest.mark.asyncio
+    async def test_trace_logs_full_request_and_response_with_reasoning(
+        self, settings: Settings
+    ) -> None:
+        stream = io.StringIO()
+        setup_logging(level="TRACE", stream=stream)
+
+        response_body = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "DeepSeek text reply",
+                        "reasoning_content": "DeepSeek internal thinking steps",
+                        "tool_calls": [],
+                    }
+                }
+            ]
+        }
+        transport = httpx.MockTransport(lambda _r: httpx.Response(200, json=response_body))
+
+        mcp_router = MagicMock(spec=McpRouter)
+        mcp_router.list_tools.return_value = []
+        chat_history_service = MagicMock(spec=ChatHistoryService)
+        chat_history_service.get_history = AsyncMock(return_value=[])
+
+        client = DeepSeekClient(
+            settings=settings,
+            mcp_router=mcp_router,
+            chat_history_service=chat_history_service,
+            faq_embedding_service=MagicMock(spec=FaqEmbeddingService),
+            db_manager=None,
+            http_client=httpx.AsyncClient(transport=transport),
+        )
+
+        conv = client.build_initial_conversation("Hello DeepSeek", 12345, "FAQ Context Data")
+        payload = await client.call_api(conv, "FAQ Context Data", 12345)
+        parsed = client.parse_response(payload)
+
+        assert parsed.text == "DeepSeek text reply"
+        assert parsed.reasoning_content == "DeepSeek internal thinking steps"
+
+        output = stream.getvalue()
+        # Full request
+        assert "DeepSeek API request" in output
+        assert "Hello DeepSeek" in output
+        assert "FAQ Context Data" in output
+
+        # Response
+        assert "DeepSeek API parsed response" in output
+        assert "DeepSeek text reply" in output
+        assert "DeepSeek internal thinking steps" in output
+
+    @pytest.mark.asyncio
+    async def test_info_level_does_not_log_request_or_response_body(
+        self, settings: Settings
+    ) -> None:
+        stream = io.StringIO()
+        setup_logging(level="INFO", stream=stream)
+
+        secret_text = "SECRET_DEEPSEEK_PROMPT_123"
+        secret_reply = "SECRET_DEEPSEEK_REPLY_456"
+
+        response_body = {
+            "choices": [
+                {
+                    "message": {
+                        "content": secret_reply,
+                    }
+                }
+            ]
+        }
+        transport = httpx.MockTransport(lambda _r: httpx.Response(200, json=response_body))
+
+        mcp_router = MagicMock(spec=McpRouter)
+        mcp_router.list_tools.return_value = []
+        chat_history_service = MagicMock(spec=ChatHistoryService)
+        chat_history_service.get_history = AsyncMock(return_value=[])
+
+        client = DeepSeekClient(
+            settings=settings,
+            mcp_router=mcp_router,
+            chat_history_service=chat_history_service,
+            faq_embedding_service=MagicMock(spec=FaqEmbeddingService),
+            db_manager=None,
+            http_client=httpx.AsyncClient(transport=transport),
+        )
+
+        conv = client.build_initial_conversation(secret_text, 12345)
+        payload = await client.call_api(conv, "", 12345)
+        client.parse_response(payload)
+
+        output = stream.getvalue()
+        assert secret_text not in output
+        assert secret_reply not in output

@@ -3,6 +3,7 @@
 import base64
 import binascii
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Any
@@ -19,6 +20,9 @@ from app.bedolaga.types import (
     TicketMedia,
     ticket_from_payload,
 )
+from app.logging_config import TRACE
+from app.logging_http import sanitize_headers, sanitize_url
+from app.logging_redaction import safe_serialize
 from app.retry import post_with_retry
 
 logger = logging.getLogger(__name__)
@@ -106,12 +110,40 @@ class BedolagaClient:
 
         Events carry a truncated preview at best, so every answer starts here.
         """
+        url = f"{self.base_url}/tickets/{ticket_id}"
+        headers = self.headers
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Bedolaga API get_ticket request: url=%s, headers=%s",
+                sanitize_url(url),
+                safe_serialize(sanitize_headers(headers)),
+            )
+        start_time = time.monotonic()
         try:
             response = await self.http_client.get(
-                f"{self.base_url}/tickets/{ticket_id}",
-                headers=self.headers,
+                url,
+                headers=headers,
             )
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API get_ticket response: status=%d, duration=%.3fs, body=%s",
+                    response.status_code,
+                    duration,
+                    response.text,
+                )
         except httpx.HTTPError as e:
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API get_ticket failed: url=%s, duration=%.3fs, error=%s",
+                    sanitize_url(url),
+                    duration,
+                    e,
+                )
             logger.warning("Bedolaga: could not read ticket %d: %s", ticket_id, e)
             return None
 
@@ -135,13 +167,44 @@ class BedolagaClient:
         """
         ids: list[int] = []
         for status in sorted(OPEN_STATUSES):
+            url = f"{self.base_url}/tickets"
+            params: dict[str, Any] = {"status": status, "limit": limit}
+            headers = self.headers
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API list_awaiting_ticket_ids request: url=%s, params=%s, headers=%s",
+                    sanitize_url(url),
+                    params,
+                    safe_serialize(sanitize_headers(headers)),
+                )
+            start_time = time.monotonic()
             try:
                 response = await self.http_client.get(
-                    f"{self.base_url}/tickets",
-                    headers=self.headers,
-                    params={"status": status, "limit": limit},
+                    url,
+                    headers=headers,
+                    params=params,
                 )
+                duration = time.monotonic() - start_time
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "Bedolaga API list_awaiting_ticket_ids response (status=%s): status_code=%d, duration=%.3fs, body=%s",
+                        status,
+                        response.status_code,
+                        duration,
+                        response.text,
+                    )
             except httpx.HTTPError as e:
+                duration = time.monotonic() - start_time
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "Bedolaga API list_awaiting_ticket_ids failed: status=%s, duration=%.3fs, error=%s",
+                        status,
+                        duration,
+                        e,
+                    )
                 logger.warning("Bedolaga: could not list %s tickets: %s", status, e)
                 continue
 
@@ -179,6 +242,13 @@ class BedolagaClient:
                         logger.warning(
                             "Bedolaga: unparseable ticket id %r in %s list", ticket_id, status
                         )
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Bedolaga API list_awaiting_ticket_ids collected %d ids: %s",
+                len(ids),
+                ids,
+            )
         return ids
 
     async def reply(self, ticket_id: int, text: str) -> PostedTicketReply | None:
@@ -253,14 +323,45 @@ class BedolagaClient:
             "image/webp": "webp",
             "image/gif": "gif",
         }.get(mime_type.lower(), "jpg")
+        url = f"{self.base_url}/upload"
+        headers = self.headers
+        filename = f"support-photo.{extension}"
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Bedolaga API upload_photo request: url=%s, headers=%s, filename=%s, mime_type=%s, byte_size=%d",
+                sanitize_url(url),
+                safe_serialize(sanitize_headers(headers)),
+                filename,
+                mime_type,
+                len(content),
+            )
+        start_time = time.monotonic()
         try:
             response = await self.http_client.post(
-                f"{self.base_url}/upload",
-                headers=self.headers,
-                files={"file": (f"support-photo.{extension}", content, mime_type)},
+                url,
+                headers=headers,
+                files={"file": (filename, content, mime_type)},
                 data={"media_type": "photo"},
             )
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API upload_photo response: status_code=%d, duration=%.3fs, body=%s",
+                    response.status_code,
+                    duration,
+                    response.text,
+                )
         except httpx.HTTPError as e:
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API upload_photo failed: duration=%.3fs, error=%s",
+                    duration,
+                    e,
+                )
             logger.error("Bedolaga: uploading a ticket photo failed: %s", e)
             return None
 
@@ -291,13 +392,44 @@ class BedolagaClient:
         payload: dict[str, Any],
     ) -> PostedTicketReply | None:
         """Post one non-idempotent ticket reply without transport retries."""
+        url = f"{self.base_url}/tickets/{ticket_id}/reply"
+        headers = self.headers
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Bedolaga API _post_reply request: url=%s, ticket_id=%d, headers=%s, payload=%s",
+                sanitize_url(url),
+                ticket_id,
+                safe_serialize(sanitize_headers(headers)),
+                safe_serialize(payload),
+            )
+        start_time = time.monotonic()
         try:
             response = await self.http_client.post(
-                f"{self.base_url}/tickets/{ticket_id}/reply",
-                headers=self.headers,
+                url,
+                headers=headers,
                 json=payload,
             )
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API _post_reply response: ticket_id=%d, status_code=%d, duration=%.3fs, body=%s",
+                    ticket_id,
+                    response.status_code,
+                    duration,
+                    response.text,
+                )
         except httpx.HTTPError as e:
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API _post_reply failed: ticket_id=%d, duration=%.3fs, error=%s",
+                    ticket_id,
+                    duration,
+                    e,
+                )
             logger.error("Bedolaga: replying to ticket %d failed: %s", ticket_id, e)
             return None
 
@@ -325,15 +457,47 @@ class BedolagaClient:
 
     async def set_priority(self, ticket_id: int, priority: str) -> bool:
         """Raise or lower a ticket's priority. Best effort: never raises."""
+        url = f"{self.base_url}/tickets/{ticket_id}/priority"
+        headers = self.headers
+        payload = {"priority": priority}
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Bedolaga API set_priority request: url=%s, ticket_id=%d, priority=%s, headers=%s",
+                sanitize_url(url),
+                ticket_id,
+                priority,
+                safe_serialize(sanitize_headers(headers)),
+            )
+        start_time = time.monotonic()
         try:
             response = await post_with_retry(
                 self.http_client,
-                f"{self.base_url}/tickets/{ticket_id}/priority",
-                headers=self.headers,
-                json={"priority": priority},
+                url,
+                headers=headers,
+                json=payload,
                 description=f"bedolaga priority for ticket {ticket_id}",
             )
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API set_priority response: ticket_id=%d, status_code=%d, duration=%.3fs, body=%s",
+                    ticket_id,
+                    response.status_code,
+                    duration,
+                    response.text,
+                )
         except httpx.HTTPError as e:
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API set_priority failed: ticket_id=%d, duration=%.3fs, error=%s",
+                    ticket_id,
+                    duration,
+                    e,
+                )
             logger.warning("Bedolaga: setting priority on ticket %d failed: %s", ticket_id, e)
             return False
         return response.status_code == 200
@@ -350,14 +514,51 @@ class BedolagaClient:
         """
         cached = self._telegram_ids.get(user_id)
         if cached is not None:
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API resolve_telegram_id: cache hit for user_id=%d -> telegram_id=%d",
+                    user_id,
+                    cached,
+                )
             return TelegramIdLookup(known=True, telegram_id=cached)
 
+        url = f"{self.base_url}/users/{user_id}"
+        headers = self.headers
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Bedolaga API resolve_telegram_id request: url=%s, user_id=%d, headers=%s",
+                sanitize_url(url),
+                user_id,
+                safe_serialize(sanitize_headers(headers)),
+            )
+        start_time = time.monotonic()
         try:
             response = await self.http_client.get(
-                f"{self.base_url}/users/{user_id}",
-                headers=self.headers,
+                url,
+                headers=headers,
             )
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API resolve_telegram_id response: user_id=%d, status_code=%d, duration=%.3fs, body=%s",
+                    user_id,
+                    response.status_code,
+                    duration,
+                    response.text,
+                )
         except httpx.HTTPError as e:
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API resolve_telegram_id failed: user_id=%d, duration=%.3fs, error=%s",
+                    user_id,
+                    duration,
+                    e,
+                )
             logger.warning("Bedolaga: could not read user %d: %s", user_id, e)
             return TELEGRAM_ID_UNKNOWN
 
@@ -441,12 +642,45 @@ class BedolagaClient:
         fallback_media_type: str | None = None,
     ) -> TicketMedia | None:
         """Obtain and validate a safe media descriptor from the panel without downloading the body."""
+        url = f"{self.base_url}/tickets/{ticket_id}/messages/{message_id}/media"
+        headers = self.headers
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Bedolaga API describe_media request: url=%s, ticket_id=%d, message_id=%d, headers=%s",
+                sanitize_url(url),
+                ticket_id,
+                message_id,
+                safe_serialize(sanitize_headers(headers)),
+            )
+        start_time = time.monotonic()
         try:
             response = await self.http_client.get(
-                f"{self.base_url}/tickets/{ticket_id}/messages/{message_id}/media",
-                headers=self.headers,
+                url,
+                headers=headers,
             )
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API describe_media response: ticket_id=%d, message_id=%d, status_code=%d, duration=%.3fs, body=%s",
+                    ticket_id,
+                    message_id,
+                    response.status_code,
+                    duration,
+                    response.text,
+                )
         except httpx.HTTPError as e:
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API describe_media failed: ticket_id=%d, message_id=%d, duration=%.3fs, error=%s",
+                    ticket_id,
+                    message_id,
+                    duration,
+                    e,
+                )
             logger.warning("Bedolaga: could not describe media of message %d: %s", message_id, e)
             return None
 
@@ -510,10 +744,29 @@ class BedolagaClient:
 
     async def download_image(self, media: TicketMedia) -> ImageAttachment | None:
         """Fetch a ticket screenshot descriptor, base64-encoded for vision APIs."""
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Bedolaga API download_image start: url=%s, filename=%s, media_type=%s, declared_size=%s",
+                sanitize_url(media.media_url),
+                media.filename,
+                media.media_type,
+                media.file_size,
+            )
+        start_time = time.monotonic()
         try:
             async with self.http_client.stream(
                 "GET", media.media_url, headers=dict(media.download_headers)
             ) as downloaded:
+                duration = time.monotonic() - start_time
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "Bedolaga API download_image stream connected: status_code=%d, duration=%.3fs, headers=%s",
+                        downloaded.status_code,
+                        duration,
+                        safe_serialize(sanitize_headers(downloaded.headers)),
+                    )
                 if downloaded.status_code != 200:
                     return None
 
@@ -549,7 +802,25 @@ class BedolagaClient:
                     return None
 
                 mime_type = downloaded.headers.get("content-type") or DEFAULT_MEDIA_MIME_TYPE
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "Bedolaga API download_image completed: filename=%s, byte_size=%d, mime_type=%s, duration=%.3fs",
+                        media.filename,
+                        len(content),
+                        mime_type,
+                        time.monotonic() - start_time,
+                    )
         except httpx.HTTPError as e:
+            duration = time.monotonic() - start_time
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Bedolaga API download_image failed: url=%s, duration=%.3fs, error=%s",
+                    sanitize_url(media.media_url),
+                    duration,
+                    e,
+                )
             logger.warning("Bedolaga: could not download media %s: %s", media.filename, e)
             return None
 

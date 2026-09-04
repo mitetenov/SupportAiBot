@@ -1,5 +1,4 @@
-"""Tests for the OpenAI-compatible Groq chat-completions client."""
-
+import io
 from unittest.mock import MagicMock
 
 import httpx
@@ -9,6 +8,7 @@ from app.config import Settings
 from app.llm.base import LlmProcessingException
 from app.llm.groq import GroqClient
 from app.llm.mcp_router import McpRouter
+from app.logging_config import setup_logging
 
 
 def make_settings(**overrides) -> Settings:
@@ -165,3 +165,72 @@ async def test_maps_http_errors_without_exposing_credentials():
         assert "Попробуйте позже" in exc.value.user_friendly_message
     finally:
         await client.http_client.aclose()
+
+
+class TestGroqTraceLogging:
+    """Verify TRACE logging captures final request body and response with reasoning."""
+
+    @pytest.mark.asyncio
+    async def test_trace_logs_full_request_and_response_with_reasoning(self) -> None:
+        stream = io.StringIO()
+        setup_logging(level="TRACE", stream=stream)
+
+        response_body = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "Groq answer",
+                        "reasoning": "Groq thinking process",
+                        "tool_calls": [],
+                    }
+                }
+            ]
+        }
+        transport = httpx.MockTransport(lambda _r: httpx.Response(200, json=response_body))
+        client = make_client(http_client=httpx.AsyncClient(transport=transport))
+
+        conv = client.build_initial_conversation("User Groq message", 12345, "FAQ Knowledge")
+        payload = await client.call_api(conv, "FAQ Knowledge", 12345)
+        parsed = client.parse_response(payload)
+
+        assert parsed.text == "Groq answer"
+        assert parsed.reasoning_content == "Groq thinking process"
+
+        output = stream.getvalue()
+        # Full request
+        assert "Groq API request" in output
+        assert "User Groq message" in output
+        assert "FAQ Knowledge" in output
+
+        # Response
+        assert "Groq API parsed response" in output
+        assert "Groq answer" in output
+        assert "Groq thinking process" in output
+
+    @pytest.mark.asyncio
+    async def test_info_level_does_not_log_request_or_response_body(self) -> None:
+        stream = io.StringIO()
+        setup_logging(level="INFO", stream=stream)
+
+        secret_text = "SECRET_GROQ_USER_QUERY_111"
+        secret_reply = "SECRET_GROQ_SYSTEM_REPLY_222"
+
+        response_body = {
+            "choices": [
+                {
+                    "message": {
+                        "content": secret_reply,
+                    }
+                }
+            ]
+        }
+        transport = httpx.MockTransport(lambda _r: httpx.Response(200, json=response_body))
+        client = make_client(http_client=httpx.AsyncClient(transport=transport))
+
+        conv = client.build_initial_conversation(secret_text, 12345)
+        payload = await client.call_api(conv, "", 12345)
+        client.parse_response(payload)
+
+        output = stream.getvalue()
+        assert secret_text not in output
+        assert secret_reply not in output

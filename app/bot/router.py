@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from aiogram import F, Router
-from aiogram.types import Message, MessageReactionUpdated
+from aiogram.types import CallbackQuery, Message, MessageReactionUpdated
 from sqlalchemy import select
 
 from app.bot.buffer import BufferedMessage, UserMessageBuffer
@@ -18,6 +18,7 @@ from app.bot.pipeline import UserMessagePipeline
 from app.bot.sender import TelegramMessageSender
 from app.constants import get_message
 from app.llm.base import LlmClient
+from app.logging_config import TRACE
 from app.rag.knowledge_gaps import KnowledgeGapService
 from app.storage.chat_history import ChatHistoryService
 from app.storage.database import DatabaseSessionManager
@@ -77,6 +78,17 @@ def setup_router(
         message_id = reaction.message_id
         new_reactions = reaction.new_reaction or []
 
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram update message_reaction: chat_id=%s, message_id=%s, user_id=%s, old=%s, new=%s",
+                chat_id,
+                message_id,
+                getattr(reaction.user, "id", None),
+                reaction.old_reaction,
+                new_reactions,
+            )
+
         try:
             async with db_manager.session() as session:
                 if chat_id == support_group_chat_id:
@@ -113,6 +125,18 @@ def setup_router(
         topic_id = message.message_thread_id
         if topic_id is None:
             return
+
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram update support_group_message: chat_id=%s, message_id=%s, topic_id=%s, user_id=%s, text_len=%d, has_photo=%s",
+                message.chat.id,
+                message.message_id,
+                topic_id,
+                message.from_user.id if message.from_user else None,
+                len(message.text) if message.text else 0,
+                bool(message.photo),
+            )
 
         async with db_manager.session() as session:
             stmt = select(TopicMapping).where(TopicMapping.topic_id == topic_id)
@@ -269,9 +293,29 @@ def setup_router(
 
         text = (message.text or "").strip()
 
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram update user_message: chat_id=%s, message_id=%s, user_id=%s, text_len=%d, is_command=%s, has_photo=%s",
+                chat_id,
+                message.message_id,
+                user_id,
+                len(text),
+                command_handler.is_command(text) if text else False,
+                bool(message.photo),
+            )
+
         # Handle slash commands
         if text and command_handler.is_command(text):
             cmd = text.split()[0]
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Telegram command received: user_id=%s, chat_id=%s, command=%s",
+                    user_id,
+                    chat_id,
+                    cmd,
+                )
             if cmd == "/start":
                 await chat_history_service.clear(user_id)
                 conversation_state.clear(user_id)
@@ -349,5 +393,22 @@ def setup_router(
             get_message("support.media.received"),
             False,
         )
+
+    # 4. Callback query handling
+    @router.callback_query()
+    async def handle_callback_query(query: CallbackQuery) -> None:
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Telegram update callback_query: id=%s, user_id=%s, chat_id=%s, data=%r",
+                query.id,
+                query.from_user.id if query.from_user else None,
+                query.message.chat.id if query.message else None,
+                query.data,
+            )
+        try:
+            await query.answer()
+        except Exception:
+            pass
 
     return router
