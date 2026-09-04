@@ -3,12 +3,14 @@
 import asyncio
 import logging
 import re
+import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Sequence
 
 from sqlalchemy import text
 
+from app.logging_config import TRACE
 from app.rag.embedding import EmbeddingProvider
 from app.rag.types import FaqContext, FaqEntry, FaqResult
 from app.storage.database import DatabaseSessionManager
@@ -167,7 +169,9 @@ class FaqEmbeddingService:
                 row = result.fetchone()
                 return str(row[0]) if row else None
         except Exception as e:
-            logger.warning("Failed to fetch FAQ hash: %s", e)
+            logger.error("Failed to fetch FAQ hash (error_class=%s)", type(e).__name__)
+            if logger.isEnabledFor(TRACE):
+                logger.log(TRACE, "Failed to fetch FAQ hash exception: %s", e, exc_info=True)
             return None
 
     async def update_faq_hash(self, hash_val: str) -> None:
@@ -189,7 +193,9 @@ class FaqEmbeddingService:
                 row = result.fetchone()
                 return int(row[0]) if row else 0
         except Exception as e:
-            logger.warning("Failed to get FAQ count: %s", e)
+            logger.error("Failed to get FAQ count (error_class=%s)", type(e).__name__)
+            if logger.isEnabledFor(TRACE):
+                logger.log(TRACE, "Failed to get FAQ count exception: %s", e, exc_info=True)
             return 0
 
     async def get_indexed_faq_count(self) -> int:
@@ -202,7 +208,11 @@ class FaqEmbeddingService:
                 row = result.fetchone()
                 return int(row[0]) if row else 0
         except Exception as e:
-            logger.warning("Failed to count indexed FAQ rows: %s", e)
+            logger.error("Failed to count indexed FAQ rows (error_class=%s)", type(e).__name__)
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE, "Failed to count indexed FAQ rows exception: %s", e, exc_info=True
+                )
             return 0
 
     async def clear_faq(self) -> None:
@@ -303,7 +313,9 @@ class FaqEmbeddingService:
         embedding = await self.embed(self.embed_text(question, answer, searchable))
 
         if not embedding or len(embedding) != self.embedding_provider.get_dimension():
-            logger.warning("Failed to embed FAQ: %s", question)
+            logger.error("Failed to embed FAQ (question_preview=%s)", question[:50])
+            if logger.isEnabledFor(TRACE):
+                logger.log(TRACE, "Failed to embed FAQ full question: %s", question)
             return
 
         async with self.db_manager.session() as session:
@@ -311,7 +323,8 @@ class FaqEmbeddingService:
                 INSERT_FAQ_SQL,
                 self._faq_row(question, answer, searchable, embedding, image),
             )
-        logger.debug("Indexed FAQ: %s with keywords: %s", question, searchable)
+        if logger.isEnabledFor(TRACE):
+            logger.log(TRACE, "Indexed FAQ: %s with keywords: %s", question, searchable)
 
     async def index_faq_batch(self, entries: Sequence[FaqEntry]) -> int:
         """Embed and insert every entry, and return how many were indexed.
@@ -339,7 +352,9 @@ class FaqEmbeddingService:
 
             for entry, searchable, vector in zip(chunk, searchables, vectors, strict=True):
                 if not vector or len(vector) != dimension:
-                    logger.warning("Failed to embed FAQ: %s", entry.question)
+                    logger.error("Failed to embed FAQ (question_preview=%s)", entry.question[:50])
+                    if logger.isEnabledFor(TRACE):
+                        logger.log(TRACE, "Failed to embed FAQ full question: %s", entry.question)
                     continue
                 rows.append(
                     self._faq_row(entry.question, entry.answer, searchable, vector, entry.image)
@@ -388,6 +403,7 @@ class FaqEmbeddingService:
         if not self.ready or not query or not query.strip():
             return []
 
+        start_time = time.monotonic()
         vector_str = await self.embed_query_as_vector(query)
         if not vector_str:
             return []
@@ -396,22 +412,27 @@ class FaqEmbeddingService:
         clean_query = raw_clean if raw_clean else query
 
         try:
-            async with self.db_manager.session() as session:
-                result = await session.execute(
+            params = {
+                "vector_str": vector_str,
+                "clean_query": clean_query,
+                "rrf_k": RRF_K,
+                "min_vector_sim": MIN_VECTOR_SIMILARITY,
+                "min_fts_rank": MIN_FTS_RANK,
+                "limit": SEARCH_LIMIT,
+                "candidates": CANDIDATE_LIMIT,
+                "excluded": sorted(exclude) if exclude else [],
+            }
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "RAG hybrid search SQL: %s, params: %s",
                     HYBRID_SEARCH_SQL,
-                    {
-                        "vector_str": vector_str,
-                        "clean_query": clean_query,
-                        "rrf_k": RRF_K,
-                        "min_vector_sim": MIN_VECTOR_SIMILARITY,
-                        "min_fts_rank": MIN_FTS_RANK,
-                        "limit": SEARCH_LIMIT,
-                        "candidates": CANDIDATE_LIMIT,
-                        "excluded": sorted(exclude) if exclude else [],
-                    },
+                    {"clean_query": clean_query, "excluded": params["excluded"]},
                 )
+            async with self.db_manager.session() as session:
+                result = await session.execute(HYBRID_SEARCH_SQL, params)
                 rows = result.fetchall()
-                return [
+                results = [
                     FaqResult(
                         question=str(row.question),
                         answer=str(row.answer),
@@ -421,24 +442,49 @@ class FaqEmbeddingService:
                     )
                     for row in rows
                 ]
+                duration = time.monotonic() - start_time
+                logger.info(
+                    "RAG search: operation=hybrid_search, candidates_count=%d, outcome=success, duration=%.3fs",
+                    len(results),
+                    duration,
+                )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "RAG hybrid search candidates: %s",
+                        [r.question for r in results],
+                    )
+                return results
         except Exception as e:
-            logger.warning("FAQ hybrid search failed, falling back to pure vector search: %s", e)
+            duration = time.monotonic() - start_time
+            logger.info(
+                "FAQ hybrid search degraded to pure vector search (reason=%s)",
+                type(e).__name__,
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(TRACE, "FAQ hybrid search failure details: %s", e, exc_info=True)
             return await self._search_pure_vector(vector_str, exclude)
 
     async def _search_pure_vector(
         self, vector_str: str, exclude: set[str] | None = None
     ) -> list[FaqResult]:
         """Fallback to pure vector cosine search when FTS or hybrid fails."""
+        start_time = time.monotonic()
         try:
-            async with self.db_manager.session() as session:
-                result = await session.execute(
+            params = {
+                "vector_str": vector_str,
+                "limit": SEARCH_LIMIT,
+                "excluded": sorted(exclude) if exclude else [],
+            }
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "RAG vector search SQL: %s, params: %s",
                     VECTOR_SEARCH_SQL,
-                    {
-                        "vector_str": vector_str,
-                        "limit": SEARCH_LIMIT,
-                        "excluded": sorted(exclude) if exclude else [],
-                    },
+                    {"excluded": params["excluded"]},
                 )
+            async with self.db_manager.session() as session:
+                result = await session.execute(VECTOR_SEARCH_SQL, params)
                 rows = result.fetchall()
                 results: list[FaqResult] = []
                 for row in rows:
@@ -453,9 +499,24 @@ class FaqEmbeddingService:
                                 image=str(row.image) if row.image else None,
                             )
                         )
+                duration = time.monotonic() - start_time
+                logger.info(
+                    "RAG search: operation=pure_vector_search, candidates_count=%d, outcome=success, duration=%.3fs",
+                    len(results),
+                    duration,
+                )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "RAG vector search candidates: %s",
+                        [r.question for r in results],
+                    )
                 return results
         except Exception as e:
-            logger.warning("FAQ pure vector search failed: %s", e)
+            duration = time.monotonic() - start_time
+            logger.error("FAQ pure vector search failed (error_class=%s)", type(e).__name__)
+            if logger.isEnabledFor(TRACE):
+                logger.log(TRACE, "FAQ pure vector search exception: %s", e, exc_info=True)
             return []
 
     async def search_with_fallback(

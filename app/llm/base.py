@@ -326,7 +326,21 @@ class AbstractLlmClient(ABC, LlmClient):
             except LlmProcessingException:
                 raise
             except Exception as e:
-                logger.error("%s request failed: %s", self.get_provider_name(), e, exc_info=True)
+                logger.error(
+                    "%s request failed: error_class=%s, reason=%s",
+                    self.get_provider_name(),
+                    type(e).__name__,
+                    str(e),
+                )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "%s request failed for user %s: %s",
+                        self.get_provider_name(),
+                        telegram_user_id,
+                        e,
+                        exc_info=True,
+                    )
                 raise LlmProcessingException(
                     str(e),
                     "Произошла ошибка при обработке запроса. Попробуйте позже.",
@@ -477,7 +491,21 @@ class AbstractLlmClient(ABC, LlmClient):
         try:
             payload = json.loads(response.text)
         except ValueError as e:
-            logger.error("%s returned a body that is not JSON: %s", self.get_provider_name(), e)
+            logger.error(
+                "%s returned malformed JSON: error_class=%s, reason=%s",
+                self.get_provider_name(),
+                type(e).__name__,
+                str(e),
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "%s returned malformed JSON: %s (body=%s)",
+                    self.get_provider_name(),
+                    e,
+                    response.text,
+                    exc_info=True,
+                )
             raise LlmProcessingException(
                 f"{self.get_provider_name()} returned malformed JSON: {e}",
                 "Ошибка обработки ответа модели.",
@@ -508,7 +536,19 @@ class AbstractLlmClient(ABC, LlmClient):
                     )
                 )
         except Exception as e:
-            logger.warning("Failed to save token usage: %s", e)
+            logger.error(
+                "Failed to save token usage: error_class=%s, reason=%s",
+                type(e).__name__,
+                str(e),
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Failed to save token usage for user %s: %s",
+                    telegram_user_id,
+                    e,
+                    exc_info=True,
+                )
 
     @abstractmethod
     def extract_usage(self, payload: dict[str, Any]) -> TokenUsage | None:
@@ -566,3 +606,7 @@ class AbstractLlmClient(ABC, LlmClient):
     def get_provider_name(self) -> str:
         """Return provider display name."""
         ...
+
+    def get_effective_reasoning_effort(self) -> str:
+        """Return the provider-specific effort, or ``unknown`` for simple test clients."""
+        return "unknown"

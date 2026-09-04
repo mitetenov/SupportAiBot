@@ -14,7 +14,7 @@ from app.llm.gemini import (
     sanitize_schema_params,
 )
 from app.llm.mcp_router import McpRouter
-from app.logging_config import setup_logging
+from app.logging_config import TRACE, setup_logging
 from app.rag.service import FaqEmbeddingService
 from app.storage.chat_history import ChatHistoryService
 from app.storage.database import DatabaseSessionManager
@@ -109,7 +109,7 @@ class TestGeminiClient:
     ) -> None:
         settings.gemini_model = "gemini-3.1-pro-preview"
         settings.reasoning_effort = "none"
-        with caplog.at_level("WARNING"):
+        with caplog.at_level(TRACE):
             client = GeminiClient(
                 settings=settings,
                 mcp_router=gemini_client.mcp_router,
@@ -133,7 +133,7 @@ class TestGeminiClient:
     ):
         settings.gemini_model = "gemini-1.5-pro"
         settings.reasoning_effort = "low"
-        with caplog.at_level("WARNING"):
+        with caplog.at_level(TRACE):
             client = GeminiClient(
                 settings=settings,
                 mcp_router=gemini_client.mcp_router,

@@ -244,6 +244,11 @@ class NormalizingFilter(logging.Filter):
 
         # Route third-party loggers
         is_app = record.name == "app" or record.name.startswith("app.")
+        if is_app and logging.WARNING <= record.levelno < logging.ERROR:
+            # The public contract has no WARNING level. Existing diagnostic
+            # warnings are trace detail, while actual failures use ERROR.
+            record.levelno = TRACE_LEVEL_NUM
+            record.levelname = TRACE_LEVEL_NAME
         if not is_app and record.name != "root":
             if record.levelno < logging.ERROR:
                 # Route third-party DEBUG, INFO, WARNING to TRACE

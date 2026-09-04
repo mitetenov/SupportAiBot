@@ -23,6 +23,8 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
+from app.logging_config import TRACE
+
 logger = logging.getLogger(__name__)
 
 #: The document the Russian full-text index is built over. The search query has
@@ -128,16 +130,18 @@ async def ensure_vector_column(
     row = result.fetchone()
 
     if row is not None and int(row[0]) == dimension:
-        logger.debug(
-            "%s.%s already vector(%d) — keeping existing embeddings",
-            table_name,
-            column_name,
-            dimension,
-        )
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "%s.%s already vector(%d) — keeping existing embeddings",
+                table_name,
+                column_name,
+                dimension,
+            )
         return False
 
     if row is not None:
-        logger.warning(
+        logger.info(
             "%s.%s is vector(%s) but the embedding provider produces %d dimensions — "
             "rebuilding the column, every row will be re-embedded",
             table_name,
@@ -332,5 +336,6 @@ async def sync_legacy_schema(engine: AsyncEngine) -> list[str]:
     if applied:
         logger.info("Reconciled legacy schema: %s", "; ".join(applied))
     else:
-        logger.debug("Schema already current, nothing to reconcile")
+        if logger.isEnabledFor(TRACE):
+            logger.log(TRACE, "Schema already current, nothing to reconcile")
     return applied

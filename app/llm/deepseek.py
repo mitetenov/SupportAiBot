@@ -80,7 +80,22 @@ class DeepSeekClient(AbstractLlmClient):
         self.tool_definitions = self._build_tool_definitions()
         self._log_reasoning_configuration()
 
+    def get_effective_reasoning_effort(self) -> str:
+        """Return the effective reasoning effort mode sent to provider, or 'unsupported/ignored'."""
+        if not self.reasoning_supported:
+            return "unsupported/ignored"
+        if self.reasoning_effort == "none":
+            return "none"
+        return DEEPSEEK_REASONING_EFFORT_MAP.get(self.reasoning_effort, "unsupported/ignored")
+
     def _log_reasoning_configuration(self) -> None:
+        effective = self.get_effective_reasoning_effort()
+        logger.info(
+            "Selected LLM: provider=DeepSeek, model=%s, configured_effort=%s, effective_effort=%s",
+            self.model,
+            self.reasoning_effort,
+            effective,
+        )
         if not self.reasoning_supported:
             if self.reasoning_effort != "none":
                 logger.warning(
@@ -218,7 +233,8 @@ class DeepSeekClient(AbstractLlmClient):
                 native_effort,
                 safe_serialize(body),
             )
-        logger.debug("DeepSeek request (%d tools available)", len(self.tool_definitions))
+        if logger.isEnabledFor(TRACE):
+            logger.log(TRACE, "DeepSeek request (%d tools available)", len(self.tool_definitions))
 
         response = await post_with_retry(
             self.http_client,

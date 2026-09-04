@@ -105,14 +105,11 @@ def render_tool_result(result: CallToolResult) -> str:
         return json.dumps({"error": error_msg}, ensure_ascii=False)
 
     structured = getattr(result, "structured_content", None)
-    if structured is not None:
-        return json.dumps(structured, ensure_ascii=False)
+    if isinstance(structured, (dict, list, str, int, float, bool)):
+        return json.dumps(structured, ensure_ascii=False, default=str)
 
     content = getattr(result, "content", [])
-    if len(content) == 1 and (
-        isinstance(content[0], TextContent)
-        or (getattr(content[0], "type", "") == "text" and hasattr(content[0], "text"))
-    ):
+    if len(content) == 1 and isinstance(getattr(content[0], "text", None), str):
         return str(content[0].text)
 
     serialized = []
@@ -508,6 +505,14 @@ class HttpMcpClient(McpClientInterface):
             duration = time.monotonic() - start_time
             rendered = render_tool_result(result)
             is_error = getattr(result, "is_error", False)
+            outcome = "error" if is_error else "success"
+            logger.info(
+                "MCP call: server=%s, tool=%s, outcome=%s, duration=%.3fs",
+                self.server_name,
+                tool_name,
+                outcome,
+                duration,
+            )
             if logger.isEnabledFor(TRACE):
                 logger.log(
                     TRACE,
@@ -531,6 +536,12 @@ class HttpMcpClient(McpClientInterface):
             return rendered
         except Exception as e:
             duration = time.monotonic() - start_time
+            logger.info(
+                "MCP call: server=%s, tool=%s, outcome=error, duration=%.3fs",
+                self.server_name,
+                tool_name,
+                duration,
+            )
             if logger.isEnabledFor(TRACE):
                 logger.log(
                     TRACE,

@@ -102,7 +102,20 @@ class OpenAiClient(AbstractLlmClient):
         self.tool_definitions = self._build_tool_definitions()
         self._log_reasoning_configuration()
 
+    def get_effective_reasoning_effort(self) -> str:
+        """Return the effective reasoning effort mode sent to provider, or 'unsupported/ignored'."""
+        if not self.reasoning_supported:
+            return "unsupported/ignored"
+        return self.reasoning_effort
+
     def _log_reasoning_configuration(self) -> None:
+        effective = self.get_effective_reasoning_effort()
+        logger.info(
+            "Selected LLM: provider=OpenAI, model=%s, configured_effort=%s, effective_effort=%s",
+            self.model,
+            self.reasoning_effort,
+            effective,
+        )
         if not self.reasoning_supported:
             if self.reasoning_effort != "none":
                 logger.warning(
@@ -232,9 +245,11 @@ class OpenAiClient(AbstractLlmClient):
                 effective_effort,
                 safe_serialize(body),
             )
-        logger.debug(
-            "OpenAI Responses API request (%d tools available)", len(self.tool_definitions)
-        )
+            logger.log(
+                TRACE,
+                "OpenAI Responses API request (%d tools available)",
+                len(self.tool_definitions),
+            )
 
         response = await post_with_retry(
             self.http_client,
@@ -267,7 +282,13 @@ class OpenAiClient(AbstractLlmClient):
         try:
             output = payload.get("output")
             if not output or not isinstance(output, list):
-                logger.error("No output array in OpenAI Responses API response: %s", payload)
+                logger.error("No output array in OpenAI Responses API response")
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "OpenAI invalid response payload: %s",
+                        safe_serialize(payload),
+                    )
                 raise LlmProcessingException(
                     "Empty output",
                     "Не удалось получить ответ от модели. Попробуйте позже.",
@@ -299,7 +320,13 @@ class OpenAiClient(AbstractLlmClient):
 
             full_text = "".join(text_builder)
             if not full_text and not tool_calls:
-                logger.warning("No text or tool calls in OpenAI response: %s", payload)
+                logger.error("No text or tool calls in OpenAI response")
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "OpenAI empty response payload: %s",
+                        safe_serialize(payload),
+                    )
                 raise LlmProcessingException(
                     "Empty response",
                     "Модель не вернула ответа. Попробуйте переформулировать вопрос.",

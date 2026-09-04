@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from aiogram import Bot
 
 from app.constants import get_message
+from app.logging_config import TRACE
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,13 @@ class AdminNotifier:
                 disable_notification=True,
             )
         except Exception as e:
-            logger.warning("Failed to send admin error notification: %s", e)
+            logger.error(
+                "Failed to send admin error notification (error_class=%s)", type(e).__name__
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE, "Failed to send admin error notification exception: %s", e, exc_info=True
+                )
 
     def _claim_slot(self, context: str) -> int | None:
         """How many repeats this alert stands for, or None to stay quiet."""
@@ -84,9 +91,13 @@ class AdminNotifier:
         entry = self._throttled.get(context)
         if entry is not None and now - entry.sent_at < self.THROTTLE_WINDOW_SECONDS:
             entry.suppressed += 1
-            logger.debug(
-                "Admin alert suppressed (%d since the last one): %s", entry.suppressed, context
-            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Admin alert suppressed (%d since the last one): %s",
+                    entry.suppressed,
+                    context,
+                )
             return None
 
         suppressed = entry.suppressed if entry is not None else 0

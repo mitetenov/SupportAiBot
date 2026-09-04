@@ -7,6 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from app.logging_config import TRACE
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,12 +68,19 @@ class MaintenanceScheduler:
                 result = job.run()
                 if inspect.isawaitable(result):
                     await result
-                logger.debug("Maintenance job %s completed", job.name)
+                if logger.isEnabledFor(TRACE):
+                    logger.log(TRACE, "Maintenance job %s completed", job.name)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 # A failed cleanup must not kill the loop: the next tick retries.
-                logger.warning("Maintenance job %s failed: %s", job.name, e)
+                logger.error(
+                    "Maintenance job %s failed (error_class=%s)", job.name, type(e).__name__
+                )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE, "Maintenance job %s exception: %s", job.name, e, exc_info=True
+                    )
 
     async def stop(self) -> None:
         """Cancel every job and wait for the loops to unwind."""

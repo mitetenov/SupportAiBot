@@ -211,12 +211,19 @@ class McpRouter:
                 continue
             for tool_name, (tool, client) in server_tools.items():
                 if tool_name in hidden:
+                    logger.info(
+                        "MCP tool loaded: server=%s, tool=%s, status=hidden_collision, description=%s",
+                        server_name,
+                        tool_name,
+                        tool.description or "",
+                    )
                     continue
                 if tool_name not in profile:
                     logger.info(
-                        "Tool '%s' declared by %s is not in its owner's profile — withheld",
-                        tool_name,
+                        "MCP tool loaded: server=%s, tool=%s, status=withheld_by_profile, description=%s",
                         server_name,
+                        tool_name,
+                        tool.description or "",
                     )
                     continue
                 telegram_param = self._telegram_id_property(tool.input_schema)
@@ -238,6 +245,20 @@ class McpRouter:
                 self._routes[(server_name, tool_name)] = route
                 self._route_by_tool_name[tool_name] = route
                 self.allowed_tools_by_server[server_name].add(tool_name)
+                logger.info(
+                    "MCP tool loaded: server=%s, tool=%s, status=available, description=%s",
+                    server_name,
+                    tool_name,
+                    tool.description or "",
+                )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "MCP tool schema (server=%s, tool=%s): %s",
+                        server_name,
+                        tool_name,
+                        safe_serialize(tool.input_schema),
+                    )
 
     @classmethod
     def _telegram_id_property(cls, input_schema: dict[str, Any] | None) -> TelegramIdParam | None:
@@ -318,7 +339,7 @@ class McpRouter:
                     "McpRouter blocked call to '%s': caller key is 0 (no identity to pin)",
                     tool_name,
                 )
-            logger.warning("Blocked call to %s: caller key is 0, no identity to pin", tool_name)
+            logger.error("Blocked call to %s: caller key is 0, no identity to pin", tool_name)
             return self._identity_unavailable(tool_name)
 
         route = self._route_for(tool_name)
@@ -330,7 +351,7 @@ class McpRouter:
                         "McpRouter blocked call to hidden colliding tool '%s'",
                         tool_name,
                     )
-                logger.warning("Blocked call to hidden colliding tool: %s", tool_name)
+                logger.error("Blocked call to hidden colliding tool: %s", tool_name)
                 return json.dumps({"error": f"Tool hidden due to name collision: {tool_name}"})
             if tool_name in self.allowed_tools:
                 logger.error(
@@ -344,7 +365,7 @@ class McpRouter:
                     "McpRouter blocked call to non-allowed tool '%s'",
                     tool_name,
                 )
-            logger.warning("Blocked call to non-allowed tool: %s", tool_name)
+            logger.error("Blocked call to non-allowed tool: %s", tool_name)
             return json.dumps({"error": f"Tool not allowed: {tool_name}"})
 
         if telegram_user_id < 0:
@@ -357,7 +378,7 @@ class McpRouter:
                         route.owner,
                         telegram_user_id,
                     )
-                logger.warning(
+                logger.error(
                     "Blocked call to %s on %s: email-only key %d has no Telegram "
                     "identity and no provable panel userId",
                     tool_name,
@@ -437,11 +458,10 @@ class McpRouter:
                             safe[key],
                             tool_name,
                         )
-                    logger.warning(
-                        "Tool %s called with %s=%s — stripping; injecting actual identity",
+                    logger.info(
+                        "Tool %s called with model identity argument %s — stripping; injecting actual identity",
                         tool_name,
                         key,
-                        safe[key],
                     )
                     del safe[key]
             if telegram_user_id < 0:
@@ -475,12 +495,10 @@ class McpRouter:
                         telegram_user_id,
                         tool_name,
                     )
-                logger.warning(
-                    "Tool %s called with %s=%s — overriding with actual sender %s",
+                logger.info(
+                    "Tool %s called with model identity argument %s — overriding with actual sender",
                     tool_name,
                     key,
-                    supplied,
-                    telegram_user_id,
                 )
             if telegram_param is not None and key == telegram_param.name:
                 safe[key] = self._coerce(telegram_user_id, telegram_param, supplied)

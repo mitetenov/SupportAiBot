@@ -66,6 +66,12 @@ class LlmFallbackClient:
         """Return a safe display name for diagnostics without exposing configuration secrets."""
         return " → ".join(client.get_provider_name() for client in self._clients)
 
+    def get_effective_reasoning_effort(self) -> str:
+        """Return effective reasoning effort of the active primary client."""
+        if self._clients:
+            return getattr(self._clients[0], "get_effective_reasoning_effort", lambda: "unknown")()
+        return "unknown"
+
     def supports_images(self) -> bool:
         """Return whether any configured target can accept image input."""
         return any(client.supports_images() for client in self._clients)
@@ -132,6 +138,13 @@ class LlmFallbackClient:
             except Exception as error:
                 if not is_fallback_eligible(error):
                     raise
+                logger.error(
+                    "LLM provider %s failed (error_class=%s, status_code=%s, reason=%s)",
+                    client.get_provider_name(),
+                    type(error).__name__,
+                    getattr(error, "status_code", None),
+                    getattr(error, "message", str(error))[:100],
+                )
                 if logger.isEnabledFor(TRACE):
                     logger.log(
                         TRACE,
@@ -140,10 +153,15 @@ class LlmFallbackClient:
                         type(error).__name__,
                         error,
                     )
-                logger.warning(
-                    "LLM provider %s is unavailable; trying the next configured target",
-                    client.get_provider_name(),
-                )
+                if attempt + 1 < len(candidates):
+                    next_client = candidates[attempt + 1]
+                    logger.info(
+                        "LLM fallback transition: from %s to %s, reason=%s, effective_effort=%s",
+                        client.get_provider_name(),
+                        next_client.get_provider_name(),
+                        type(error).__name__,
+                        getattr(next_client, "get_effective_reasoning_effort", lambda: "unknown")(),
+                    )
                 continue
 
             if logger.isEnabledFor(TRACE):

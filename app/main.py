@@ -110,10 +110,9 @@ async def main() -> None:
     register_settings_secrets(settings)
     logger.info("Starting VPN Support Bot...")
     logger.info(
-        "Loaded settings: LLM provider=%s, Embedding provider=%s, Group ID=%d",
+        "Loaded settings: LLM provider=%s, Embedding provider=%s",
         settings.llm_provider,
         settings.embedding_provider,
-        settings.telegram_support_group_chat_id,
     )
 
     http_client = httpx.AsyncClient(

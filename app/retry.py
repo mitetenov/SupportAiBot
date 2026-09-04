@@ -78,7 +78,7 @@ async def post_with_retry(
                 if is_last:
                     raise
                 delay = backoff_delay(attempt, base_delay)
-                logger.warning(
+                logger.info(
                     "%s failed (%s) — retrying in %.1fs (attempt %d/%d)",
                     description,
                     e.__class__.__name__,
@@ -91,7 +91,7 @@ async def post_with_retry(
 
             if response.status_code in RETRYABLE_STATUS and not is_last:
                 delay = _retry_after_seconds(response) or backoff_delay(attempt, base_delay)
-                logger.warning(
+                logger.info(
                     "%s returned %d — retrying in %.1fs (attempt %d/%d)",
                     description,
                     response.status_code,

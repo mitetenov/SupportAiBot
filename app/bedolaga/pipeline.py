@@ -16,6 +16,8 @@ from app.bot.rate_limiter import UserRateLimiter
 from app.constants import get_message
 from app.llm.base import LlmClient, LlmReply
 from app.llm.escalation import EscalationPolicy
+from app.logging_config import TRACE
+from app.logging_context import operation_context
 from app.rag.knowledge_gaps import KnowledgeGapService
 
 logger = logging.getLogger(__name__)
@@ -145,15 +147,29 @@ class TicketAnswerer:
 
     async def handle(self, ticket_id: int) -> None:
         """Answer one ticket, one turn at a time, never raising to the caller."""
-        async with self._slots, self._tickets.hold(ticket_id):
-            try:
-                await self._answer(ticket_id)
-            except Exception as e:
-                logger.error("Failed to answer Bedolaga ticket %d: %s", ticket_id, e, exc_info=True)
-                await self.admin_notifier.notify_error(
-                    get_message("bedolaga.error.context", ticket_id),
-                    error=e,
-                )
+        with operation_context():
+            if logger.isEnabledFor(TRACE):
+                logger.log(TRACE, "Bedolaga handling ticket_id=%d", ticket_id)
+            async with self._slots, self._tickets.hold(ticket_id):
+                try:
+                    await self._answer(ticket_id)
+                except Exception as e:
+                    logger.error(
+                        "Failed to answer Bedolaga ticket (component=TicketAnswerer, operation=handle, error_class=%s)",
+                        type(e).__name__,
+                    )
+                    if logger.isEnabledFor(TRACE):
+                        logger.log(
+                            TRACE,
+                            "Failed to answer Bedolaga ticket %d: %s",
+                            ticket_id,
+                            e,
+                            exc_info=True,
+                        )
+                    await self.admin_notifier.notify_error(
+                        get_message("bedolaga.error.context", ticket_id),
+                        error=e,
+                    )
 
     async def _answer(self, ticket_id: int) -> None:
         ticket = await self.client.get_ticket(ticket_id)
@@ -189,7 +205,7 @@ class TicketAnswerer:
             # blip: a forum topic, a chat history and every future Remnawave
             # lookup for this person hang off it. Nothing is marked, so the
             # sweep a minute from now asks again.
-            logger.warning(
+            logger.info(
                 "Bedolaga ticket %d: the panel did not resolve user %d, leaving it for the "
                 "next sweep",
                 ticket.id,
@@ -343,7 +359,7 @@ class TicketAnswerer:
         if escalate:
             success = await self.client.set_priority(ticket.id, "high")
             if not success:
-                logger.warning("Bedolaga ticket %d: set_priority to high failed", ticket.id)
+                logger.error("Bedolaga ticket %d: set_priority to high failed", ticket.id)
 
         await self.mirror(
             ticket,
@@ -454,7 +470,7 @@ class TicketAnswerer:
             failures=failures,
             retry_at=time.monotonic() + delay,
         )
-        logger.warning(
+        logger.error(
             "Bedolaga ticket %d: reply failed %d time(s), next attempt in %.0fs",
             ticket_id,
             failures,
@@ -532,12 +548,14 @@ class TicketAnswerer:
                     break
                 await self.state.record_mirrored_media(ticket.id, msg.id)
             except Exception as e:
-                logger.warning(
-                    "Bedolaga ticket %d: could not mirror media for message %d: %s",
+                logger.error(
+                    "Bedolaga ticket %d: could not mirror media for message %d (error_class=%s)",
                     ticket.id,
                     msg.id,
-                    e,
+                    type(e).__name__,
                 )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(TRACE, "Could not mirror media exception: %s", e, exc_info=True)
                 break
         return media_by_msg
 
@@ -604,7 +622,18 @@ class TicketAnswerer:
                 ticket_id=ticket.id,
             )
         except Exception as e:
-            logger.warning("Could not mirror Bedolaga ticket %d to the topic: %s", ticket.id, e)
+            logger.error(
+                "Could not mirror Bedolaga ticket %d to the topic (error_class=%s)",
+                ticket.id,
+                type(e).__name__,
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Could not mirror Bedolaga ticket to topic exception: %s",
+                    e,
+                    exc_info=True,
+                )
 
     @staticmethod
     def stand_in(ticket: Ticket, user_key: int) -> TicketUser:

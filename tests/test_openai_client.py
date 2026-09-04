@@ -10,7 +10,7 @@ from app.llm.base import LlmProcessingException, ToolCall
 from app.llm.mcp_client import McpTool
 from app.llm.mcp_router import McpRouter
 from app.llm.openai_client import OpenAiClient
-from app.logging_config import setup_logging
+from app.logging_config import TRACE, setup_logging
 from app.rag.service import FaqEmbeddingService
 from app.storage.chat_history import ChatHistoryService
 from app.storage.database import DatabaseSessionManager
@@ -152,7 +152,7 @@ class TestOpenAiClient:
     ):
         settings.openai_model = "gpt-4.1"
         settings.reasoning_effort = "low"
-        with caplog.at_level("WARNING"):
+        with caplog.at_level(TRACE):
             client = OpenAiClient(
                 settings=settings,
                 mcp_router=openai_client.mcp_router,

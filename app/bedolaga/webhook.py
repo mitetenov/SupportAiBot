@@ -72,7 +72,7 @@ class BedolagaWebhookEndpoint:
                     TRACE,
                     "Bedolaga webhook outcome: rejected bad signature (403)",
                 )
-            logger.warning("Bedolaga webhook: rejected a delivery with a bad signature")
+            logger.error("Bedolaga webhook rejected: bad signature")
             return web.json_response({"status": "forbidden"}, status=403)
 
         event = request.headers.get("X-Webhook-Event", "")
@@ -93,7 +93,7 @@ class BedolagaWebhookEndpoint:
                     TRACE,
                     "Bedolaga webhook outcome: bad request (body was not valid JSON)",
                 )
-            logger.warning("Bedolaga webhook: body was not JSON")
+            logger.error("Bedolaga webhook rejected: body was not JSON")
             return web.json_response({"status": "bad request"}, status=400)
 
         if not isinstance(payload, dict):
@@ -102,7 +102,7 @@ class BedolagaWebhookEndpoint:
                     TRACE,
                     "Bedolaga webhook outcome: bad request (payload was not a dict)",
                 )
-            logger.warning("Bedolaga webhook: body was not a JSON object")
+            logger.error("Bedolaga webhook rejected: body was not a JSON object")
             return web.json_response({"status": "bad request"}, status=400)
 
         if payload.get("is_from_admin"):
@@ -122,7 +122,7 @@ class BedolagaWebhookEndpoint:
                     TRACE,
                     "Bedolaga webhook outcome: bad request (missing ticket_id)",
                 )
-            logger.warning("Bedolaga webhook: %s carried no ticket_id", event)
+            logger.error("Bedolaga webhook rejected: event %s carried no ticket_id", event)
             return web.json_response({"status": "bad request"}, status=400)
 
         try:
@@ -134,7 +134,7 @@ class BedolagaWebhookEndpoint:
                     "Bedolaga webhook outcome: bad request (non-numeric ticket_id=%r)",
                     ticket_id,
                 )
-            logger.warning("Bedolaga webhook: ticket_id is not convertible to int")
+            logger.error("Bedolaga webhook rejected: ticket_id is not convertible to int")
             return web.json_response({"status": "bad request"}, status=400)
 
         self.answerer.schedule(numeric_ticket_id)

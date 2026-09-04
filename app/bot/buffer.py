@@ -229,7 +229,7 @@ class UserMessageBuffer:
         logger.info("Waiting for %d in-flight answer(s) before shutdown", len(self._inflight))
         done, pending = await asyncio.wait(set(self._inflight), timeout=timeout)
         if pending:
-            logger.warning("%d answer(s) did not finish in time — cancelling", len(pending))
+            logger.info("%d answer(s) did not finish in time — cancelling", len(pending))
             for task in pending:
                 task.cancel()
         self._inflight.clear()
