@@ -333,7 +333,7 @@ class Settings(BaseSettings):
             )
             _require_text(
                 configured_model,
-                "OPENROUTER_MODEL не задан. Укажите модель, например: OPENROUTER_MODEL=z-ai/glm-4.7",
+                "OPENROUTER_MODEL не задан. Укажите модель, например: OPENROUTER_MODEL=z-ai/glm-5.3-flash",
             )
             if not self.openrouter_base_url or not self.openrouter_base_url.strip():
                 raise ValueError(
@@ -375,7 +375,7 @@ class Settings(BaseSettings):
             )
             _require_text(
                 configured_model,
-                "ZAI_MODEL не задан. Укажите модель, например: ZAI_MODEL=glm-4.7",
+                "ZAI_MODEL не задан. Укажите модель, например: ZAI_MODEL=glm-5.3-flash",
             )
             if not self.zai_base_url or not self.zai_base_url.strip():
                 raise ValueError(
