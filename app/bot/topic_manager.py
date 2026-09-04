@@ -6,6 +6,7 @@ from aiogram import Bot
 from sqlalchemy import delete, select
 
 from app.bot.keyed_lock import KeyedLock
+from app.logging_config import TRACE
 from app.storage.database import DatabaseSessionManager
 from app.storage.models import TopicMapping
 
@@ -56,8 +57,8 @@ class TopicManager:
                     await session.execute(
                         delete(TopicMapping).where(TopicMapping.user_id == user_id)
                     )
-                    logger.info(
-                        "Deleted stale topic mapping %s for user %d", stale_topic_id, user_id
+                    logger.log(
+                        TRACE, "Deleted stale topic mapping %s for user %d", stale_topic_id, user_id
                     )
 
             return await self._create_topic(user_id, user_name)
@@ -65,7 +66,7 @@ class TopicManager:
     async def _create_topic(self, user_id: int, user_name: str | None) -> int | None:
         """Invoke Telegram API to create a new forum topic and record mapping in DB."""
         topic_name = self._build_topic_name(user_id, user_name)
-        logger.info("Creating forum topic for user %d: %s", user_id, topic_name)
+        logger.log(TRACE, "Creating forum topic for user %d: %s", user_id, topic_name)
 
         try:
             response = await self.bot.create_forum_topic(
@@ -84,13 +85,14 @@ class TopicManager:
                         user_name=user_name,
                     )
                     session.add(mapping)
-                logger.info("Created topic %d for user %d", topic_id, user_id)
+                logger.log(TRACE, "Created topic %d for user %d", topic_id, user_id)
                 return topic_id
 
-            logger.error("Failed to create topic for user %d: empty message_thread_id", user_id)
+            logger.error("Creating forum topic returned no message_thread_id")
             return None
         except Exception as e:
-            logger.error("Error creating topic for user %d: %s", user_id, e, exc_info=True)
+            logger.error("Creating forum topic failed", exc_info=True)
+            logger.log(TRACE, "Creating forum topic for user %d failed: %s", user_id, e)
             return None
 
     def _build_topic_name(self, user_id: int, user_name: str | None) -> str:

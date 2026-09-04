@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -12,6 +13,9 @@ import httpx
 from mcp.client import Client
 from mcp.shared.exceptions import MCPError
 from mcp.types import CallToolResult, Implementation, TextContent
+
+from app.logging_config import TRACE, log_failure
+from app.logging_redaction import safe_serialize
 
 logger = logging.getLogger(__name__)
 
@@ -101,14 +105,11 @@ def render_tool_result(result: CallToolResult) -> str:
         return json.dumps({"error": error_msg}, ensure_ascii=False)
 
     structured = getattr(result, "structured_content", None)
-    if structured is not None:
-        return json.dumps(structured, ensure_ascii=False)
+    if isinstance(structured, (dict, list, str, int, float, bool)):
+        return json.dumps(structured, ensure_ascii=False, default=str)
 
     content = getattr(result, "content", [])
-    if len(content) == 1 and (
-        isinstance(content[0], TextContent)
-        or (getattr(content[0], "type", "") == "text" and hasattr(content[0], "text"))
-    ):
+    if len(content) == 1 and isinstance(getattr(content[0], "text", None), str):
         return str(content[0].text)
 
     serialized = []
@@ -318,6 +319,13 @@ class HttpMcpClient(McpClientInterface):
         await self._close_stack_internal()
         stack = AsyncExitStack()
         try:
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "%s initializing MCP connection to %s",
+                    self._label,
+                    self.base_url,
+                )
             client = self._client_factory(self.base_url)
             entered_client = await stack.enter_async_context(client)
             self._client = entered_client
@@ -330,9 +338,12 @@ class HttpMcpClient(McpClientInterface):
 
             tools: list[McpTool] = []
             cursor: str | None = None
+            page = 1
             while True:
                 res = await entered_client.list_tools(cursor=cursor)
-                for t in getattr(res, "tools", []):
+                raw_tools = getattr(res, "tools", [])
+                page_tools: list[McpTool] = []
+                for t in raw_tools:
                     schema = getattr(t, "input_schema", {})
                     if hasattr(schema, "model_dump"):
                         schema_dict = schema.model_dump(
@@ -343,29 +354,69 @@ class HttpMcpClient(McpClientInterface):
                     else:
                         schema_dict = {}
                     desc = getattr(t, "description", "") or ""
-                    tools.append(McpTool(name=t.name, description=desc, input_schema=schema_dict))
+                    tool_item = McpTool(name=t.name, description=desc, input_schema=schema_dict)
+                    tools.append(tool_item)
+                    page_tools.append(tool_item)
+
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "%s list_tools page %d (cursor=%s) returned %d tools: %s",
+                        self._label,
+                        page,
+                        cursor,
+                        len(page_tools),
+                        safe_serialize(
+                            [
+                                {
+                                    "name": t.name,
+                                    "description": t.description,
+                                    "input_schema": t.input_schema,
+                                }
+                                for t in page_tools
+                            ]
+                        ),
+                    )
+
                 next_cursor = getattr(res, "next_cursor", None)
                 if not next_cursor:
                     break
                 cursor = next_cursor
+                page += 1
 
             self._cached_tools = tools
             self._initialized = True
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "%s completed list_tools: %d total tools loaded across %d page(s)",
+                    self._label,
+                    len(self._cached_tools),
+                    page,
+                )
             logger.info(
-                "%s HTTP client initialized with %d tools at %s (protocol: %s)",
+                "%s HTTP client initialized with %d tools (protocol: %s)",
                 self._label,
                 len(self._cached_tools),
-                self.base_url,
                 self._protocol_version,
             )
             return True
         except Exception as e:
-            logger.error(
-                "%s initialization failed — bot will run without tools from %s: %s",
-                self._label,
-                self.base_url,
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "%s initialization error at %s: %s",
+                    self._label,
+                    self.base_url,
+                    e,
+                    exc_info=True,
+                )
+            log_failure(
+                logger,
+                "MCP initialization failed",
                 e,
-                exc_info=True,
+                server=self.server_name,
+                details={"url": self.base_url},
             )
             await self._close_stack_internal()
             await self._notify_admins(f"{self._label} init failed for {self.base_url}", e)
@@ -378,29 +429,54 @@ class HttpMcpClient(McpClientInterface):
         try:
             await self.admin_notifier.notify_error(context, error=error)
         except Exception as e:
-            logger.warning("Failed to notify admins about %s: %s", context, e)
+            log_failure(logger, "MCP admin notification failed", e, details={"context": context})
 
     async def _recover_session_internal(self, failed_generation: int) -> bool:
         """Re-establish connection after a broken session or server restart."""
         if self._session_generation != failed_generation:
             # Another caller already triggered re-initialisation while queued
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "%s session recovery already performed by another caller (gen %d -> %d)",
+                    self._label,
+                    failed_generation,
+                    self._session_generation,
+                )
             return self._initialized
 
-        logger.warning(
-            "%s connection at %s lost/expired — re-initializing", self._label, self.base_url
-        )
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "%s recovering session (generation %d)",
+                self._label,
+                failed_generation,
+            )
+        logger.info("%s connection lost/expired; re-initializing", self._label)
         previous_tools = {tool.name for tool in self._cached_tools}
 
         recovered = await self._init_internal()
         self._session_generation += 1
 
         if not recovered:
-            logger.error("%s could not re-establish connection at %s", self._label, self.base_url)
+            log_failure(
+                logger,
+                "MCP reconnection failed",
+                server=self.server_name,
+                details={"url": self.base_url},
+            )
             return False
 
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "%s successfully recovered session (new generation %d)",
+                self._label,
+                self._session_generation,
+            )
         current_tools = {tool.name for tool in self._cached_tools}
         if current_tools != previous_tools:
-            logger.warning(
+            logger.info(
                 "%s tool set changed after reconnect: %s -> %s",
                 self._label,
                 sorted(previous_tools),
@@ -413,22 +489,85 @@ class HttpMcpClient(McpClientInterface):
     ) -> str:
         if client is None:
             raise RuntimeError(f"{self._label} client is not connected")
-        result = await client.call_tool(
-            name=tool_name,
-            arguments=arguments if arguments is not None else {},
-        )
-        rendered = render_tool_result(result)
-        if getattr(result, "is_error", False):
-            try:
-                err_dict = json.loads(rendered)
-                err_msg = err_dict.get("error", "tool returned is_error=True")
-            except Exception:
-                err_msg = "tool returned is_error=True"
-            await self._notify_admins(
-                f"{self._label} tool error: {tool_name}",
-                RuntimeError(f"Tool {tool_name} returned error: {err_msg}"),
+        args_payload = arguments if arguments is not None else {}
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "%s calling tool '%s' with args: %s",
+                self._label,
+                tool_name,
+                safe_serialize(args_payload),
             )
-        return rendered
+        start_time = time.monotonic()
+        try:
+            result = await client.call_tool(
+                name=tool_name,
+                arguments=args_payload,
+            )
+            duration = time.monotonic() - start_time
+            rendered = render_tool_result(result)
+            is_error = getattr(result, "is_error", False)
+            outcome = "error" if is_error else "success"
+            logger.info(
+                "MCP call: server=%s, tool=%s, outcome=%s, duration=%.3fs",
+                self.server_name,
+                tool_name,
+                outcome,
+                duration,
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "%s tool '%s' returned in %.3fs (is_error=%s): %s",
+                    self._label,
+                    tool_name,
+                    duration,
+                    is_error,
+                    rendered,
+                )
+            if is_error:
+                try:
+                    err_dict = json.loads(rendered)
+                    err_msg = err_dict.get("error", "tool returned is_error=True")
+                except Exception:
+                    err_msg = "tool returned is_error=True"
+                logger.error(
+                    "MCP call failed: server=%s, tool=%s, error_class=McpToolError",
+                    self.server_name,
+                    tool_name,
+                )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "%s tool '%s' returned is_error=True: %s",
+                        self._label,
+                        tool_name,
+                        err_msg,
+                    )
+                await self._notify_admins(
+                    f"{self._label} tool error: {tool_name}",
+                    RuntimeError(f"Tool {tool_name} returned error: {err_msg}"),
+                )
+            return rendered
+        except Exception as e:
+            duration = time.monotonic() - start_time
+            logger.info(
+                "MCP call: server=%s, tool=%s, outcome=error, duration=%.3fs",
+                self.server_name,
+                tool_name,
+                duration,
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "%s tool '%s' raised %s in %.3fs: %s",
+                    self._label,
+                    tool_name,
+                    type(e).__name__,
+                    duration,
+                    e,
+                )
+            raise
 
     async def _close_stack_internal(self) -> None:
         stack = self._exit_stack
@@ -441,8 +580,12 @@ class HttpMcpClient(McpClientInterface):
             try:
                 await stack.aclose()
             except Exception as error:
-                logger.warning(
-                    "%s failed to close MCP client at %s: %s", self._label, self.base_url, error
+                log_failure(
+                    logger,
+                    "MCP closing failed",
+                    error,
+                    server=self.server_name,
+                    details={"url": self.base_url},
                 )
 
     async def init(self) -> bool:
@@ -479,6 +622,20 @@ class HttpMcpClient(McpClientInterface):
         """Execute a tool with given arguments and return JSON string result."""
         started, generation, active_client = await self._start_tool_call()
         if not started:
+            if not self._closing:
+                log_failure(
+                    logger,
+                    "MCP tool call unavailable: not initialized",
+                    server=self.server_name,
+                    tool=tool_name,
+                )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "%s call_tool '%s' blocked: client not initialized or closing",
+                    self._label,
+                    tool_name,
+                )
             return json.dumps({"error": f"{self._label} client not initialized"})
 
         try:
@@ -486,11 +643,19 @@ class HttpMcpClient(McpClientInterface):
                 return await self._invoke_tool(active_client, tool_name, arguments)
             except Exception as e:
                 if not _is_recoverable_error(e):
-                    logger.error(
-                        "%s failed to call tool: %s: %s", self._label, tool_name, e, exc_info=True
+                    log_failure(
+                        logger, "MCP tool call failed", e, server=self.server_name, tool=tool_name
                     )
                     await self._notify_admins(f"{self._label} tool call failed: {tool_name}", e)
                     return json.dumps({"error": str(e) if str(e) else "unknown error"})
+
+                log_failure(
+                    logger,
+                    "MCP tool call failed; reconnecting",
+                    e,
+                    server=self.server_name,
+                    tool=tool_name,
+                )
 
                 async with self._recovery_lock:
                     if self._session_generation == generation:
@@ -512,14 +677,21 @@ class HttpMcpClient(McpClientInterface):
                 if retry_client is None:
                     return json.dumps({"error": f"{self._label} client not initialized"})
                 try:
+                    if logger.isEnabledFor(TRACE):
+                        logger.log(
+                            TRACE,
+                            "%s re-invoking tool '%s' after session recovery",
+                            self._label,
+                            tool_name,
+                        )
                     return await self._invoke_tool(retry_client, tool_name, arguments)
                 except Exception as retry_e:
-                    logger.error(
-                        "%s tool %s failed after reconnect: %s",
-                        self._label,
-                        tool_name,
+                    log_failure(
+                        logger,
+                        "MCP tool call failed after reconnect",
                         retry_e,
-                        exc_info=True,
+                        server=self.server_name,
+                        tool=tool_name,
                     )
                     await self._notify_admins(
                         f"{self._label} tool call failed after reconnect: {tool_name}", retry_e

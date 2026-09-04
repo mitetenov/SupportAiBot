@@ -10,6 +10,8 @@ from app.bot.typing import TypingIndicator
 from app.constants import get_message
 from app.llm.base import LlmClient
 from app.llm.escalation import EscalationPolicy
+from app.logging_config import TRACE
+from app.logging_context import operation_context
 
 logger = logging.getLogger(__name__)
 
@@ -66,30 +68,50 @@ class OperatorAskCommand:
             await self._notify_operator(topic_id, get_message("support.ask.usage"))
             return
 
-        # The user's private chat is keyed by their own id, as everywhere else
-        # the bot writes to them.
-        session = self.typing_indicator.start(user_id)
-        try:
-            reply = await self.llm_client.chat(query, user_id)
+        with operation_context():
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Operator /ask handling for user_id=%d, topic_id=%d: query=%s",
+                    user_id,
+                    topic_id,
+                    query,
+                )
+            # The user's private chat is keyed by their own id, as everywhere else
+            # the bot writes to them.
+            session = self.typing_indicator.start(user_id)
+            try:
+                reply = await self.llm_client.chat(query, user_id)
 
-            response = EscalationPolicy.strip_marker(reply.text)
-            if not response:
-                response = get_message("bot.llm.empty")
+                response = EscalationPolicy.strip_marker(reply.text)
+                if not response:
+                    response = get_message("bot.llm.empty")
 
-            await self.sender.send(user_id, response)
-            await self.illustrations.send_first(user_id, user_id, reply.faq_context, response)
+                await self.sender.send(user_id, response)
+                await self.illustrations.send_first(user_id, user_id, reply.faq_context, response)
 
-            # The operator is still the one running this conversation, so the
-            # bot stays out of the way for another suppression window.
-            self.conversation_state.record_operator_reply(user_id)
-            await self._notify_operator(topic_id, get_message("support.ask.header", response))
-        except Exception as e:
-            logger.error("Operator /ask failed for user %d: %s", user_id, e, exc_info=True)
-            await self._notify_operator(
-                topic_id, get_message("support.ask.error", self._describe(e))
-            )
-        finally:
-            session.close()
+                # The operator is still the one running this conversation, so the
+                # bot stays out of the way for another suppression window.
+                self.conversation_state.record_operator_reply(user_id)
+                await self._notify_operator(topic_id, get_message("support.ask.header", response))
+            except Exception as e:
+                logger.error(
+                    "Operator /ask failed (component=OperatorAskCommand, operation=handle, error_class=%s)",
+                    type(e).__name__,
+                )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "Operator /ask failed for user %d: %s",
+                        user_id,
+                        e,
+                        exc_info=True,
+                    )
+                await self._notify_operator(
+                    topic_id, get_message("support.ask.error", self._describe(e))
+                )
+            finally:
+                session.close()
 
     async def _notify_operator(self, topic_id: int, text: str) -> None:
         """Write back into the topic the command came from."""

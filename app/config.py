@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
+from pydantic_core import InitErrorDetails
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
+VALID_LOG_LEVELS: tuple[str, ...] = ("TRACE", "INFO", "ERROR")
 VALID_LLM_PROVIDERS: list[str] = ["deepseek", "gemini", "openai", "groq"]
 VALID_EMBEDDING_PROVIDERS: list[str] = ["gemini", "openai"]
 VALID_REASONING_EFFORTS: list[str] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -80,6 +82,35 @@ class Settings(BaseSettings):
         case_sensitive=False,
         enable_decoding=False,
     )
+
+    # Logging
+    bot_log_level: str = "INFO"
+
+    def __init__(self, **values: Any) -> None:
+        try:
+            super().__init__(**values)
+        except ValidationError as exc:
+            line_errors: list[InitErrorDetails] = []
+            for err in exc.errors(include_url=False, include_context=True, include_input=False):
+                msg = err["msg"]
+                if msg.startswith("Value error, "):
+                    msg = msg[len("Value error, ") :]
+                line_errors.append(
+                    InitErrorDetails(
+                        type="value_error",
+                        loc=err["loc"],
+                        input=None,
+                        ctx={"error": msg},
+                    )
+                )
+            raise ValidationError.from_exception_data(
+                exc.title, line_errors, hide_input=True
+            ) from None
+
+    @property
+    def log_level(self) -> str:
+        """Return the normalized logging level."""
+        return self.bot_log_level
 
     # Database (PostgreSQL / PGVector)
     pgvector_host: str = "pgvector"
@@ -162,6 +193,23 @@ class Settings(BaseSettings):
             f"@{self.pgvector_host}:{self.pgvector_port}/{self.pgvector_db}"
         )
 
+    @field_validator("bot_log_level", mode="before")
+    @classmethod
+    def normalize_bot_log_level(cls, value: Any) -> str:
+        """Validate and normalize BOT_LOG_LEVEL strictly to TRACE, INFO, or ERROR."""
+        if value is None:
+            return "INFO"
+        if not isinstance(value, str):
+            raise ValueError(
+                "Недопустимое значение BOT_LOG_LEVEL. Допустимые значения: TRACE, INFO, ERROR"
+            )
+        normalized = value.strip().upper()
+        if not normalized or normalized not in VALID_LOG_LEVELS:
+            raise ValueError(
+                "Недопустимое значение BOT_LOG_LEVEL. Допустимые значения: TRACE, INFO, ERROR"
+            )
+        return normalized
+
     @field_validator("telegram_support_admin_telegram_ids", mode="before")
     @classmethod
     def parse_admin_ids(cls, v: Any) -> set[int]:
@@ -190,7 +238,7 @@ class Settings(BaseSettings):
                 try:
                     result.add(int(item_str))
                 except ValueError:
-                    logger.warning("Invalid admin Telegram ID ignored: %s", item_str)
+                    logger.error("Invalid admin Telegram ID ignored")
                     continue
             return result
         return set()
@@ -297,10 +345,8 @@ class Settings(BaseSettings):
             )
 
         if not self.telegram_support_admin_telegram_ids:
-            logger.warning(
-                "TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS не задан — "
-                "уведомления об ошибках и запросы оператора не будут отправляться администраторам. "
-                "Добавьте в .env: TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS=123456789,987654321"
+            logger.info(
+                "TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS is empty; admin notifications are disabled"
             )
 
         # 2. Validate LLM Provider

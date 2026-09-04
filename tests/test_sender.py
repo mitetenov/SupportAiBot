@@ -15,6 +15,7 @@ def make_sender() -> tuple[TelegramMessageSender, MagicMock]:
     bot.send_message = AsyncMock()
     bot.copy_message = AsyncMock(return_value=MagicMock(message_id=77))
     bot.set_message_reaction = AsyncMock()
+    bot.edit_message_text = AsyncMock()
     return TelegramMessageSender(bot), bot
 
 
@@ -656,3 +657,158 @@ class TestSafeURLInputFile:
         input_file = SafeURLInputFile(url="https://bedolaga.local/media/0", max_redirects=2)
         with pytest.raises(RuntimeError, match="Too many redirects"):
             _ = [c async for c in input_file.read(bot)]
+
+
+class TestEditMessage:
+    @pytest.mark.asyncio
+    async def test_edit_message_success(self) -> None:
+        sender, bot = make_sender()
+        success = await sender.edit_message(100, 42, "**Updated text**")
+        assert success is True
+        bot.edit_message_text.assert_awaited_once_with(
+            chat_id=100,
+            message_id=42,
+            text="<b>Updated text</b>",
+            parse_mode="HTML",
+        )
+
+    @pytest.mark.asyncio
+    async def test_edit_message_fallback_on_parse_error(self) -> None:
+        sender, bot = make_sender()
+        bot.edit_message_text = AsyncMock(
+            side_effect=[
+                TelegramBadRequest(method=MagicMock(), message="Bad Request: can't parse entities"),
+                None,
+            ]
+        )
+        success = await sender.edit_message(100, 42, "**Invalid HTML**")
+        assert success is True
+        assert bot.edit_message_text.await_count == 2
+        second_call = bot.edit_message_text.await_args_list[1].kwargs
+        assert second_call["parse_mode"] is None
+        assert second_call["text"] == "Invalid HTML"
+
+    @pytest.mark.asyncio
+    async def test_edit_message_failure_swallowed(self) -> None:
+        sender, bot = make_sender()
+        bot.edit_message_text = AsyncMock(side_effect=RuntimeError("message not found"))
+        success = await sender.edit_message(100, 42, "text")
+        assert success is False
+
+
+class TestSenderTraceLogging:
+    @pytest.fixture(autouse=True)
+    def configure_trace_logging(self) -> None:
+        from app.logging_config import setup_logging
+
+        setup_logging("TRACE")
+
+    @pytest.mark.asyncio
+    async def test_trace_logging_for_send_and_chunks(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from app.logging_config import TRACE
+
+        caplog.set_level(TRACE)
+        sender, bot = make_sender()
+        sent_mock = MagicMock(message_id=999)
+        bot.send_message = AsyncMock(return_value=sent_mock)
+        await sender.send(100, "hello world")
+        trace_records = [r for r in caplog.records if r.levelno == TRACE]
+        assert any("Telegram send_message chunk" in r.message for r in trace_records)
+
+    @pytest.mark.asyncio
+    async def test_trace_logging_for_photo_bytes_metadata_only(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from app.logging_config import TRACE
+
+        caplog.set_level(TRACE)
+        sender, bot = make_sender()
+        bot.send_photo = AsyncMock(return_value=MagicMock(message_id=601))
+
+        payload_bytes = b"dummy-image-bytes-content"
+        b64 = base64.b64encode(payload_bytes).decode("ascii")
+
+        await sender.send_photo_bytes(100, b64, "image/png", caption="caption")
+
+        trace_records = [r for r in caplog.records if r.levelno == TRACE]
+        photo_records = [r for r in trace_records if "Telegram send_photo_bytes" in r.message]
+        assert len(photo_records) >= 1
+        # Check metadata is in log: size
+        assert str(len(payload_bytes)) in photo_records[0].message
+        assert "image/png" in photo_records[0].message
+        # Check raw bytes / base64 is NOT leaked in the log message
+        assert b64 not in photo_records[0].message
+        assert "dummy-image-bytes-content" not in photo_records[0].message
+
+    @pytest.mark.asyncio
+    async def test_trace_logging_for_edit_and_reactions(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from app.logging_config import TRACE
+
+        caplog.set_level(TRACE)
+        sender, bot = make_sender()
+        await sender.edit_message(100, 42, "updated")
+        await sender.set_reaction(100, 42, [])
+
+        trace_records = [r for r in caplog.records if r.levelno == TRACE]
+        assert any("Telegram edit_message" in r.message for r in trace_records)
+        assert any("Telegram set_reaction" in r.message for r in trace_records)
+
+    @pytest.mark.asyncio
+    async def test_trace_logging_for_typing_action(self, caplog: pytest.LogCaptureFixture) -> None:
+        import asyncio
+
+        from app.bot.typing import TypingSession
+        from app.logging_config import TRACE
+
+        caplog.set_level(TRACE)
+        bot = MagicMock()
+        bot.send_chat_action = AsyncMock()
+
+        async with TypingSession(bot, chat_id=123, refresh_seconds=0.05):
+            await asyncio.sleep(0.06)
+
+        trace_records = [r for r in caplog.records if r.levelno == TRACE]
+        assert any("Telegram API send_chat_action" in r.message for r in trace_records)
+
+    @pytest.mark.asyncio
+    async def test_trace_logging_for_callback_query(self, caplog: pytest.LogCaptureFixture) -> None:
+        from aiogram.types import CallbackQuery, User
+
+        from app.bot.router import setup_router
+        from app.logging_config import TRACE
+
+        caplog.set_level(TRACE)
+        sender, bot = make_sender()
+        router = setup_router(
+            sender=sender,
+            llm_client=MagicMock(),
+            forwarder=MagicMock(),
+            db_manager=MagicMock(),
+            chat_history_service=MagicMock(),
+            knowledge_gap_service=MagicMock(),
+            command_handler=MagicMock(),
+            photo_downloader=MagicMock(),
+            message_buffer=MagicMock(),
+            pipeline=MagicMock(),
+            conversation_state=MagicMock(),
+            operator_ask=MagicMock(),
+            support_group_chat_id=-100,
+        )
+
+        query = MagicMock(spec=CallbackQuery)
+        query.id = "cq_123"
+        query.from_user = MagicMock(spec=User, id=456)
+        query.message = MagicMock(chat=MagicMock(id=789))
+        query.data = "action:test"
+        query.answer = AsyncMock()
+
+        callback_handler = router.callback_query.handlers[0].callback
+        await callback_handler(query)
+
+        query.answer.assert_awaited_once()
+        trace_records = [r for r in caplog.records if r.levelno == TRACE]
+        assert any("Telegram update callback_query" in r.message for r in trace_records)

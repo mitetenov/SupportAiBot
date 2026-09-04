@@ -636,3 +636,123 @@ class TestDownloadImage:
         await client.download_image(media)
         assert media.filename == "photo.jpg"
         assert media.download_headers == {"X-API-Key": API_KEY}
+
+
+class TestBedolagaClientTraceLogging:
+    """Verify TRACE logging in BedolagaClient methods and metadata-only binary logging."""
+
+    @pytest.mark.asyncio
+    async def test_get_ticket_trace_logging(self) -> None:
+        import logging
+
+        from app.logging_config import TRACE
+
+        bedolaga_logger = logging.getLogger("app.bedolaga.client")
+        bedolaga_logger.setLevel(TRACE)
+        records: list[logging.LogRecord] = []
+
+        class TestHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = TestHandler()
+        bedolaga_logger.addHandler(handler)
+
+        try:
+            client, _ = _client()
+            await client.get_ticket(17)
+
+            trace_msgs = [r.getMessage() for r in records if r.levelno == TRACE]
+            assert any(
+                "Bedolaga API get_ticket request: url=" in m and "/tickets/17" in m
+                for m in trace_msgs
+            )
+            assert any("Bedolaga API get_ticket response: status=200" in m for m in trace_msgs)
+        finally:
+            bedolaga_logger.removeHandler(handler)
+
+    @pytest.mark.asyncio
+    async def test_upload_photo_metadata_only_trace_logging(self) -> None:
+        import logging
+
+        from app.logging_config import TRACE
+
+        bedolaga_logger = logging.getLogger("app.bedolaga.client")
+        bedolaga_logger.setLevel(TRACE)
+        records: list[logging.LogRecord] = []
+
+        class TestHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = TestHandler()
+        bedolaga_logger.addHandler(handler)
+
+        try:
+            raw_payload_str = "secret_raw_image_data_to_not_leak"
+            b64_img = base64.b64encode(raw_payload_str.encode()).decode("ascii")
+            post = AsyncMock(
+                return_value=_response(201, {"media_type": "photo", "file_id": "file_123"})
+            )
+            client, _ = _client(post=post)
+
+            await client.upload_photo(b64_img, "image/png")
+
+            trace_msgs = [r.getMessage() for r in records if r.levelno == TRACE]
+            assert any(
+                "Bedolaga API upload_photo request: url=" in m and "byte_size=" in m
+                for m in trace_msgs
+            )
+            # Ensure raw image data or b64 string is NEVER leaked in the logs
+            for m in trace_msgs:
+                assert raw_payload_str not in m
+                assert b64_img not in m
+        finally:
+            bedolaga_logger.removeHandler(handler)
+
+    @pytest.mark.asyncio
+    async def test_download_image_metadata_only_trace_logging(self) -> None:
+        import logging
+
+        from app.logging_config import TRACE
+
+        bedolaga_logger = logging.getLogger("app.bedolaga.client")
+        bedolaga_logger.setLevel(TRACE)
+        records: list[logging.LogRecord] = []
+
+        class TestHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = TestHandler()
+        bedolaga_logger.addHandler(handler)
+
+        try:
+            secret_data = b"confidential-screenshot-bytes"
+            media = TicketMedia(
+                media_type="photo",
+                media_url="http://bedolaga:8080/media/secret.png",
+                filename="secret.png",
+                download_headers={"X-API-Key": API_KEY},
+            )
+            stream = MagicMock(return_value=_StreamContext(_stream_response(secret_data)))
+            client, _ = _client(stream=stream)
+
+            res = await client.download_image(media)
+            assert res is not None
+
+            trace_msgs = [r.getMessage() for r in records if r.levelno == TRACE]
+            assert any(
+                "Bedolaga API download_image start: url=" in m and "secret.png" in m
+                for m in trace_msgs
+            )
+            assert any(
+                "Bedolaga API download_image completed: filename=secret.png, byte_size=" in m
+                for m in trace_msgs
+            )
+            # Ensure binary bytes or b64 string is NEVER dumped into TRACE logs
+            for m in trace_msgs:
+                assert "confidential-screenshot-bytes" not in m
+                assert res.base64_image not in m
+        finally:
+            bedolaga_logger.removeHandler(handler)

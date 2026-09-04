@@ -7,6 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.logging_config import log_failure
+
 logger = logging.getLogger(__name__)
 
 
@@ -191,7 +193,7 @@ class UserMessageBuffer:
             elif isinstance(res, asyncio.Task):
                 self._track(res, user_id)
         except Exception as e:
-            logger.error("Failed to dispatch buffered messages for user %d: %s", user_id, e)
+            log_failure(logger, "Buffered message dispatch failed", e, details={"user_id": user_id})
 
     def _track(self, task: asyncio.Task[Any], user_id: int) -> None:
         """Hold the task until it finishes, and surface anything it raised."""
@@ -203,9 +205,7 @@ class UserMessageBuffer:
                 return
             error = finished.exception()
             if error is not None:
-                logger.error(
-                    "Unhandled error while answering user %d: %s", user_id, error, exc_info=error
-                )
+                log_failure(logger, "Buffered answer failed", error, details={"user_id": user_id})
 
         task.add_done_callback(_done)
 
@@ -229,7 +229,7 @@ class UserMessageBuffer:
         logger.info("Waiting for %d in-flight answer(s) before shutdown", len(self._inflight))
         done, pending = await asyncio.wait(set(self._inflight), timeout=timeout)
         if pending:
-            logger.warning("%d answer(s) did not finish in time — cancelling", len(pending))
+            logger.info("%d answer(s) did not finish in time — cancelling", len(pending))
             for task in pending:
                 task.cancel()
         self._inflight.clear()

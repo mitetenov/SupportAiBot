@@ -16,6 +16,9 @@ from app.llm.base import (
     ToolCall,
     is_balance_exhaustion_message,
 )
+from app.logging_config import TRACE, log_failure
+from app.logging_http import create_logging_hooks
+from app.logging_redaction import safe_serialize
 from app.retry import post_with_retry
 
 if TYPE_CHECKING:
@@ -184,12 +187,36 @@ class GeminiClient(AbstractLlmClient):
         self._thinking_config()
         self._log_reasoning_configuration()
 
+    def get_effective_reasoning_effort(self) -> str:
+        if self.reasoning_version is None:
+            return "unsupported/ignored"
+        if self.reasoning_version == "3":
+            try:
+                level = resolve_gemini_3_level(self.model, self.reasoning_effort)
+                return str(level) if level is not None else "unsupported/ignored"
+            except Exception:
+                return "unsupported/ignored"
+        if self.reasoning_version == "2.5":
+            if "pro" in self.model.lower() and self.reasoning_effort == "none":
+                return "unsupported/ignored"
+            thinking_config = self._thinking_config()
+            if thinking_config is None:
+                return "unsupported/ignored"
+            return f"budget={thinking_config['thinkingBudget']}"
+        return "unsupported/ignored"
+
     def _log_reasoning_configuration(self) -> None:
+        logger.info(
+            "Selected LLM: provider=%s, model=%s, configured_effort=%s, effective_effort=%s",
+            self.get_provider_name(),
+            self.model,
+            self.reasoning_effort,
+            self.get_effective_reasoning_effort(),
+        )
         if self.reasoning_version is None:
             if self.reasoning_effort != "none":
-                logger.warning(
-                    "Gemini model %s does not support configurable thinking; "
-                    "REASONING_EFFORT=%s is ignored and requests are sent without thinking config",
+                logger.info(
+                    "Gemini model %s does not support configurable thinking; REASONING_EFFORT=%s is ignored and requests are sent without thinking config",
                     self.model,
                     self.reasoning_effort,
                 )
@@ -197,9 +224,8 @@ class GeminiClient(AbstractLlmClient):
 
         if self.reasoning_version == "3" and self.reasoning_effort == "none":
             native_level = resolve_gemini_3_level(self.model, self.reasoning_effort)
-            logger.warning(
-                "Gemini 3 model %s cannot fully disable thinking; "
-                "REASONING_EFFORT=none is mapped to %s",
+            logger.info(
+                "Gemini 3 model %s cannot fully disable thinking; REASONING_EFFORT=none is mapped to %s",
                 self.model,
                 native_level,
             )
@@ -209,9 +235,8 @@ class GeminiClient(AbstractLlmClient):
             and "pro" in self.model.lower()
             and self.reasoning_effort == "none"
         ):
-            logger.warning(
-                "Gemini 2.5 Pro model %s cannot disable thinking; "
-                "REASONING_EFFORT=none is ignored and dynamic thinking remains enabled",
+            logger.info(
+                "Gemini 2.5 Pro model %s cannot disable thinking; REASONING_EFFORT=none is ignored and dynamic thinking remains enabled",
                 self.model,
             )
             return
@@ -239,7 +264,9 @@ class GeminiClient(AbstractLlmClient):
     @property
     def http_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(60.0), event_hooks=create_logging_hooks()
+            )
             self._own_client = True
         return self._http_client
 
@@ -349,7 +376,17 @@ class GeminiClient(AbstractLlmClient):
             "x-goog-api-key": self.api_key,
         }
         body = self.build_request_body(conversation)
-        logger.debug("Gemini request (%d tools available)", len(self.sanitized_tools))
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "Gemini API request (model=%s, configured_effort=%s, thinking_config=%s): %s",
+                self.model,
+                self.reasoning_effort,
+                self._thinking_config(),
+                safe_serialize(body),
+            )
+        if logger.isEnabledFor(TRACE):
+            logger.log(TRACE, "Gemini request (%d tools available)", len(self.sanitized_tools))
 
         response = await post_with_retry(
             self.http_client,
@@ -359,7 +396,18 @@ class GeminiClient(AbstractLlmClient):
             description="Gemini API",
         )
         if response.status_code >= 400:
-            logger.error("Gemini API error (model=%s, status=%d)", self.model, response.status_code)
+            logger.error(
+                "Gemini API error (model=%s, status=%d, component=GeminiClient, operation=call_api)",
+                self.model,
+                response.status_code,
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Gemini API error details: status=%d, body=%s",
+                    response.status_code,
+                    response.text,
+                )
             raise LlmProcessingException(
                 f"Gemini API error (model={self.model}, status={response.status_code})",
                 "Произошла ошибка при обработке запроса. Попробуйте позже.",
@@ -373,12 +421,13 @@ class GeminiClient(AbstractLlmClient):
             json_response = payload
             candidates = json_response.get("candidates")
             if not candidates or not isinstance(candidates, list) or len(candidates) == 0:
-                block_reason = (
-                    json.dumps(json_response.get("promptFeedback"))
-                    if "promptFeedback" in json_response
-                    else "неизвестно"
+                log_failure(
+                    logger, "Empty candidates in Gemini response", model=self.model, details=payload
                 )
-                logger.error("Empty candidates in Gemini response. Block: %s", block_reason)
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE, "Gemini empty candidates payload: %s", safe_serialize(payload)
+                    )
                 raise LlmProcessingException(
                     "Empty candidates",
                     "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
@@ -426,15 +475,40 @@ class GeminiClient(AbstractLlmClient):
                         )
                     )
 
-            return LlmResponse(
+            resp = LlmResponse(
                 text="".join(text_builder),
                 tool_calls=function_calls,
                 raw_parts=raw_parts,
             )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Gemini API parsed response (model=%s): text=%s tool_calls=%s",
+                    self.model,
+                    resp.text,
+                    [
+                        {
+                            "name": tc.name,
+                            "id": tc.id,
+                            "arguments": tc.arguments,
+                            "thought_signature": bool(tc.thought_signature),
+                        }
+                        for tc in function_calls
+                    ],
+                )
+            return resp
         except LlmProcessingException:
             raise
         except Exception as e:
-            logger.error("Failed to parse Gemini response: %s", e)
+            logger.error(
+                "Failed to parse Gemini response (model=%s, component=GeminiClient, operation=parse_response, error_type=%s)",
+                self.model,
+                type(e).__name__,
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE, "Failed to parse Gemini response exception: %s", str(e), exc_info=True
+                )
             raise LlmProcessingException("Parse error", "Ошибка обработки ответа модели.") from e
 
     def add_tool_calls_to_conversation(

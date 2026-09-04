@@ -587,3 +587,159 @@ class TestMcpLoggingLevel:
         import logging
 
         assert logging.getLogger("mcp").level >= logging.WARNING
+
+
+class TestMcpTraceLogging:
+    """Test TRACE level logging for MCP client lifecycle and tool calls."""
+
+    @pytest.mark.asyncio
+    async def test_trace_logging_multi_page_list_tools(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import logging
+
+        from app.logging_config import TRACE
+
+        mcp_client_logger = logging.getLogger("app.llm.mcp_client")
+        mcp_client_logger.setLevel(TRACE)
+        records: list[logging.LogRecord] = []
+
+        class TestHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = TestHandler()
+        mcp_client_logger.addHandler(handler)
+
+        try:
+            page1 = ListToolsResult(
+                tools=[
+                    Tool(
+                        name="tool_1",
+                        description="Tool 1",
+                        input_schema={"type": "object", "properties": {"a": {"type": "string"}}},
+                    )
+                ],
+                next_cursor="cursor-2",
+            )
+            page2 = ListToolsResult(
+                tools=[
+                    Tool(
+                        name="tool_2",
+                        description="Tool 2",
+                        input_schema={"type": "object", "properties": {"b": {"type": "number"}}},
+                    )
+                ],
+                next_cursor=None,
+            )
+            sdk_client = MockSdkClient(pages=[page1, page2])
+            client = HttpMcpClient(
+                server_name="remnawave",
+                base_url="http://test-mcp:3100",
+                client_factory=lambda _url: sdk_client,
+            )
+
+            assert await client.init() is True
+
+            trace_msgs = [r.getMessage() for r in records if r.levelno == TRACE]
+            assert any("initializing MCP connection" in m for m in trace_msgs)
+            assert any("list_tools page 1" in m and "tool_1" in m for m in trace_msgs)
+            assert any("list_tools page 2" in m and "tool_2" in m for m in trace_msgs)
+            assert any(
+                "completed list_tools: 2 total tools loaded across 2 page(s)" in m
+                for m in trace_msgs
+            )
+        finally:
+            mcp_client_logger.removeHandler(handler)
+
+    @pytest.mark.asyncio
+    async def test_trace_logging_tool_call_full_args_and_result(self) -> None:
+        import logging
+
+        from app.logging_config import TRACE
+
+        mcp_client_logger = logging.getLogger("app.llm.mcp_client")
+        mcp_client_logger.setLevel(TRACE)
+        records: list[logging.LogRecord] = []
+
+        class TestHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = TestHandler()
+        mcp_client_logger.addHandler(handler)
+
+        try:
+            large_result = {"users": [{"id": i, "name": f"User {i}"} for i in range(100)]}
+            sdk_client = MockSdkClient(
+                tools=[Tool(name="users_list", description="", input_schema={})],
+                tool_results={
+                    "users_list": CallToolResult(
+                        content=[TextContent(type="text", text=json.dumps(large_result))]
+                    )
+                },
+            )
+            client = HttpMcpClient(
+                server_name="remnawave",
+                base_url="http://test-mcp:3100",
+                client_factory=lambda _url: sdk_client,
+            )
+            assert await client.init() is True
+
+            records.clear()
+            call_args = {"limit": 100, "filter": "active"}
+            res = await client.call_tool("users_list", call_args)
+            assert json.loads(res) == large_result
+
+            trace_msgs = [r.getMessage() for r in records if r.levelno == TRACE]
+            assert any(
+                "calling tool 'users_list' with args:" in m and "filter" in m for m in trace_msgs
+            )
+            assert any(
+                "tool 'users_list' returned in" in m and "is_error=False" in m and "User 99" in m
+                for m in trace_msgs
+            )
+        finally:
+            mcp_client_logger.removeHandler(handler)
+
+    @pytest.mark.asyncio
+    async def test_trace_logging_tool_call_is_error(self) -> None:
+        import logging
+
+        from app.logging_config import TRACE
+
+        mcp_client_logger = logging.getLogger("app.llm.mcp_client")
+        mcp_client_logger.setLevel(TRACE)
+        records: list[logging.LogRecord] = []
+
+        class TestHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = TestHandler()
+        mcp_client_logger.addHandler(handler)
+
+        try:
+            sdk_client = MockSdkClient(
+                tools=[Tool(name="error_tool", description="", input_schema={})],
+                tool_results={
+                    "error_tool": CallToolResult(
+                        content=[TextContent(type="text", text="Failure reason detail")],
+                        is_error=True,
+                    )
+                },
+            )
+            client = HttpMcpClient(
+                server_name="remnawave",
+                base_url="http://test-mcp:3100",
+                client_factory=lambda _url: sdk_client,
+            )
+            assert await client.init() is True
+
+            records.clear()
+            await client.call_tool("error_tool", {"param": 123})
+
+            trace_msgs = [r.getMessage() for r in records if r.levelno == TRACE]
+            assert any("is_error=True" in m and "Failure reason detail" in m for m in trace_msgs)
+        finally:
+            mcp_client_logger.removeHandler(handler)

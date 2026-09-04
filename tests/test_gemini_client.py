@@ -1,8 +1,8 @@
-"""Tests for GeminiClient (Gemini REST API, schema sanitization, thought signature, vision)."""
-
+import io
 import json
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from app.config import Settings
@@ -14,6 +14,7 @@ from app.llm.gemini import (
     sanitize_schema_params,
 )
 from app.llm.mcp_router import McpRouter
+from app.logging_config import TRACE, setup_logging
 from app.rag.service import FaqEmbeddingService
 from app.storage.chat_history import ChatHistoryService
 from app.storage.database import DatabaseSessionManager
@@ -108,7 +109,7 @@ class TestGeminiClient:
     ) -> None:
         settings.gemini_model = "gemini-3.1-pro-preview"
         settings.reasoning_effort = "none"
-        with caplog.at_level("WARNING"):
+        with caplog.at_level(TRACE):
             client = GeminiClient(
                 settings=settings,
                 mcp_router=gemini_client.mcp_router,
@@ -132,7 +133,7 @@ class TestGeminiClient:
     ):
         settings.gemini_model = "gemini-1.5-pro"
         settings.reasoning_effort = "low"
-        with caplog.at_level("WARNING"):
+        with caplog.at_level(TRACE):
             client = GeminiClient(
                 settings=settings,
                 mcp_router=gemini_client.mcp_router,
@@ -316,3 +317,111 @@ class TestGeminiClient:
         with pytest.raises(LlmProcessingException) as exc_info:
             gemini_client.parse_response(json.loads(raw))
         assert "Empty candidates" in str(exc_info.value)
+
+
+class TestGeminiTraceLogging:
+    """Verify TRACE logging captures final request body and response with function calls and thought signatures."""
+
+    @pytest.mark.asyncio
+    async def test_trace_logs_full_request_and_response_with_tools(
+        self, settings: Settings
+    ) -> None:
+        stream = io.StringIO()
+        setup_logging(level="TRACE", stream=stream)
+
+        response_body = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": "Gemini answer text"},
+                            {
+                                "functionCall": {
+                                    "name": "check_status",
+                                    "args": {"server": "s1"},
+                                    "id": "fn_1",
+                                },
+                                "thoughtSignature": "gemini_thought_sig_123",
+                            },
+                        ]
+                    }
+                }
+            ]
+        }
+        transport = httpx.MockTransport(lambda _r: httpx.Response(200, json=response_body))
+
+        mcp_router = MagicMock(spec=McpRouter)
+        mcp_router.list_tools.return_value = []
+        chat_history_service = MagicMock(spec=ChatHistoryService)
+        chat_history_service.get_history = AsyncMock(return_value=[])
+
+        client = GeminiClient(
+            settings=settings,
+            mcp_router=mcp_router,
+            chat_history_service=chat_history_service,
+            faq_embedding_service=MagicMock(spec=FaqEmbeddingService),
+            db_manager=None,
+            http_client=httpx.AsyncClient(transport=transport),
+        )
+
+        conv = client.build_initial_conversation("User Gemini prompt", 12345, "FAQ Context")
+        payload = await client.call_api(conv, "FAQ Context", 12345)
+        parsed = client.parse_response(payload)
+
+        assert parsed.text == "Gemini answer text"
+        assert len(parsed.tool_calls) == 1
+        assert parsed.tool_calls[0].thought_signature == "gemini_thought_sig_123"
+
+        output = stream.getvalue()
+        # Full request
+        assert "Gemini API request" in output
+        assert "User Gemini prompt" in output
+        assert "FAQ Context" in output
+
+        # Response
+        assert "Gemini API parsed response" in output
+        assert "Gemini answer text" in output
+        assert "check_status" in output
+
+    @pytest.mark.asyncio
+    async def test_info_level_does_not_log_request_or_response_body(
+        self, settings: Settings
+    ) -> None:
+        stream = io.StringIO()
+        setup_logging(level="INFO", stream=stream)
+
+        secret_text = "SECRET_GEMINI_PROMPT_777"
+        secret_reply = "SECRET_GEMINI_REPLY_888"
+
+        response_body = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": secret_reply}],
+                    }
+                }
+            ]
+        }
+        transport = httpx.MockTransport(lambda _r: httpx.Response(200, json=response_body))
+
+        mcp_router = MagicMock(spec=McpRouter)
+        mcp_router.list_tools.return_value = []
+        chat_history_service = MagicMock(spec=ChatHistoryService)
+        chat_history_service.get_history = AsyncMock(return_value=[])
+
+        client = GeminiClient(
+            settings=settings,
+            mcp_router=mcp_router,
+            chat_history_service=chat_history_service,
+            faq_embedding_service=MagicMock(spec=FaqEmbeddingService),
+            db_manager=None,
+            http_client=httpx.AsyncClient(transport=transport),
+        )
+
+        conv = client.build_initial_conversation(secret_text, 12345)
+        payload = await client.call_api(conv, "", 12345)
+        client.parse_response(payload)
+
+        output = stream.getvalue()
+        assert secret_text not in output
+        assert secret_reply not in output

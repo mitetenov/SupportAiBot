@@ -26,6 +26,8 @@ from typing import Any
 
 from app.config import Settings
 from app.llm.mcp_client import McpClientInterface, McpTool
+from app.logging_config import TRACE, log_failure
+from app.logging_redaction import safe_serialize
 
 logger = logging.getLogger(__name__)
 
@@ -209,12 +211,19 @@ class McpRouter:
                 continue
             for tool_name, (tool, client) in server_tools.items():
                 if tool_name in hidden:
+                    logger.info(
+                        "MCP tool loaded: server=%s, tool=%s, status=hidden_collision, description=%s",
+                        server_name,
+                        tool_name,
+                        tool.description or "",
+                    )
                     continue
                 if tool_name not in profile:
                     logger.info(
-                        "Tool '%s' declared by %s is not in its owner's profile — withheld",
-                        tool_name,
+                        "MCP tool loaded: server=%s, tool=%s, status=withheld_by_profile, description=%s",
                         server_name,
+                        tool_name,
+                        tool.description or "",
                     )
                     continue
                 telegram_param = self._telegram_id_property(tool.input_schema)
@@ -236,6 +245,20 @@ class McpRouter:
                 self._routes[(server_name, tool_name)] = route
                 self._route_by_tool_name[tool_name] = route
                 self.allowed_tools_by_server[server_name].add(tool_name)
+                logger.info(
+                    "MCP tool loaded: server=%s, tool=%s, status=available, description=%s",
+                    server_name,
+                    tool_name,
+                    tool.description or "",
+                )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "MCP tool schema (server=%s, tool=%s): %s",
+                        server_name,
+                        tool_name,
+                        safe_serialize(tool.input_schema),
+                    )
 
     @classmethod
     def _telegram_id_property(cls, input_schema: dict[str, Any] | None) -> TelegramIdParam | None:
@@ -310,13 +333,25 @@ class McpRouter:
         A positive key is a real Telegram sender and is pinned as today.
         """
         if telegram_user_id == 0:
-            logger.warning("Blocked call to %s: caller key is 0, no identity to pin", tool_name)
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "McpRouter blocked call to '%s': caller key is 0 (no identity to pin)",
+                    tool_name,
+                )
+            logger.error("Blocked call to %s: caller key is 0, no identity to pin", tool_name)
             return self._identity_unavailable(tool_name)
 
         route = self._route_for(tool_name)
         if route is None:
             if tool_name in self.collisions:
-                logger.warning("Blocked call to hidden colliding tool: %s", tool_name)
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "McpRouter blocked call to hidden colliding tool '%s'",
+                        tool_name,
+                    )
+                logger.error("Blocked call to hidden colliding tool: %s", tool_name)
                 return json.dumps({"error": f"Tool hidden due to name collision: {tool_name}"})
             if tool_name in self.allowed_tools:
                 logger.error(
@@ -324,20 +359,43 @@ class McpRouter:
                     tool_name,
                 )
                 return json.dumps({"error": f"Unknown tool: {tool_name}"})
-            logger.warning("Blocked call to non-allowed tool: %s", tool_name)
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "McpRouter blocked call to non-allowed tool '%s'",
+                    tool_name,
+                )
+            log_failure(logger, "Blocked call to non-allowed MCP tool", details={"tool": tool_name})
             return json.dumps({"error": f"Tool not allowed: {tool_name}"})
 
         if telegram_user_id < 0:
             if route.owner != SERVER_BEDOLAGA:
-                logger.warning(
-                    "Blocked call to %s on %s: email-only key %d has no Telegram "
-                    "identity and no provable panel userId",
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "McpRouter blocked call to %s on %s: email-only key %d has no Telegram identity",
+                        tool_name,
+                        route.owner,
+                        telegram_user_id,
+                    )
+                log_failure(
+                    logger,
+                    "MCP call blocked: caller has no provable panel identity",
+                    tool=tool_name,
+                    server=route.owner,
+                    details={"user_id": telegram_user_id},
+                )
+                return self._identity_unavailable(tool_name)
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "McpRouter routing %s to %s for email-only key %d with pinned internal user_id",
                     tool_name,
                     route.owner,
                     telegram_user_id,
                 )
-                return self._identity_unavailable(tool_name)
-            logger.info(
+            logger.log(
+                TRACE,
                 "Serving %s on %s for email-only key %d with pinned internal user_id",
                 tool_name,
                 route.owner,
@@ -345,7 +403,24 @@ class McpRouter:
             )
 
         safe_args = self._pin_identity(route, tool_name, arguments, telegram_user_id)
-        return await route.client.call_tool(tool_name, safe_args)
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "McpRouter dispatching tool '%s' to client '%s' with safe args: %s",
+                tool_name,
+                route.owner,
+                safe_serialize(safe_args),
+            )
+        result = await route.client.call_tool(tool_name, safe_args)
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "McpRouter tool '%s' result from client '%s': %s",
+                tool_name,
+                route.owner,
+                result,
+            )
+        return result
 
     def _route_for(self, tool_name: str) -> _Route | None:
         return self._route_by_tool_name.get(tool_name)
@@ -376,11 +451,18 @@ class McpRouter:
         if route.owner == SERVER_BEDOLAGA:
             for key in list(safe.keys()):
                 if self._is_telegram_id_arg(key) or self._is_user_id_arg(key):
-                    logger.warning(
-                        "Tool %s called with %s=%s — stripping; injecting actual identity",
+                    if logger.isEnabledFor(TRACE):
+                        logger.log(
+                            TRACE,
+                            "McpRouter stripping model identity arg %s=%s for tool %s",
+                            key,
+                            safe[key],
+                            tool_name,
+                        )
+                    logger.info(
+                        "Tool %s called with model identity argument %s — stripping; injecting actual identity",
                         tool_name,
                         key,
-                        safe[key],
                     )
                     del safe[key]
             if telegram_user_id < 0:
@@ -390,6 +472,14 @@ class McpRouter:
             else:
                 name = telegram_param.name if telegram_param is not None else "telegram_id"
                 safe[name] = self._coerce(telegram_user_id, telegram_param, None)
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "McpRouter pinned Bedolaga identity for %s (key=%d): safe_args=%s",
+                    tool_name,
+                    telegram_user_id,
+                    safe_serialize(safe),
+                )
             return safe
 
         for key in list(safe.keys()):
@@ -397,12 +487,19 @@ class McpRouter:
                 continue
             supplied = safe[key]
             if not self._matches_user(supplied, telegram_user_id):
-                logger.warning(
-                    "Tool %s called with %s=%s — overriding with actual sender %s",
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "McpRouter overriding model identity arg %s=%s with sender %s for tool %s",
+                        key,
+                        supplied,
+                        telegram_user_id,
+                        tool_name,
+                    )
+                logger.info(
+                    "Tool %s called with model identity argument %s — overriding with actual sender",
                     tool_name,
                     key,
-                    supplied,
-                    telegram_user_id,
                 )
             if telegram_param is not None and key == telegram_param.name:
                 safe[key] = self._coerce(telegram_user_id, telegram_param, supplied)
@@ -412,6 +509,14 @@ class McpRouter:
         if telegram_param is not None and telegram_param.name not in safe:
             safe[telegram_param.name] = self._coerce(telegram_user_id, telegram_param, None)
 
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "McpRouter pinned Remnawave identity for %s (key=%d): safe_args=%s",
+                tool_name,
+                telegram_user_id,
+                safe_serialize(safe),
+            )
         return safe
 
     @staticmethod

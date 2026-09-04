@@ -14,6 +14,7 @@ from app.llm.base import (
     LlmToolExecutionException,
     is_balance_exhaustion_message,
 )
+from app.logging_config import TRACE
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,12 @@ class LlmFallbackClient:
         """Return a safe display name for diagnostics without exposing configuration secrets."""
         return " → ".join(client.get_provider_name() for client in self._clients)
 
+    def get_effective_reasoning_effort(self) -> str:
+        """Return effective reasoning effort of the active primary client."""
+        if self._clients:
+            return getattr(self._clients[0], "get_effective_reasoning_effort", lambda: "unknown")()
+        return "unknown"
+
     def supports_images(self) -> bool:
         """Return whether any configured target can accept image input."""
         return any(client.supports_images() for client in self._clients)
@@ -111,6 +118,15 @@ class LlmFallbackClient:
         turn_state = await candidates[0].prepare_turn(user_message, telegram_user_id)
         for attempt, client in enumerate(candidates):
             turn_state.replay_completed_tool_results = attempt > 0
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "LlmFallbackClient: attempting provider %s (attempt %d/%d, replaying_tools=%s)",
+                    client.get_provider_name(),
+                    attempt + 1,
+                    len(candidates),
+                    turn_state.replay_completed_tool_results,
+                )
             try:
                 reply = await client.do_chat(
                     user_message,
@@ -122,12 +138,38 @@ class LlmFallbackClient:
             except Exception as error:
                 if not is_fallback_eligible(error):
                     raise
-                logger.warning(
-                    "LLM provider %s is unavailable; trying the next configured target",
+                logger.error(
+                    "LLM provider %s failed (error_class=%s, status_code=%s)",
                     client.get_provider_name(),
+                    type(error).__name__,
+                    getattr(error, "status_code", None),
                 )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "LlmFallbackClient: provider %s failed with error (%s): %s; falling back to next provider",
+                        client.get_provider_name(),
+                        type(error).__name__,
+                        error,
+                    )
+                if attempt + 1 < len(candidates):
+                    next_client = candidates[attempt + 1]
+                    logger.info(
+                        "LLM fallback transition: from %s to %s, reason=%s, effective_effort=%s",
+                        client.get_provider_name(),
+                        next_client.get_provider_name(),
+                        type(error).__name__,
+                        getattr(next_client, "get_effective_reasoning_effort", lambda: "unknown")(),
+                    )
                 continue
 
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "LlmFallbackClient: provider %s succeeded for user %s",
+                    client.get_provider_name(),
+                    telegram_user_id,
+                )
             await self._persist_success(client, telegram_user_id, history_message, reply)
             return reply
         raise LlmFallbackExhaustedError()

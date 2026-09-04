@@ -18,6 +18,9 @@ from app.llm.base import (
     ToolCall,
     is_balance_exhaustion_message,
 )
+from app.logging_config import TRACE
+from app.logging_http import create_logging_hooks
+from app.logging_redaction import safe_serialize
 from app.retry import post_with_retry
 
 if TYPE_CHECKING:
@@ -105,10 +108,24 @@ class GroqClient(AbstractLlmClient):
         self.tool_definitions = self._build_tool_definitions()
         self._log_reasoning_configuration()
 
+    def get_effective_reasoning_effort(self) -> str:
+        if not self.reasoning_supported:
+            return "unsupported/ignored"
+        params = reasoning_parameters(self.model, self.reasoning_effort)
+        native = params.get("reasoning_effort")
+        return str(native) if native is not None else self.reasoning_effort
+
     def _log_reasoning_configuration(self) -> None:
+        logger.info(
+            "Selected LLM: provider=%s, model=%s, configured_effort=%s, effective_effort=%s",
+            self.get_provider_name(),
+            self.model,
+            self.reasoning_effort,
+            self.get_effective_reasoning_effort(),
+        )
         if not self.reasoning_supported:
             if self.reasoning_effort != "none":
-                logger.warning(
+                logger.info(
                     "No known reasoning controls for Groq model %s; REASONING_EFFORT=%s is ignored",
                     self.model,
                     self.reasoning_effort,
@@ -116,7 +133,7 @@ class GroqClient(AbstractLlmClient):
             return
         native_effort = reasoning_parameters(self.model, self.reasoning_effort)["reasoning_effort"]
         if self.model.strip().lower() in GROQ_GPT_OSS_MODELS and self.reasoning_effort == "none":
-            logger.warning(
+            logger.info(
                 "Groq model %s cannot disable reasoning; using native effort=low", self.model
             )
         logger.info(
@@ -129,7 +146,9 @@ class GroqClient(AbstractLlmClient):
     @property
     def http_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(60.0), event_hooks=create_logging_hooks()
+            )
             self._own_client = True
         return self._http_client
 
@@ -216,7 +235,18 @@ class GroqClient(AbstractLlmClient):
             "Content-Type": "application/json",
         }
         body = self.build_request_body(conversation)
-        logger.debug("Groq request (%d tools available)", len(self.tool_definitions))
+        if logger.isEnabledFor(TRACE):
+            r_params = reasoning_parameters(self.model, self.reasoning_effort)
+            logger.log(
+                TRACE,
+                "Groq API request (model=%s, configured_effort=%s, reasoning_params=%s): %s",
+                self.model,
+                self.reasoning_effort,
+                r_params,
+                safe_serialize(body),
+            )
+        if logger.isEnabledFor(TRACE):
+            logger.log(TRACE, "Groq request (%d tools available)", len(self.tool_definitions))
 
         response = await post_with_retry(
             self.http_client,
@@ -226,7 +256,18 @@ class GroqClient(AbstractLlmClient):
             description="Groq API",
         )
         if response.status_code >= 400:
-            logger.error("Groq API error (model=%s, status=%d)", self.model, response.status_code)
+            logger.error(
+                "Groq API error (model=%s, status=%d, component=GroqClient, operation=call_api)",
+                self.model,
+                response.status_code,
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Groq API error details: status=%d, body=%s",
+                    response.status_code,
+                    response.text,
+                )
             raise LlmProcessingException(
                 f"Groq API error (model={self.model}, status={response.status_code})",
                 "Произошла ошибка при обработке запроса. Попробуйте позже.",
@@ -239,7 +280,12 @@ class GroqClient(AbstractLlmClient):
         try:
             choices = payload.get("choices")
             if not choices or not isinstance(choices, list) or len(choices) == 0:
-                logger.error("Empty choices in Groq response: %s", payload)
+                logger.error(
+                    "Empty choices in Groq response (model=%s, component=GroqClient, operation=parse_response)",
+                    self.model,
+                )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(TRACE, "Groq empty choices payload: %s", safe_serialize(payload))
                 raise LlmProcessingException(
                     "Empty choices",
                     "Не удалось получить ответ от модели. Попробуйте позже.",
@@ -274,17 +320,38 @@ class GroqClient(AbstractLlmClient):
                     tool_calls.append(ToolCall(name=fn_name, id=tc_id, arguments=args))
 
             reasoning_content = message.get("reasoning")
-            return LlmResponse(
+            resp = LlmResponse(
                 text=content,
                 tool_calls=tool_calls,
                 reasoning_content=(
                     reasoning_content if isinstance(reasoning_content, str) else None
                 ),
             )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Groq API parsed response (model=%s): text=%s tool_calls=%s reasoning_content=%s",
+                    self.model,
+                    content,
+                    [
+                        {"name": tc.name, "id": tc.id, "arguments": tc.arguments}
+                        for tc in tool_calls
+                    ],
+                    resp.reasoning_content,
+                )
+            return resp
         except LlmProcessingException:
             raise
         except Exception as e:
-            logger.error("Failed to parse Groq response: %s", e)
+            logger.error(
+                "Failed to parse Groq response (model=%s, component=GroqClient, operation=parse_response, error_type=%s)",
+                self.model,
+                type(e).__name__,
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE, "Failed to parse Groq response exception: %s", str(e), exc_info=True
+                )
             raise LlmProcessingException("Parse error", "Ошибка обработки ответа модели.") from e
 
     def add_tool_calls_to_conversation(

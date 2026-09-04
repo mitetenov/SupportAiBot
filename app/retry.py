@@ -15,6 +15,9 @@ from typing import Any
 
 import httpx
 
+from app.logging_config import log_failure
+from app.logging_context import request_context
+
 logger = logging.getLogger(__name__)
 
 #: Status codes worth sending again: rate limits, and the gateway errors that
@@ -68,38 +71,46 @@ async def post_with_retry(
 
     for attempt in range(attempts):
         is_last = attempt == attempts - 1
-        try:
-            response = await client.post(url, **request_kwargs)
-        except (httpx.TimeoutException, httpx.TransportError) as e:
-            last_error = e
-            if is_last:
-                raise
-            delay = backoff_delay(attempt, base_delay)
-            logger.warning(
-                "%s failed (%s) — retrying in %.1fs (attempt %d/%d)",
-                description,
-                e.__class__.__name__,
-                delay,
-                attempt + 2,
-                attempts,
-            )
-            await _sleep(delay)
-            continue
+        with request_context(attempt=attempt + 1):
+            try:
+                response = await client.post(url, **request_kwargs)
+            except (httpx.TimeoutException, httpx.TransportError) as e:
+                last_error = e
+                if is_last:
+                    raise
+                log_failure(logger, "HTTP attempt failed", e, request_operation=description)
+                delay = backoff_delay(attempt, base_delay)
+                logger.info(
+                    "%s failed (%s) — retrying in %.1fs (attempt %d/%d)",
+                    description,
+                    e.__class__.__name__,
+                    delay,
+                    attempt + 2,
+                    attempts,
+                )
+                await _sleep(delay)
+                continue
 
-        if response.status_code in RETRYABLE_STATUS and not is_last:
-            delay = _retry_after_seconds(response) or backoff_delay(attempt, base_delay)
-            logger.warning(
-                "%s returned %d — retrying in %.1fs (attempt %d/%d)",
-                description,
-                response.status_code,
-                delay,
-                attempt + 2,
-                attempts,
-            )
-            await _sleep(delay)
-            continue
+            if response.status_code in RETRYABLE_STATUS and not is_last:
+                log_failure(
+                    logger,
+                    "HTTP attempt failed",
+                    request_operation=description,
+                    status_code=response.status_code,
+                )
+                delay = _retry_after_seconds(response) or backoff_delay(attempt, base_delay)
+                logger.info(
+                    "%s returned %d — retrying in %.1fs (attempt %d/%d)",
+                    description,
+                    response.status_code,
+                    delay,
+                    attempt + 2,
+                    attempts,
+                )
+                await _sleep(delay)
+                continue
 
-        return response
+            return response
 
     # Unreachable: the loop either returns a response or raises on the last
     # attempt. Kept so the function has a single, obvious contract.

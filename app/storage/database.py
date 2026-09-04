@@ -56,7 +56,7 @@ class DatabaseSessionManager:
             autocommit=False,
             autoflush=False,
         )
-        logger.info("DatabaseSessionManager initialized with URL: %s", database_url.split("@")[-1])
+        logger.info("DatabaseSessionManager initialized")
 
     @property
     def is_initialized(self) -> bool:
@@ -110,8 +110,9 @@ class DatabaseSessionManager:
             try:
                 await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             except Exception as e:
-                logger.warning(
-                    "Could not create vector extension (may already exist or unsupported): %s", e
+                logger.info(
+                    "Could not create vector extension (may already exist or insufficient privileges, error_class=%s)",
+                    type(e).__name__,
                 )
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Database models and schema initialized successfully.")

@@ -28,6 +28,9 @@ from app.config import get_settings, reveal
 from app.llm import create_llm_client
 from app.llm.mcp_client import HttpMcpClient, McpClientInterface
 from app.llm.mcp_router import McpRouter
+from app.logging_config import log_failure, setup_logging
+from app.logging_http import create_logging_hooks
+from app.logging_redaction import register_settings_secrets
 from app.rag.embedding import create_embedding_provider
 from app.rag.initializer import FaqInitializer
 from app.rag.knowledge_gaps import KnowledgeGapService
@@ -50,6 +53,7 @@ __all__ = [
     "health_handler",
     "main",
     "register_bot_commands",
+    "setup_logging",
     "start_health_server",
     "stop_health_server",
 ]
@@ -101,22 +105,20 @@ async def register_bot_commands(bot: Bot) -> None:
 
 async def main() -> None:
     """Application async entrypoint and composition root."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
-    logging.getLogger("mcp").setLevel(logging.WARNING)
-    logger.info("Starting VPN Support Bot...")
-
     settings = get_settings()
+    setup_logging(settings.bot_log_level)
+    register_settings_secrets(settings)
+    logger.info("Starting VPN Support Bot...")
     logger.info(
-        "Loaded settings: LLM provider=%s, Embedding provider=%s, Group ID=%d",
+        "Loaded settings: LLM provider=%s, Embedding provider=%s",
         settings.llm_provider,
         settings.embedding_provider,
-        settings.telegram_support_group_chat_id,
     )
 
-    http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+    http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(30.0),
+        event_hooks=create_logging_hooks(),
+    )
     bot = Bot(token=reveal(settings.telegram_bot_token))
     sender = TelegramMessageSender(bot)
     db_manager = get_db_manager(settings.database_url)
@@ -400,9 +402,8 @@ async def main() -> None:
                     timeout=TICKET_DRAIN_TIMEOUT_SECONDS,
                 )
             except TimeoutError:
-                logger.warning(
-                    "Bedolaga ticket turns did not finish within %.0fs; "
-                    "the next sweep after restart picks them up",
+                logger.info(
+                    "Bedolaga ticket turns did not finish within %.0fs; the next sweep after restart picks them up",
                     TICKET_DRAIN_TIMEOUT_SECONDS,
                 )
         if typing_indicator is not None:
@@ -411,10 +412,11 @@ async def main() -> None:
             try:
                 await mcp_client.close()
             except Exception as e:
-                logger.warning(
-                    "Error closing MCP client %s: %s",
-                    getattr(mcp_client, "server_name", "unknown"),
+                log_failure(
+                    logger,
+                    "MCP closing failed",
                     e,
+                    server=getattr(mcp_client, "server_name", "unknown"),
                 )
         await http_client.aclose()
         if bot.session:

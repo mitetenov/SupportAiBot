@@ -961,3 +961,80 @@ class TestBedolagaSupportToolsRouter:
         assert "collision" in data["error"]
         assert remnawave.calls == []
         assert bedolaga.calls == []
+
+
+class TestMcpRouterTraceLogging:
+    """Verify TRACE level logging in McpRouter."""
+
+    @pytest.mark.asyncio
+    async def test_trace_logging_identity_pinning_and_dispatch(self) -> None:
+        import logging
+
+        from app.logging_config import TRACE
+
+        router_logger = logging.getLogger("app.llm.mcp_router")
+        router_logger.setLevel(TRACE)
+        records: list[logging.LogRecord] = []
+
+        class TestHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = TestHandler()
+        router_logger.addHandler(handler)
+
+        try:
+            bedolaga = StubMcpClient(
+                server_name="bedolaga",
+                tools=[McpTool(name="bedolaga_user_get", description="desc")],
+                tool_results={"bedolaga_user_get": '{"ok": true}'},
+            )
+            router = create_router([bedolaga])
+
+            await router.call_tool(
+                "bedolaga_user_get",
+                {"telegram_id": 999_999, "extra": "data"},
+                telegram_user_id=CALLER,
+            )
+
+            trace_msgs = [r.getMessage() for r in records if r.levelno == TRACE]
+            assert any("stripping model identity arg" in m for m in trace_msgs)
+            assert any("pinned Bedolaga identity for bedolaga_user_get" in m for m in trace_msgs)
+            assert any(
+                "dispatching tool 'bedolaga_user_get' to client 'bedolaga'" in m for m in trace_msgs
+            )
+            assert any("result from client 'bedolaga'" in m for m in trace_msgs)
+        finally:
+            router_logger.removeHandler(handler)
+
+    @pytest.mark.asyncio
+    async def test_trace_logging_blocked_call_zero_caller_key(self) -> None:
+        import logging
+
+        from app.logging_config import TRACE
+
+        router_logger = logging.getLogger("app.llm.mcp_router")
+        router_logger.setLevel(TRACE)
+        records: list[logging.LogRecord] = []
+
+        class TestHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = TestHandler()
+        router_logger.addHandler(handler)
+
+        try:
+            bedolaga = StubMcpClient(
+                server_name="bedolaga",
+                tools=[McpTool(name="bedolaga_user_get", description="desc")],
+                tool_results={"bedolaga_user_get": '{"ok": true}'},
+            )
+            router = create_router([bedolaga])
+
+            await router.call_tool("bedolaga_user_get", {}, telegram_user_id=0)
+
+            trace_msgs = [r.getMessage() for r in records if r.levelno == TRACE]
+            assert any("caller key is 0" in m for m in trace_msgs)
+        finally:
+            router_logger.removeHandler(handler)

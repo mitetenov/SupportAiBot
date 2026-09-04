@@ -131,3 +131,75 @@ class TestRegister:
         endpoint.register(app, "/bedolaga/webhook")
         routes = [(r.method, r.resource.canonical) for r in app.router.routes()]
         assert ("POST", "/bedolaga/webhook") in routes
+
+
+class TestBedolagaWebhookTraceLogging:
+    """Verify TRACE logging for Bedolaga webhook handling."""
+
+    async def test_trace_logging_accepted_webhook(self) -> None:
+        import logging
+
+        from app.logging_config import TRACE
+
+        webhook_logger = logging.getLogger("app.bedolaga.webhook")
+        webhook_logger.setLevel(TRACE)
+        records: list[logging.LogRecord] = []
+
+        class TestHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = TestHandler()
+        webhook_logger.addHandler(handler)
+
+        try:
+            endpoint, answerer = _endpoint()
+            body = _body({"ticket_id": 42, "user_id": 55, "title": "test title"})
+            req = _request(body, "ticket.created", _signature(body))
+            req.method = "POST"
+            req.path = "/bedolaga/webhook"
+
+            response = await endpoint.handle(req)
+            assert response.status == 200
+
+            trace_msgs = [r.getMessage() for r in records if r.levelno == TRACE]
+            assert any(
+                "Bedolaga webhook incoming request: method=POST, path=/bedolaga/webhook" in m
+                for m in trace_msgs
+            )
+            assert any(
+                "ticket_id=42" in m and "accepted event 'ticket.created'" in m for m in trace_msgs
+            )
+        finally:
+            webhook_logger.removeHandler(handler)
+
+    async def test_trace_logging_rejected_signature(self) -> None:
+        import logging
+
+        from app.logging_config import TRACE
+
+        webhook_logger = logging.getLogger("app.bedolaga.webhook")
+        webhook_logger.setLevel(TRACE)
+        records: list[logging.LogRecord] = []
+
+        class TestHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = TestHandler()
+        webhook_logger.addHandler(handler)
+
+        try:
+            endpoint, answerer = _endpoint()
+            body = _body({"ticket_id": 42})
+            req = _request(body, "ticket.created", _signature(body, "wrong_secret"))
+            req.method = "POST"
+            req.path = "/bedolaga/webhook"
+
+            response = await endpoint.handle(req)
+            assert response.status == 403
+
+            trace_msgs = [r.getMessage() for r in records if r.levelno == TRACE]
+            assert any("rejected bad signature (403)" in m for m in trace_msgs)
+        finally:
+            webhook_logger.removeHandler(handler)

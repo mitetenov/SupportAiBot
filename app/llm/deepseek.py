@@ -17,6 +17,9 @@ from app.llm.base import (
     ToolCall,
     is_balance_exhaustion_message,
 )
+from app.logging_config import TRACE
+from app.logging_http import create_logging_hooks
+from app.logging_redaction import safe_serialize
 from app.retry import post_with_retry
 
 if TYPE_CHECKING:
@@ -24,6 +27,8 @@ if TYPE_CHECKING:
     from app.rag.service import FaqEmbeddingService
     from app.storage.chat_history import ChatHistoryService
     from app.storage.database import DatabaseSessionManager
+
+from app.logging_config import log_failure
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +82,26 @@ class DeepSeekClient(AbstractLlmClient):
         self.tool_definitions = self._build_tool_definitions()
         self._log_reasoning_configuration()
 
+    def get_effective_reasoning_effort(self) -> str:
+        """Return the effective reasoning effort mode sent to provider, or 'unsupported/ignored'."""
+        if not self.reasoning_supported:
+            return "unsupported/ignored"
+        if self.reasoning_effort == "none":
+            return "none"
+        return DEEPSEEK_REASONING_EFFORT_MAP.get(self.reasoning_effort, "unsupported/ignored")
+
     def _log_reasoning_configuration(self) -> None:
+        effective = self.get_effective_reasoning_effort()
+        logger.info(
+            "Selected LLM: provider=DeepSeek, model=%s, configured_effort=%s, effective_effort=%s",
+            self.model,
+            self.reasoning_effort,
+            effective,
+        )
         if not self.reasoning_supported:
             if self.reasoning_effort != "none":
-                logger.warning(
-                    "DeepSeek model %s does not support reasoning; "
-                    "REASONING_EFFORT=%s is ignored and requests are sent without reasoning",
+                logger.info(
+                    "DeepSeek model %s does not support reasoning; REASONING_EFFORT=%s is ignored and requests are sent without reasoning",
                     self.model,
                     self.reasoning_effort,
                 )
@@ -104,7 +123,9 @@ class DeepSeekClient(AbstractLlmClient):
     @property
     def http_client(self) -> httpx.AsyncClient:
         if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(60.0), event_hooks=create_logging_hooks()
+            )
             self._own_client = True
         return self._http_client
 
@@ -198,7 +219,23 @@ class DeepSeekClient(AbstractLlmClient):
             "Content-Type": "application/json",
         }
         body = self.build_request_body(conversation)
-        logger.debug("DeepSeek request (%d tools available)", len(self.tool_definitions))
+        if logger.isEnabledFor(TRACE):
+            thinking_enabled = self.reasoning_supported and self.reasoning_effort != "none"
+            native_effort = (
+                DEEPSEEK_REASONING_EFFORT_MAP.get(self.reasoning_effort, "high")
+                if thinking_enabled
+                else "none"
+            )
+            logger.log(
+                TRACE,
+                "DeepSeek API request (model=%s, configured_effort=%s, native_effort=%s): %s",
+                self.model,
+                self.reasoning_effort,
+                native_effort,
+                safe_serialize(body),
+            )
+        if logger.isEnabledFor(TRACE):
+            logger.log(TRACE, "DeepSeek request (%d tools available)", len(self.tool_definitions))
 
         response = await post_with_retry(
             self.http_client,
@@ -223,7 +260,7 @@ class DeepSeekClient(AbstractLlmClient):
         try:
             choices = payload.get("choices")
             if not choices or not isinstance(choices, list) or len(choices) == 0:
-                logger.error("Empty choices in DeepSeek response: %s", payload)
+                log_failure(logger, "DeepSeek response has no choices", details=payload)
                 raise LlmProcessingException(
                     "Empty choices",
                     "Не удалось получить ответ от модели. Попробуйте позже.",
@@ -255,17 +292,30 @@ class DeepSeekClient(AbstractLlmClient):
                     tool_calls.append(ToolCall(name=fn_name, id=tc_id, arguments=args))
 
             reasoning_content = message.get("reasoning_content")
-            return LlmResponse(
+            resp = LlmResponse(
                 text=content,
                 tool_calls=tool_calls,
                 reasoning_content=(
                     reasoning_content if isinstance(reasoning_content, str) else None
                 ),
             )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "DeepSeek API parsed response (model=%s): text=%s tool_calls=%s reasoning_content=%s",
+                    self.model,
+                    content,
+                    [
+                        {"name": tc.name, "id": tc.id, "arguments": tc.arguments}
+                        for tc in tool_calls
+                    ],
+                    resp.reasoning_content,
+                )
+            return resp
         except LlmProcessingException:
             raise
         except Exception as e:
-            logger.error("Failed to parse DeepSeek response: %s", e)
+            log_failure(logger, "DeepSeek response parsing failed", e)
             raise LlmProcessingException("Parse error", "Ошибка обработки ответа модели.") from e
 
     def add_tool_calls_to_conversation(

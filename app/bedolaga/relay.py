@@ -5,6 +5,7 @@ import logging
 from app.bedolaga.client import BedolagaClient, PostedTicketReply
 from app.bedolaga.state import TicketStateStore
 from app.bot.conversation_state import ConversationState
+from app.logging_config import log_failure
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,12 @@ class TicketOperatorRelay:
         try:
             posted = await self.client.reply(ticket_id, text)
         except Exception as e:
-            logger.error("Bedolaga ticket %d: operator text delivery failed: %s", ticket_id, e)
+            log_failure(
+                logger,
+                "Bedolaga operator text delivery failed",
+                e,
+                details={"ticket_id": ticket_id},
+            )
             return False
         return await self._record_delivery(ticket_id, user_key, posted)
 
@@ -48,7 +54,12 @@ class TicketOperatorRelay:
                 mime_type,
             )
         except Exception as e:
-            logger.error("Bedolaga ticket %d: operator photo delivery failed: %s", ticket_id, e)
+            log_failure(
+                logger,
+                "Bedolaga operator photo delivery failed",
+                e,
+                details={"ticket_id": ticket_id},
+            )
             return False
         return await self._record_delivery(ticket_id, user_key, posted)
 
@@ -66,10 +77,11 @@ class TicketOperatorRelay:
             except Exception as e:
                 # The message already landed. A state write must not turn that
                 # success into a false delivery failure and tempt a duplicate.
-                logger.warning(
-                    "Bedolaga ticket %d: operator reply landed but state recording failed: %s",
-                    ticket_id,
+                log_failure(
+                    logger,
+                    "Bedolaga operator reply state recording failed",
                     e,
+                    details={"ticket_id": ticket_id},
                 )
         self.conversation_state.record_operator_reply(user_key)
         return True

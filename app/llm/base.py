@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 import httpx
 
 from app.llm.rejection import is_rejection
+from app.logging_config import TRACE
 from app.rag.types import FaqContext
 from app.storage.models import LlmTokenUsage
 
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
     from app.rag.service import FaqEmbeddingService
     from app.storage.chat_history import ChatHistoryService
     from app.storage.database import DatabaseSessionManager
+
+from app.logging_config import log_failure
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +282,14 @@ class AbstractLlmClient(ABC, LlmClient):
             )
 
         while iteration < self.MAX_TOOL_ITERATIONS:
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "%s conversational turn iteration %d for user %s",
+                    self.get_provider_name(),
+                    iteration + 1,
+                    telegram_user_id,
+                )
             try:
                 payload = await self.call_api(conversation, faq_context.text, telegram_user_id)
                 await self.save_usage(payload, telegram_user_id)
@@ -317,7 +328,16 @@ class AbstractLlmClient(ABC, LlmClient):
             except LlmProcessingException:
                 raise
             except Exception as e:
-                logger.error("%s request failed: %s", self.get_provider_name(), e, exc_info=True)
+                log_failure(logger, "LLM request failed", e, provider=self.get_provider_name())
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "%s request failed for user %s: %s",
+                        self.get_provider_name(),
+                        telegram_user_id,
+                        e,
+                        exc_info=True,
+                    )
                 raise LlmProcessingException(
                     str(e),
                     "Произошла ошибка при обработке запроса. Попробуйте позже.",
@@ -343,6 +363,16 @@ class AbstractLlmClient(ABC, LlmClient):
             self.get_provider_name(),
             len(llm_response.tool_calls),
         )
+        if logger.isEnabledFor(TRACE):
+            logger.log(
+                TRACE,
+                "%s requested tool calls: %s",
+                self.get_provider_name(),
+                [
+                    {"name": tc.name, "id": tc.id, "arguments": tc.arguments}
+                    for tc in llm_response.tool_calls
+                ],
+            )
         self.add_tool_calls_to_conversation(conversation, llm_response)
 
         for tc in llm_response.tool_calls:
@@ -354,11 +384,23 @@ class AbstractLlmClient(ABC, LlmClient):
             )
             if tool_result is None:
                 logger.info("Executing tool: %s", tc.name)
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "Executing tool %s for user %s with arguments: %s",
+                        tc.name,
+                        telegram_user_id,
+                        tc.arguments,
+                    )
                 try:
                     tool_result = await self.mcp_router.call_tool(
                         tc.name, tc.arguments, telegram_user_id
                     )
                 except Exception as error:
+                    if logger.isEnabledFor(TRACE):
+                        logger.log(
+                            TRACE, "Tool %s execution failed with exception: %s", tc.name, error
+                        )
                     raise LlmToolExecutionException(
                         f"MCP tool {tc.name} failed with unknown outcome", cause=error
                     ) from error
@@ -366,7 +408,9 @@ class AbstractLlmClient(ABC, LlmClient):
                     completed_tool_results[tool_key] = tool_result
             else:
                 logger.info("Reusing completed tool result: %s", tc.name)
-            logger.info("Tool %s result: %s", tc.name, self._truncate(tool_result))
+
+            if logger.isEnabledFor(TRACE):
+                logger.log(TRACE, "Tool %s full result: %s", tc.name, tool_result)
             self.add_tool_result_to_conversation(conversation, tc, tool_result)
 
     @staticmethod
@@ -444,7 +488,18 @@ class AbstractLlmClient(ABC, LlmClient):
         try:
             payload = json.loads(response.text)
         except ValueError as e:
-            logger.error("%s returned a body that is not JSON: %s", self.get_provider_name(), e)
+            log_failure(
+                logger, "LLM response contains malformed JSON", e, provider=self.get_provider_name()
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "%s returned malformed JSON: %s (body=%s)",
+                    self.get_provider_name(),
+                    e,
+                    response.text,
+                    exc_info=True,
+                )
             raise LlmProcessingException(
                 f"{self.get_provider_name()} returned malformed JSON: {e}",
                 "Ошибка обработки ответа модели.",
@@ -475,7 +530,15 @@ class AbstractLlmClient(ABC, LlmClient):
                     )
                 )
         except Exception as e:
-            logger.warning("Failed to save token usage: %s", e)
+            log_failure(logger, "Token usage persistence failed", e)
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Failed to save token usage for user %s: %s",
+                    telegram_user_id,
+                    e,
+                    exc_info=True,
+                )
 
     @abstractmethod
     def extract_usage(self, payload: dict[str, Any]) -> TokenUsage | None:
@@ -533,3 +596,7 @@ class AbstractLlmClient(ABC, LlmClient):
     def get_provider_name(self) -> str:
         """Return provider display name."""
         ...
+
+    def get_effective_reasoning_effort(self) -> str:
+        """Return the provider-specific effort, or ``unknown`` for simple test clients."""
+        return "unknown"

@@ -14,6 +14,8 @@ from app.bot.typing import TypingIndicator
 from app.constants import get_message
 from app.llm.base import LlmClient, LlmProcessingException
 from app.llm.escalation import EscalationPolicy
+from app.logging_config import TRACE
+from app.logging_context import operation_context
 from app.rag.knowledge_gaps import KnowledgeGapService
 
 logger = logging.getLogger(__name__)
@@ -52,11 +54,22 @@ class UserMessagePipeline:
         chat_id = self._chat_id(batch)
         user_id = getattr(batch.user, "id", None) or chat_id
         if chat_id is None or user_id is None:
-            logger.warning("Dropping a batch with neither a chat nor a user id")
+            logger.error(
+                "Dropping a batch with neither a chat nor a user id (component=UserMessagePipeline, operation=handle)"
+            )
             return
 
-        async with self._turns.hold(user_id):
-            await self._handle_turn(batch, chat_id, int(user_id))
+        with operation_context():
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "UserMessagePipeline handling batch for user_id=%s, chat_id=%s: text=%s",
+                    user_id,
+                    chat_id,
+                    batch.text,
+                )
+            async with self._turns.hold(user_id):
+                await self._handle_turn(batch, chat_id, int(user_id))
 
     @staticmethod
     def _chat_id(batch: MessageBatch) -> int | None:
@@ -138,10 +151,33 @@ class UserMessagePipeline:
                 )
 
         except LlmProcessingException as e:
-            logger.error("LLM error processing message from user %d: %s", user_id, e)
+            logger.error(
+                "LLM error processing user message (component=UserMessagePipeline, operation=_handle_turn, error_class=%s, status_code=%s)",
+                type(e).__name__,
+                getattr(e, "status_code", None),
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "LLM error processing user message (user_id=%d): %s",
+                    user_id,
+                    e,
+                    exc_info=True,
+                )
             await self.report_failure(batch, user, e.user_friendly_message, e, chat_id)
         except Exception as e:
-            logger.error("Error processing message from user %d: %s", user_id, e, exc_info=True)
+            logger.error(
+                "Error processing user message (component=UserMessagePipeline, operation=_handle_turn, error_class=%s)",
+                type(e).__name__,
+            )
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE,
+                    "Error processing user message (user_id=%d): %s",
+                    user_id,
+                    e,
+                    exc_info=True,
+                )
             await self.report_failure(batch, user, get_message("bot.llm.error"), e, chat_id)
         finally:
             session.close()

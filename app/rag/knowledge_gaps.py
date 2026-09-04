@@ -7,6 +7,7 @@ from typing import Any, cast
 
 from sqlalchemy import CursorResult, delete, text
 
+from app.logging_config import log_failure
 from app.rag.embedding import EmbeddingProvider
 from app.rag.service import FaqContext, FaqEmbeddingService
 from app.storage.database import DatabaseSessionManager
@@ -134,7 +135,7 @@ class KnowledgeGapService:
                 bot_response=response,
             )
         except Exception as e:
-            logger.warning("Failed to evaluate knowledge gap: %s", e)
+            log_failure(logger, "Failed to evaluate knowledge gap", e)
 
     async def evaluate_operator_request(
         self,
@@ -161,7 +162,7 @@ class KnowledgeGapService:
                 bot_response=bot_response,
             )
         except Exception as e:
-            logger.warning("Failed to evaluate operator knowledge gap: %s", e)
+            log_failure(logger, "Failed to evaluate operator knowledge gap", e)
 
     def determine_trigger(
         self,
@@ -256,7 +257,7 @@ class KnowledgeGapService:
                 row = result.fetchone()
                 return int(row.id) if row else None
         except Exception as e:
-            logger.warning("Failed to search knowledge gaps by query text: %s", e)
+            log_failure(logger, "Failed to search knowledge gaps by query text", e)
             return None
 
     async def _find_similar_gap(self, vector_str: str) -> int | None:
@@ -272,7 +273,7 @@ class KnowledgeGapService:
                     return int(row.id)
                 return None
         except Exception as e:
-            logger.warning("Failed to search similar knowledge gaps: %s", e)
+            log_failure(logger, "Failed to search similar knowledge gaps", e)
             return None
 
     async def _insert_gap(
@@ -331,7 +332,7 @@ class KnowledgeGapService:
                     for row in rows
                 ]
         except Exception as e:
-            logger.warning("Failed to get top knowledge gaps: %s", e)
+            log_failure(logger, "Failed to get top knowledge gaps", e)
             return []
 
     async def clear_all(self) -> int:

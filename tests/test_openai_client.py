@@ -1,5 +1,4 @@
-"""Tests for OpenAiClient (OpenAI Responses API, tool calling, vision support)."""
-
+import io
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,6 +10,7 @@ from app.llm.base import LlmProcessingException, ToolCall
 from app.llm.mcp_client import McpTool
 from app.llm.mcp_router import McpRouter
 from app.llm.openai_client import OpenAiClient
+from app.logging_config import TRACE, setup_logging
 from app.rag.service import FaqEmbeddingService
 from app.storage.chat_history import ChatHistoryService
 from app.storage.database import DatabaseSessionManager
@@ -152,7 +152,7 @@ class TestOpenAiClient:
     ):
         settings.openai_model = "gpt-4.1"
         settings.reasoning_effort = "low"
-        with caplog.at_level("WARNING"):
+        with caplog.at_level(TRACE):
             client = OpenAiClient(
                 settings=settings,
                 mcp_router=openai_client.mcp_router,
@@ -370,3 +370,112 @@ class TestCallApiReturnsADecodedBody:
             await self._client(settings, httpx.MockTransport(handler)).call_api([], "", 1)
 
         assert attempts == 1
+
+
+class TestOpenAiTraceLogging:
+    """Verify TRACE logging records full final request body and response without leaking on INFO."""
+
+    @pytest.mark.asyncio
+    async def test_trace_logs_full_request_and_response(self, settings: Settings) -> None:
+        stream = io.StringIO()
+        setup_logging(level="TRACE", stream=stream)
+
+        mcp_router = MagicMock(spec=McpRouter)
+        mcp_router.list_tools.return_value = [
+            McpTool(
+                name="get_weather",
+                description="Weather tool",
+                input_schema={"type": "object", "properties": {"city": {"type": "string"}}},
+            )
+        ]
+        chat_history_service = MagicMock(spec=ChatHistoryService)
+        chat_history_service.get_history = AsyncMock(
+            return_value=[{"role": "user", "content": "previous turn"}]
+        )
+
+        response_body = {
+            "output": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_999",
+                    "name": "get_weather",
+                    "arguments": '{"city": "Paris"}',
+                },
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Checking weather"}],
+                },
+            ]
+        }
+        transport = httpx.MockTransport(lambda _r: httpx.Response(200, json=response_body))
+
+        client = OpenAiClient(
+            settings=settings,
+            mcp_router=mcp_router,
+            chat_history_service=chat_history_service,
+            faq_embedding_service=MagicMock(spec=FaqEmbeddingService),
+            db_manager=None,
+            http_client=httpx.AsyncClient(transport=transport),
+        )
+
+        conv = client.build_initial_conversation("What's the weather?", 12345, "FAQ information")
+        payload = await client.call_api(conv, "FAQ information", 12345)
+        parsed = client.parse_response(payload)
+
+        assert parsed.text == "Checking weather"
+        assert len(parsed.tool_calls) == 1
+        output = stream.getvalue()
+
+        # Full request logged on TRACE
+        assert "OpenAI Responses API request" in output
+        assert "What's the weather?" in output
+        assert "FAQ information" in output
+        assert "get_weather" in output
+        assert "configured_effort" in output
+
+        # Response logged on TRACE
+        assert "OpenAI Responses API parsed response" in output
+        assert "Checking weather" in output
+        assert "call_999" in output
+
+    @pytest.mark.asyncio
+    async def test_info_level_does_not_log_request_or_response_body(
+        self, settings: Settings
+    ) -> None:
+        stream = io.StringIO()
+        setup_logging(level="INFO", stream=stream)
+
+        secret_text = "SECRET_USER_PROMPT_NEVER_IN_INFO_999"
+        secret_reply = "SECRET_MODEL_REPLY_NEVER_IN_INFO_888"
+
+        response_body = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": secret_reply}],
+                },
+            ]
+        }
+        transport = httpx.MockTransport(lambda _r: httpx.Response(200, json=response_body))
+
+        mcp_router = MagicMock(spec=McpRouter)
+        mcp_router.list_tools.return_value = []
+        chat_history_service = MagicMock(spec=ChatHistoryService)
+        chat_history_service.get_history = AsyncMock(return_value=[])
+
+        client = OpenAiClient(
+            settings=settings,
+            mcp_router=mcp_router,
+            chat_history_service=chat_history_service,
+            faq_embedding_service=MagicMock(spec=FaqEmbeddingService),
+            db_manager=None,
+            http_client=httpx.AsyncClient(transport=transport),
+        )
+
+        conv = client.build_initial_conversation(secret_text, 12345)
+        payload = await client.call_api(conv, "", 12345)
+        client.parse_response(payload)
+
+        output = stream.getvalue()
+        assert secret_text not in output
+        assert secret_reply not in output
