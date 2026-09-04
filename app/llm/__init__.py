@@ -28,6 +28,7 @@ from app.llm.openai_client import OpenAiClient
 from app.llm.openrouter import OpenRouterClient, OpenRouterResponse
 from app.llm.prompt import SupportPrompt
 from app.llm.rejection import RejectionDetector, is_rejection
+from app.llm.zai import ZaiClient
 
 if TYPE_CHECKING:
     from app.rag.service import FaqEmbeddingService
@@ -116,6 +117,15 @@ def _create_provider_client(
             db_manager=db_manager,
             http_client=http_client,
         )
+    if provider == "zai":
+        return ZaiClient(
+            settings=settings,
+            mcp_router=mcp_router,
+            chat_history_service=chat_history_service,
+            faq_embedding_service=faq_service,
+            db_manager=db_manager,
+            http_client=http_client,
+        )
     raise ValueError(f"Unknown LLM provider: {settings.llm_provider}")
 
 
@@ -141,6 +151,7 @@ __all__ = [
     "RejectionDetector",
     "SupportPrompt",
     "ToolCall",
+    "ZaiClient",
     "create_llm_client",
     "is_rejection",
     "sanitize_schema_params",

@@ -198,7 +198,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
-| `LLM_PROVIDER` | `openai` | `openai`, `gemini`, `deepseek`, `groq` или `openrouter` |
+| `LLM_PROVIDER` | `openai` | `openai`, `gemini`, `deepseek`, `groq`, `openrouter` или `zai` |
 | `LLM_FALLBACK_CHAIN` | — | Необязательные резервные цели в порядке `provider:model` через запятую |
 | `REASONING_EFFORT` | `none` | Профиль reasoning: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `auto` не поддерживается |
 | `OPENAI_API_KEY` | — | Нужен при `LLM_PROVIDER=openai`, `EMBEDDING_PROVIDER=openai` или резервной цели `openai:...` |
@@ -214,6 +214,10 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `OPENROUTER_MODEL` | — | Основная модель OpenRouter (например `z-ai/glm-4.7`); резервная цель задаёт модель в `LLM_FALLBACK_CHAIN` |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-совместимый endpoint OpenRouter |
 | `OPENROUTER_TIMEOUT_SECONDS` | `120.0` | Таймаут HTTP-запросов к OpenRouter в секундах |
+| `ZAI_API_KEY` | — | Нужен при `LLM_PROVIDER=zai` или резервной цели `zai:...` |
+| `ZAI_MODEL` | — | Основная модель Z.AI (например `glm-4.7`); резервная цель задаёт модель в `LLM_FALLBACK_CHAIN` |
+| `ZAI_BASE_URL` | `https://api.z.ai/api/paas/v4` | OpenAI-совместимый endpoint Z.AI (General API) |
+| `ZAI_TIMEOUT_SECONDS` | `120.0` | Таймаут HTTP-запросов к Z.AI в секундах |
 | `EMBEDDING_PROVIDER` | `gemini` | Провайдер поиска по базе знаний: `gemini` или `openai` |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Модель поиска при `EMBEDDING_PROVIDER=openai` |
 
@@ -223,16 +227,25 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 переменной `*_MODEL`. `LLM_FALLBACK_CHAIN` добавляет только резервные цели в
 указанном порядке; каждая имеет формат `provider:model`. Модель в цели цепочки
 переопределяет `*_MODEL` только для этой попытки. Допустимые провайдеры:
-`openai`, `gemini`, `deepseek`, `groq`, `openrouter`.
+`openai`, `gemini`, `deepseek`, `groq`, `openrouter`, `zai`.
 
-Если `openrouter` используется только в `LLM_FALLBACK_CHAIN`, переменная
-`OPENROUTER_MODEL` не требуется — модель берётся из элемента цепочки
-(например, `openrouter:z-ai/glm-4.7`).
+Идентификатор провайдера Z.AI — строго `zai` (`z.ai` является названием компании,
+а не идентификатором цели). Z.AI использует нативный формат имён моделей
+(например, `glm-4.7`, `glm-5.3`), в отличие от OpenRouter, где требуется namespace
+вендора (например, `z-ai/glm-4.7`).
+
+Базовый endpoint `ZAI_BASE_URL` по умолчанию настроен на General API
+(`https://api.z.ai/api/paas/v4`). Обратите внимание: API-ключи тарифа Coding Plan
+могут быть несовместимы с General API.
+
+Если `openrouter` или `zai` используется только в `LLM_FALLBACK_CHAIN`, переменные
+`OPENROUTER_MODEL` / `ZAI_MODEL` не требуются — модель берётся из элемента цепочки
+(например, `openrouter:z-ai/glm-4.7` или `zai:glm-4.7`).
 
 > [!NOTE]
-> Адаптер OpenRouter в текущей версии поддерживает текст и вызовы инструментов (MCP),
-> но не поддерживает изображения (`supports_images() == False`). При наличии изображения
-> цепочка fallback пропускает OpenRouter и направляет запрос провайдеру с поддержкой
+> Адаптеры OpenRouter и Z.AI в текущей версии поддерживают текст и вызовы инструментов (MCP),
+> но не поддерживают изображения (`supports_images() == False`). При наличии изображения
+> цепочка fallback пропускает их и направляет запрос провайдеру с поддержкой
 > изображений (OpenAI или Gemini).
 
 Минимальная конфигурация с основной и резервной моделью:
@@ -251,6 +264,14 @@ LLM_FALLBACK_CHAIN=groq:llama-3.3-70b-versatile
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=openrouter_example_key_not_a_real_secret
 OPENROUTER_MODEL=z-ai/glm-4.7
+```
+
+Пример использования Z.AI с моделью `glm-4.7`:
+
+```env
+LLM_PROVIDER=zai
+ZAI_API_KEY=zai_example_key_not_a_real_secret
+ZAI_MODEL=glm-4.7
 ```
 
 Для нескольких резервных целей порядок сохраняется слева направо:

@@ -120,6 +120,15 @@ def test_create_llm_client(mock_settings: Settings) -> None:
     )
     assert client_openrouter.get_provider_name() == "OpenRouter"
 
+    # Z.AI
+    mock_settings.llm_provider = "zai"
+    mock_settings.zai_api_key = "test-zai-key"  # type: ignore[assignment]
+    mock_settings.zai_model = "glm-4.7"
+    client_zai = create_llm_client(
+        mock_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert client_zai.get_provider_name() == "Z.AI"
+
     # Invalid provider
     mock_settings.llm_provider = "unsupported"
     with pytest.raises(ValueError, match="Unknown LLM provider"):
@@ -172,6 +181,52 @@ def test_create_llm_client_openrouter_factory(mock_settings: Settings) -> None:
     assert c1._http_client is http_client
     assert c2._http_client is http_client
     assert fallback_settings.openrouter_model == "z-ai/glm-4.7"
+
+
+def test_create_llm_client_zai_factory(mock_settings: Settings) -> None:
+    from app.config import LlmProviderTarget
+    from app.llm.fallback import LlmFallbackClient
+    from app.llm.zai import ZaiClient
+
+    mcp_router = MagicMock()
+    chat_history = MagicMock()
+    faq_service = MagicMock()
+    db_manager = MagicMock()
+    http_client = MagicMock()
+
+    mock_settings.llm_provider = "zai"
+    mock_settings.zai_api_key = "test-zai-key"  # type: ignore[assignment]
+    mock_settings.zai_model = "glm-4.7"
+
+    primary_client = create_llm_client(
+        mock_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert isinstance(primary_client, ZaiClient)
+    assert not isinstance(primary_client, LlmFallbackClient)
+    assert primary_client.model == "glm-4.7"
+    assert primary_client.get_provider_name() == "Z.AI"
+
+    fallback_settings = mock_settings.model_copy(
+        update={
+            "llm_provider": "zai",
+            "zai_model": "glm-4.7",
+            "llm_fallback_chain": (LlmProviderTarget(provider="zai", model="glm-5.3"),),
+            "reasoning_effort": "low",
+        }
+    )
+    fallback_coord = create_llm_client(
+        fallback_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert isinstance(fallback_coord, LlmFallbackClient)
+    assert len(fallback_coord._clients) == 2
+    c1, c2 = fallback_coord._clients
+    assert isinstance(c1, ZaiClient)
+    assert isinstance(c2, ZaiClient)
+    assert c1.model == "glm-4.7"
+    assert c2.model == "glm-5.3"
+    assert c1._http_client is http_client
+    assert c2._http_client is http_client
+    assert fallback_settings.zai_model == "glm-4.7"
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logger = logging.getLogger(__name__)
 
 VALID_LOG_LEVELS: tuple[str, ...] = ("TRACE", "INFO", "ERROR")
-VALID_LLM_PROVIDERS: list[str] = ["deepseek", "gemini", "openai", "groq", "openrouter"]
+VALID_LLM_PROVIDERS: list[str] = ["deepseek", "gemini", "openai", "groq", "openrouter", "zai"]
 VALID_EMBEDDING_PROVIDERS: list[str] = ["gemini", "openai"]
 VALID_REASONING_EFFORTS: list[str] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
@@ -168,6 +168,12 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_model: str | None = None
     openrouter_timeout_seconds: float = 120.0
+
+    # Z.AI
+    zai_api_key: SecretStr | None = None
+    zai_base_url: str = "https://api.z.ai/api/paas/v4"
+    zai_model: str | None = None
+    zai_timeout_seconds: float = 120.0
 
     # Remnawave MCP
     remnawave_mcp_url: str = "http://localhost:3100"
@@ -361,6 +367,42 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "OPENROUTER_TIMEOUT_SECONDS должен быть строго положительным числом"
                 )
+        elif provider == "zai":
+            _require_text(
+                self.zai_api_key,
+                "ZAI_API_KEY не задан. Получите ключ на https://z.ai "
+                "и добавьте в .env: ZAI_API_KEY=...",
+            )
+            _require_text(
+                configured_model,
+                "ZAI_MODEL не задан. Укажите модель, например: ZAI_MODEL=glm-4.7",
+            )
+            if not self.zai_base_url or not self.zai_base_url.strip():
+                raise ValueError(
+                    "ZAI_BASE_URL не задан. Укажите URL, например: "
+                    "ZAI_BASE_URL=https://api.z.ai/api/paas/v4"
+                )
+            parsed = urlsplit(self.zai_base_url.strip())
+            if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+                raise ValueError("ZAI_BASE_URL должен содержать валидный http/https URL с хостом")
+            if parsed.username or parsed.password or ("@" in parsed.netloc):
+                raise ValueError("ZAI_BASE_URL не должен содержать учетные данные (userinfo)")
+            if parsed.query:
+                raise ValueError("ZAI_BASE_URL не должен содержать query-параметры")
+            if parsed.fragment:
+                raise ValueError("ZAI_BASE_URL не должен содержать fragment")
+            if parsed.path.rstrip("/").endswith("/chat/completions"):
+                raise ValueError("ZAI_BASE_URL не должен содержать /chat/completions")
+
+            timeout = self.zai_timeout_seconds
+            if (
+                timeout is None
+                or not isinstance(timeout, (int, float))
+                or math.isnan(timeout)
+                or math.isinf(timeout)
+                or timeout <= 0
+            ):
+                raise ValueError("ZAI_TIMEOUT_SECONDS должен быть строго положительным числом")
 
     @property
     def llm_provider_targets(self) -> tuple[LlmProviderTarget, ...]:

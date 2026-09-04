@@ -21,6 +21,7 @@ _SETTINGS_ENV_PREFIXES = (
     "OPENAI_",
     "GROQ_",
     "OPENROUTER_",
+    "ZAI_",
     "REMNAWAVE_",
     "PGVECTOR_",
     "CHAT_HISTORY_",
