@@ -21,6 +21,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+BALANCE_EXHAUSTION_MARKERS: tuple[str, ...] = (
+    "insufficient balance",
+    "insufficient credit",
+    "insufficient quota",
+    "quota exceeded",
+    "credit balance",
+)
+
+
+def is_balance_exhaustion_message(message: str) -> bool:
+    """Recognize provider balance failures without retaining the response body."""
+    normalized = message.lower()
+    return any(marker in normalized for marker in BALANCE_EXHAUSTION_MARKERS)
+
 
 @dataclass(frozen=True)
 class LlmReply:
@@ -59,8 +73,17 @@ class LlmResponse:
     reasoning_content: str | None = None
 
     def has_tool_calls(self) -> bool:
-        """Return True if response contains at least one tool call."""
+        """Return True if response contains tool call."""
         return bool(self.tool_calls)
+
+
+@dataclass
+class LlmTurnState:
+    """Provider-neutral state prepared once and shared by fallback attempts."""
+
+    faq_context: FaqContext
+    completed_tool_results: dict[str, str] = field(default_factory=dict)
+    replay_completed_tool_results: bool = False
 
 
 class LlmProcessingException(Exception):
@@ -71,10 +94,14 @@ class LlmProcessingException(Exception):
         message: str,
         user_friendly_message: str = "Произошла ошибка при обработке запроса. Попробуйте позже.",
         cause: Exception | None = None,
+        status_code: int | None = None,
+        fallback_eligible: bool = False,
     ) -> None:
         super().__init__(message)
         self.user_friendly_message = user_friendly_message
         self.cause = cause
+        self.status_code = status_code
+        self.fallback_eligible = fallback_eligible
 
 
 @runtime_checkable
@@ -180,7 +207,6 @@ class AbstractLlmClient(ABC, LlmClient):
         mime_type: str | None,
         history_message: str,
     ) -> LlmReply:
-        self.chat_history_service.clear_rejected_faqs_if_new_topic(telegram_user_id, user_message)
         reply = await self.do_chat(user_message, telegram_user_id, base64_image, mime_type)
 
         await self.chat_history_service.add_user_message(telegram_user_id, history_message)
@@ -190,15 +216,9 @@ class AbstractLlmClient(ABC, LlmClient):
         )
         return reply
 
-    async def do_chat(
-        self,
-        user_message: str,
-        telegram_user_id: int,
-        base64_image: str | None = None,
-        mime_type: str | None = None,
-    ) -> LlmReply:
-        """Template method running up to MAX_TOOL_ITERATIONS turns of tool calling."""
-        iteration = 0
+    async def prepare_turn(self, user_message: str, telegram_user_id: int) -> LlmTurnState:
+        """Build retrieval state once before one or more provider attempts."""
+        self.chat_history_service.clear_rejected_faqs_if_new_topic(telegram_user_id, user_message)
 
         if is_rejection(user_message):
             search_query = self.chat_history_service.get_last_user_message(telegram_user_id)
@@ -212,6 +232,22 @@ class AbstractLlmClient(ABC, LlmClient):
         faq_context = await self.faq_embedding_service.build_faq_context(
             search_query or "", rejected_faqs
         )
+        return LlmTurnState(faq_context=faq_context)
+
+    async def do_chat(
+        self,
+        user_message: str,
+        telegram_user_id: int,
+        base64_image: str | None = None,
+        mime_type: str | None = None,
+        turn_state: LlmTurnState | None = None,
+    ) -> LlmReply:
+        """Template method running up to MAX_TOOL_ITERATIONS turns of tool calling."""
+        iteration = 0
+
+        if turn_state is None:
+            turn_state = await self.prepare_turn(user_message, telegram_user_id)
+        faq_context = turn_state.faq_context
 
         history = await self._get_conversation_history(telegram_user_id)
         conversation = self.build_initial_conversation(
@@ -230,7 +266,13 @@ class AbstractLlmClient(ABC, LlmClient):
                 llm_response = self.parse_response(payload)
 
                 if llm_response.has_tool_calls():
-                    await self.run_tool_calls(conversation, llm_response, telegram_user_id)
+                    await self.run_tool_calls(
+                        conversation,
+                        llm_response,
+                        telegram_user_id,
+                        turn_state.completed_tool_results,
+                        turn_state.replay_completed_tool_results,
+                    )
                     iteration += 1
                     continue
 
@@ -273,6 +315,8 @@ class AbstractLlmClient(ABC, LlmClient):
         conversation: list[dict[str, Any]],
         llm_response: LlmResponse,
         telegram_user_id: int,
+        completed_tool_results: dict[str, str] | None = None,
+        reuse_completed_tool_results: bool = False,
     ) -> None:
         """Execute tools requested by the model and append outputs to conversation."""
         logger.info(
@@ -283,10 +327,28 @@ class AbstractLlmClient(ABC, LlmClient):
         self.add_tool_calls_to_conversation(conversation, llm_response)
 
         for tc in llm_response.tool_calls:
-            logger.info("Executing tool: %s with args: %s", tc.name, tc.arguments)
-            tool_result = await self.mcp_router.call_tool(tc.name, tc.arguments, telegram_user_id)
+            tool_key = self._tool_call_key(tc)
+            tool_result = (
+                completed_tool_results.get(tool_key)
+                if completed_tool_results and reuse_completed_tool_results
+                else None
+            )
+            if tool_result is None:
+                logger.info("Executing tool: %s", tc.name)
+                tool_result = await self.mcp_router.call_tool(
+                    tc.name, tc.arguments, telegram_user_id
+                )
+                if completed_tool_results is not None:
+                    completed_tool_results[tool_key] = tool_result
+            else:
+                logger.info("Reusing completed tool result: %s", tc.name)
             logger.info("Tool %s result: %s", tc.name, self._truncate(tool_result))
             self.add_tool_result_to_conversation(conversation, tc, tool_result)
+
+    @staticmethod
+    def _tool_call_key(tool_call: ToolCall) -> str:
+        """Return a stable idempotency key independent of provider call identifiers."""
+        return f"{tool_call.name}:{json.dumps(tool_call.arguments, sort_keys=True, separators=(',', ':'))}"
 
     def _is_bare_promise(self, text: str) -> bool:
         """True when the model announced it would check something and did nothing.

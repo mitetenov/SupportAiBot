@@ -1,6 +1,7 @@
 """Configuration management and startup validation using Pydantic Settings."""
 
 import logging
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
@@ -12,6 +13,42 @@ logger = logging.getLogger(__name__)
 VALID_LLM_PROVIDERS: list[str] = ["deepseek", "gemini", "openai", "groq"]
 VALID_EMBEDDING_PROVIDERS: list[str] = ["gemini", "openai"]
 VALID_REASONING_EFFORTS: list[str] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+
+@dataclass(frozen=True)
+class LlmProviderTarget:
+    """One explicitly ordered backup model configured for a chat turn."""
+
+    provider: str
+    model: str
+
+
+def _parse_fallback_chain(value: Any) -> tuple[LlmProviderTarget, ...]:
+    """Parse the comma-separated ``provider:model`` fallback configuration."""
+    if value is None or value == "":
+        return ()
+    if isinstance(value, tuple) and all(isinstance(target, LlmProviderTarget) for target in value):
+        return value
+    if not isinstance(value, str):
+        raise ValueError("LLM_FALLBACK_CHAIN должен быть строкой provider:model через запятую")
+
+    targets: list[LlmProviderTarget] = []
+    for raw_target in value.split(","):
+        target = raw_target.strip()
+        if not target:
+            raise ValueError("LLM_FALLBACK_CHAIN не должен содержать пустые элементы")
+        provider, separator, model = target.partition(":")
+        provider = provider.strip().lower()
+        model = model.strip()
+        if not separator or not provider or not model:
+            raise ValueError("Каждый элемент LLM_FALLBACK_CHAIN должен иметь формат provider:model")
+        if provider not in VALID_LLM_PROVIDERS:
+            raise ValueError(
+                f"Неизвестный провайдер в LLM_FALLBACK_CHAIN: '{provider}'. "
+                f"Допустимые значения: {', '.join(VALID_LLM_PROVIDERS)}"
+            )
+        targets.append(LlmProviderTarget(provider=provider, model=model))
+    return tuple(targets)
 
 
 def reveal(value: SecretStr | str | None) -> str:
@@ -59,6 +96,7 @@ class Settings(BaseSettings):
 
     # Providers
     llm_provider: str = "openai"
+    llm_fallback_chain: tuple[LlmProviderTarget, ...] = ()
     embedding_provider: str = "gemini"
     reasoning_effort: str = "none"
 
@@ -169,6 +207,72 @@ class Settings(BaseSettings):
             )
         return normalized
 
+    @field_validator("llm_fallback_chain", mode="before")
+    @classmethod
+    def parse_llm_fallback_chain(cls, value: Any) -> tuple[LlmProviderTarget, ...]:
+        """Normalize LLM_FALLBACK_CHAIN while preserving its configured order."""
+        return _parse_fallback_chain(value)
+
+    def _configured_model(self, provider: str) -> str | None:
+        return getattr(self, f"{provider}_model", None)
+
+    def _validate_llm_target(self, provider: str, model: str | None = None) -> None:
+        """Validate credentials and a model for one primary or fallback target."""
+        configured_model = model or self._configured_model(provider)
+        if provider == "deepseek":
+            _require_text(
+                self.deepseek_api_key,
+                "DEEPSEEK_API_KEY не задан. Получите ключ на https://platform.deepseek.com/api_keys "
+                "и добавьте в .env: DEEPSEEK_API_KEY=sk-...",
+            )
+            _require_text(
+                configured_model,
+                "DEEPSEEK_MODEL не задан. Укажите модель, например: DEEPSEEK_MODEL=deepseek-v4-flash",
+            )
+        elif provider == "gemini":
+            _require_text(
+                self.gemini_api_key,
+                "GEMINI_API_KEY не задан. Получите ключ в Google AI Studio: "
+                "https://aistudio.google.com/apikey и добавьте в .env: GEMINI_API_KEY=...",
+            )
+            _require_text(
+                configured_model,
+                "GEMINI_MODEL не задан. Укажите модель, например: GEMINI_MODEL=gemini-3.5-flash-lite",
+            )
+        elif provider == "openai":
+            _require_text(
+                self.openai_api_key,
+                "OPENAI_API_KEY не задан. Получите ключ на https://platform.openai.com/api-keys "
+                "и добавьте в .env: OPENAI_API_KEY=sk-...",
+            )
+            if not reveal(self.openai_api_key).strip().startswith("sk-"):
+                raise ValueError(
+                    "OPENAI_API_KEY должен начинаться с 'sk-'. Проверьте, что в .env указан ключ OpenAI."
+                )
+            _require_text(
+                configured_model,
+                "OPENAI_MODEL не задан. Укажите модель, например: OPENAI_MODEL=gpt-5.6-luna",
+            )
+        elif provider == "groq":
+            _require_text(
+                self.groq_api_key,
+                "GROQ_API_KEY не задан. Получите ключ на https://console.groq.com/keys "
+                "и добавьте в .env: GROQ_API_KEY=gsk_...",
+            )
+            _require_text(
+                configured_model,
+                "GROQ_MODEL не задан. Укажите модель, например: GROQ_MODEL=llama-3.3-70b-versatile",
+            )
+
+    @property
+    def llm_provider_targets(self) -> tuple[LlmProviderTarget, ...]:
+        """Return the primary target followed by configured fallbacks in order."""
+        primary_model = self._configured_model(self.llm_provider)
+        return (
+            LlmProviderTarget(provider=self.llm_provider, model=primary_model or ""),
+            *self.llm_fallback_chain,
+        )
+
     @model_validator(mode="after")
     def validate_startup(self) -> Settings:
         """Replicate the validation rules from StartupValidator.java."""
@@ -216,55 +320,9 @@ class Settings(BaseSettings):
             )
         self.llm_provider = normalized_llm
 
-        if normalized_llm == "deepseek":
-            _require_text(
-                self.deepseek_api_key,
-                "DEEPSEEK_API_KEY не задан. Получите ключ на https://platform.deepseek.com/api_keys "
-                "и добавьте в .env: DEEPSEEK_API_KEY=sk-...",
-            )
-            _require_text(
-                self.deepseek_model,
-                "DEEPSEEK_MODEL не задан. Укажите модель, например: DEEPSEEK_MODEL=deepseek-v4-flash",
-            )
-        elif normalized_llm == "gemini":
-            _require_text(
-                self.gemini_api_key,
-                "GEMINI_API_KEY не задан. Получите ключ в Google AI Studio: "
-                "https://aistudio.google.com/apikey и добавьте в .env: GEMINI_API_KEY=...",
-            )
-            _require_text(
-                self.gemini_model,
-                "GEMINI_MODEL не задан. Укажите модель, например: GEMINI_MODEL=gemini-3.5-flash-lite",
-            )
-        elif normalized_llm == "openai":
-            _require_text(
-                self.openai_api_key,
-                "OPENAI_API_KEY не задан. Получите ключ на https://platform.openai.com/api-keys "
-                "и добавьте в .env: OPENAI_API_KEY=sk-...",
-            )
-            key = reveal(self.openai_api_key).strip()
-            if not key.startswith("sk-"):
-                prefix = key[:5]
-                raise ValueError(
-                    f"OPENAI_API_KEY должен начинаться с 'sk-'. "
-                    f"Проверьте, что вы не перепутали его с Telegram-токеном или ключом другого провайдера. "
-                    f"Текущее значение начинается с: '{prefix}...'"
-                )
-            _require_text(
-                self.openai_model,
-                "OPENAI_MODEL не задан. Укажите модель, например: OPENAI_MODEL=gpt-5.6-luna",
-            )
-
-        elif normalized_llm == "groq":
-            _require_text(
-                self.groq_api_key,
-                "GROQ_API_KEY не задан. Получите ключ на https://console.groq.com/keys "
-                "и добавьте в .env: GROQ_API_KEY=gsk_...",
-            )
-            _require_text(
-                self.groq_model,
-                "GROQ_MODEL не задан. Укажите модель, например: GROQ_MODEL=llama-3.3-70b-versatile",
-            )
+        self._validate_llm_target(normalized_llm)
+        for fallback_target in self.llm_fallback_chain:
+            self._validate_llm_target(fallback_target.provider, fallback_target.model)
 
         # 3. Validate Embedding Provider
         if not self.embedding_provider or not self.embedding_provider.strip():

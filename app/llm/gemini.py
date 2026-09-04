@@ -14,6 +14,7 @@ from app.llm.base import (
     LlmResponse,
     TokenUsage,
     ToolCall,
+    is_balance_exhaustion_message,
 )
 from app.retry import post_with_retry
 
@@ -358,10 +359,12 @@ class GeminiClient(AbstractLlmClient):
             description="Gemini API",
         )
         if response.status_code >= 400:
-            logger.error("Gemini API error (%d): %s", response.status_code, response.text)
+            logger.error("Gemini API error (model=%s, status=%d)", self.model, response.status_code)
             raise LlmProcessingException(
-                f"Gemini API error: {response.status_code} - {response.text}",
+                f"Gemini API error (model={self.model}, status={response.status_code})",
                 "Произошла ошибка при обработке запроса. Попробуйте позже.",
+                status_code=response.status_code,
+                fallback_eligible=is_balance_exhaustion_message(response.text),
             )
         return self.decode_json(response)
 
