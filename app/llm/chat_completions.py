@@ -270,6 +270,34 @@ class ChatCompletionsClient(AbstractLlmClient):
                 "Не удалось получить ответ от модели. Попробуйте позже.",
             )
 
+        # A provider must explicitly report a successful terminal state when it
+        # supplies finish_reason.  Older compatible responses omit the field,
+        # so omission remains accepted for backwards compatibility with the
+        # existing adapters and fixtures.
+        if "finish_reason" in first_choice:
+            finish_reason = first_choice["finish_reason"]
+            message = first_choice.get("message")
+            finish_tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+            if finish_reason == "network_error":
+                raise LlmProcessingException(
+                    f"{self.get_provider_name()} provider network error",
+                    "Произошла ошибка при обработке запроса. Попробуйте позже.",
+                    fallback_eligible=False,
+                )
+            if finish_reason == "stop" and not finish_tool_calls:
+                pass
+            elif (
+                finish_reason == "tool_calls"
+                and isinstance(finish_tool_calls, list)
+                and finish_tool_calls
+            ):
+                pass
+            else:
+                raise LlmProcessingException(
+                    f"{self.get_provider_name()} invalid finish_reason",
+                    "Не удалось получить завершённый ответ от модели. Попробуйте позже.",
+                )
+
         message = first_choice.get("message")
         if not message or not isinstance(message, dict):
             raise LlmProcessingException(

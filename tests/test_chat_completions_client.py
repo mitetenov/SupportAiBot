@@ -1016,6 +1016,22 @@ class TestChatCompletionsTokenUsage:
         assert reply.text == "Всё работает отлично!"
 
 
+@pytest.mark.parametrize("finish_reason", [None, "length", "content_filter", "error", "unknown"])
+def test_explicit_non_success_finish_reason_is_rejected(
+    dummy_client: DummyChatCompletionsClient, finish_reason: str | None
+) -> None:
+    payload = {
+        "choices": [
+            {
+                "finish_reason": finish_reason,
+                "message": {"content": "partial", "tool_calls": []},
+            }
+        ]
+    }
+    with pytest.raises(LlmProcessingException):
+        dummy_client.parse_response(payload)
+
+
 class TestChatCompletionsLoggingSafety:
     """Test that INFO and ERROR logging do not leak request bodies, API keys, or raw payloads."""
 

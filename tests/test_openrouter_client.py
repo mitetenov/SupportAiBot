@@ -479,6 +479,55 @@ class TestOpenRouterParsingAndValidation:
 class TestOpenRouterErrorHandling:
     """Test HTTP 200 body-errors, status normalization, and fallback eligibility."""
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("code", "expected_status", "expected_fallback"),
+        [(404, 404, False), ("422", 422, False), (502, 502, True)],
+    )
+    async def test_choice_error_envelope_cancels_partial_response(
+        self,
+        make_openrouter_settings,
+        mock_mcp_router,
+        mock_history_service,
+        mock_faq_service,
+        code: int | str,
+        expected_status: int,
+        expected_fallback: bool,
+    ) -> None:
+        settings = make_openrouter_settings()
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "error",
+                            "error": {"code": code, "message": "private provider detail"},
+                            "message": {
+                                "content": "partial answer",
+                                "tool_calls": [],
+                            },
+                        }
+                    ]
+                },
+            )
+
+        client = OpenRouterClient(
+            settings=settings,
+            mcp_router=mock_mcp_router,
+            chat_history_service=mock_history_service,
+            faq_embedding_service=mock_faq_service,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+
+        with pytest.raises(LlmProcessingException) as exc_info:
+            await client.call_api([{"role": "user", "content": "hi"}], "faq", 123)
+        exc = exc_info.value
+        assert exc.status_code == expected_status
+        assert is_fallback_eligible(exc) is expected_fallback
+        assert "private provider detail" not in str(exc)
+
     @pytest.mark.parametrize(
         ("body_code", "expected_status", "expected_fallback"),
         [

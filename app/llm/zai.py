@@ -114,7 +114,18 @@ class ZaiClient(ChatCompletionsClient):
 
     def parse_response(self, payload: dict[str, Any]) -> LlmResponse:
         """Parse chat completions response into LlmResponse with reasoning_content."""
+        choices = payload.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            if choices[0].get("finish_reason") == "network_error":
+                raise self._network_finish_error()
         return super().parse_response(payload)
+
+    def _network_finish_error(self) -> LlmProcessingException:
+        return LlmProcessingException(
+            f"{self.get_provider_name()} provider network error",
+            "Произошла ошибка при обработке запроса. Попробуйте позже.",
+            fallback_eligible=True,
+        )
 
     def add_tool_calls_to_conversation(
         self,

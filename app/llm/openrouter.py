@@ -164,8 +164,20 @@ class OpenRouterClient(ChatCompletionsClient):
     ) -> None:
         """Inspect HTTP response and OpenRouter error payload for errors."""
         raw_msg = ""
-        if payload and isinstance(payload.get("error"), (dict, str)):
-            err = payload["error"]
+        error_node: Any = None
+        has_error = False
+        if payload and "error" in payload and payload["error"] is not None:
+            has_error = True
+            error_node = payload["error"]
+        elif payload and "error" in payload:
+            has_error = True
+        elif payload:
+            choices = payload.get("choices")
+            if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+                has_error = "error" in choices[0]
+                error_node = choices[0].get("error")
+        if isinstance(error_node, (dict, str)):
+            err = error_node
             raw_msg = str(err.get("message") if isinstance(err, dict) else err)
         elif response.text:
             raw_msg = response.text
@@ -182,8 +194,18 @@ class OpenRouterClient(ChatCompletionsClient):
                 fallback_eligible=fallback_eligible,
             )
 
-        if payload is not None and "error" in payload and payload["error"] is not None:
-            err = payload["error"]
+        if has_error:
+            if error_node is None:
+                raise LlmProcessingException(
+                    f"{self.get_provider_name()} invalid error envelope",
+                    "Ошибка обработки ответа модели.",
+                )
+            err = error_node
+            if not isinstance(err, dict):
+                raise LlmProcessingException(
+                    f"{self.get_provider_name()} invalid error envelope",
+                    "Ошибка обработки ответа модели.",
+                )
             raw_code = err.get("code") if isinstance(err, dict) else None
 
             normalized_code: int | None = None
