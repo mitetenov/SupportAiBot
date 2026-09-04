@@ -123,26 +123,8 @@ class OpenRouterClient(ChatCompletionsClient):
         """Parse chat completions response into OpenRouterResponse with reasoning."""
         base_response = super().parse_response(payload)
 
-        choices = payload.get("choices")
-        if not choices or not isinstance(choices, list) or len(choices) == 0:
-            return OpenRouterResponse(
-                text=base_response.text,
-                tool_calls=base_response.tool_calls,
-                raw_parts=base_response.raw_parts,
-                reasoning_content=base_response.reasoning_content,
-                reasoning_details=[],
-            )
-
-        first_choice = choices[0]
-        message = first_choice.get("message") if isinstance(first_choice, dict) else None
-        if not isinstance(message, dict):
-            return OpenRouterResponse(
-                text=base_response.text,
-                tool_calls=base_response.tool_calls,
-                raw_parts=base_response.raw_parts,
-                reasoning_content=base_response.reasoning_content,
-                reasoning_details=[],
-            )
+        # super().parse_response strictly validates choices and choices[0].message
+        message: dict[str, Any] = payload["choices"][0]["message"]
 
         reasoning_str = message.get("reasoning")
         if not isinstance(reasoning_str, str):
