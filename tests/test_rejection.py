@@ -32,6 +32,8 @@ class TestRejectionDetector:
         assert is_rejection("") is False
         assert is_rejection("   ") is False
         assert is_rejection("подскажите настройки для роутера") is False
+        assert is_rejection("Как подключить другое устройство?") is False
+        assert is_rejection("Не только на телефоне") is False
 
     def test_rejection_detector_class_methods(self) -> None:
         assert RejectionDetector.is_rejection("это не то") is True

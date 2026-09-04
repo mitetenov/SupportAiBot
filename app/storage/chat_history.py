@@ -11,6 +11,7 @@ from sqlalchemy import delete, select
 
 from app.llm.rejection import is_rejection
 from app.logging_config import TRACE
+from app.rag.types import FaqContext
 from app.storage.database import DatabaseSessionManager
 from app.storage.models import ChatMessage
 
@@ -34,6 +35,11 @@ class ChatHistoryService:
         self._last_activity: dict[int, float] = {}
         self._loaded_from_db: set[int] = set()
         self._rejected_faq_questions: dict[int, set[str]] = {}
+        # Retrieval candidates are not automatically rejected: the model may
+        # have used only the first candidate, or asked a clarification without
+        # using any of them.  Keep the most recent context only long enough to
+        # exclude its primary article after an explicit user rejection.
+        self._last_faq_context: dict[int, FaqContext] = {}
 
     async def get_history(self, user_id: int) -> list[dict[str, str]]:
         """Retrieve chronological history for a user, loading from DB if not in memory."""
@@ -128,10 +134,29 @@ class ChatHistoryService:
         return set(self._rejected_faq_questions.get(user_id, set()))
 
     def add_rejected_faq_questions(self, user_id: int, questions: Iterable[str] | None) -> None:
-        """Record rejected FAQ questions for exclusion in follow-up queries."""
-        if not questions:
+        """Add explicit rejected FAQ questions.
+
+        Kept for administrative and test callers.  Normal model replies no
+        longer call this method; ``reject_last_faq`` is the conversational path.
+        """
+        if questions:
+            self._rejected_faq_questions.setdefault(user_id, set()).update(questions)
+
+    def record_faq_context(self, user_id: int, context: FaqContext) -> None:
+        """Remember the primary FAQ candidate returned for the latest answer."""
+        self._last_faq_context[user_id] = context
+
+    def reject_last_faq(self, user_id: int) -> None:
+        """Exclude only the primary article after the user rejects the answer.
+
+        The previous implementation excluded every retrieved candidate as soon
+        as an answer was sent.  This method runs only on a later rejection and
+        has one conservative target, so alternate articles stay available.
+        """
+        context = self._last_faq_context.get(user_id)
+        if context is None or context.best_question is None:
             return
-        self._rejected_faq_questions.setdefault(user_id, set()).update(questions)
+        self._rejected_faq_questions.setdefault(user_id, set()).add(context.best_question)
 
     def clear_rejected_faqs_if_new_topic(self, user_id: int, user_message: str | None) -> None:
         """Reset rejected FAQ questions if the incoming message is a new topic, not a rejection."""
@@ -146,6 +171,7 @@ class ChatHistoryService:
         self._last_activity.pop(user_id, None)
         self._loaded_from_db.discard(user_id)
         self._rejected_faq_questions.pop(user_id, None)
+        self._last_faq_context.pop(user_id, None)
 
         if self.db_manager is not None:
             try:
@@ -201,6 +227,7 @@ class ChatHistoryService:
             self._last_activity.pop(uid, None)
             self._loaded_from_db.discard(uid)
             self._rejected_faq_questions.pop(uid, None)
+            self._last_faq_context.pop(uid, None)
             if logger.isEnabledFor(TRACE):
                 logger.log(TRACE, "Evicted stale in-memory history for user %d", uid)
 

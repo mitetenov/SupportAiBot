@@ -200,6 +200,14 @@ class ScenarioHistory:
     def get_rejected_faq_questions(self, telegram_id: int) -> set[str]:
         return set(self._rejected_faq_questions)
 
+    def record_faq_context(self, telegram_id: int, context: FaqContext) -> None:
+        self._last_faq_context = context
+
+    def reject_last_faq(self, telegram_id: int) -> None:
+        context = getattr(self, "_last_faq_context", FaqContext.EMPTY)
+        if context.best_question:
+            self._rejected_faq_questions.add(context.best_question)
+
     async def get_history(self, telegram_id: int) -> list[dict[str, Any]]:
         return [{"role": msg["role"], "content": msg["content"]} for msg in self._history]
 

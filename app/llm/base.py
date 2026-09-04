@@ -85,6 +85,7 @@ class LlmTurnState:
     """Provider-neutral state prepared once and shared by fallback attempts."""
 
     faq_context: FaqContext
+    history: list[dict[str, Any]] = field(default_factory=list)
     completed_tool_results: dict[str, str] = field(default_factory=dict)
     replay_completed_tool_results: bool = False
 
@@ -216,19 +217,30 @@ class AbstractLlmClient(ABC, LlmClient):
     ) -> LlmReply:
         reply = await self.do_chat(user_message, telegram_user_id, base64_image, mime_type)
 
+        await self.persist_success(telegram_user_id, history_message, reply)
+        return reply
+
+    async def persist_success(
+        self, telegram_user_id: int, history_message: str, reply: LlmReply
+    ) -> None:
+        """Commit a completed turn and its retrieval context exactly once."""
         await self.chat_history_service.add_user_message(telegram_user_id, history_message)
         await self.chat_history_service.add_assistant_message(telegram_user_id, reply.text)
-        self.chat_history_service.add_rejected_faq_questions(
-            telegram_user_id, reply.faq_context.questions()
-        )
-        return reply
+        self.chat_history_service.record_faq_context(telegram_user_id, reply.faq_context)
 
     async def prepare_turn(self, user_message: str, telegram_user_id: int) -> LlmTurnState:
         """Build retrieval state once before one or more provider attempts."""
+        # Load persistent history before deriving the retrieval query.  Without
+        # this, the first follow-up after a restart searched only for "iOS"
+        # instead of the stored "all servers n/a ... iOS" conversation.
+        history = await self._get_conversation_history(telegram_user_id)
         self.chat_history_service.clear_rejected_faqs_if_new_topic(telegram_user_id, user_message)
 
         if is_rejection(user_message):
-            search_query = self.chat_history_service.get_last_user_message(telegram_user_id)
+            self.chat_history_service.reject_last_faq(telegram_user_id)
+            search_query = self.build_contextual_search_query(
+                telegram_user_id, user_message, force_context=True
+            )
         else:
             search_query = self.build_contextual_search_query(telegram_user_id, user_message)
 
@@ -239,7 +251,7 @@ class AbstractLlmClient(ABC, LlmClient):
         faq_context = await self.faq_embedding_service.build_faq_context(
             search_query or "", rejected_faqs
         )
-        return LlmTurnState(faq_context=faq_context)
+        return LlmTurnState(faq_context=faq_context, history=history)
 
     async def do_chat(
         self,
@@ -256,14 +268,13 @@ class AbstractLlmClient(ABC, LlmClient):
             turn_state = await self.prepare_turn(user_message, telegram_user_id)
         faq_context = turn_state.faq_context
 
-        history = await self._get_conversation_history(telegram_user_id)
         conversation = self.build_initial_conversation(
             user_message,
             telegram_user_id,
             faq_context.text,
             base64_image,
             mime_type,
-            history=history,
+            history=turn_state.history,
         )
         if turn_state.replay_completed_tool_results and turn_state.completed_tool_results:
             # Transfer facts as data, not fabricated provider-specific tool calls:
@@ -448,7 +459,7 @@ class AbstractLlmClient(ABC, LlmClient):
         conversation.append({"role": "user", "content": instruction})
 
     def build_contextual_search_query(
-        self, telegram_user_id: int, user_message: str | None
+        self, telegram_user_id: int, user_message: str | None, *, force_context: bool = False
     ) -> str | None:
         """Prefix the previous user message when this one cannot stand on its own."""
         if user_message is None or not user_message.strip():
@@ -464,7 +475,9 @@ class AbstractLlmClient(ABC, LlmClient):
 
         trimmed = user_message.strip()
         has_letters = any(c.isalpha() for c in trimmed)
-        is_follow_up = (not has_letters) or bool(self.FOLLOW_UP_PATTERN.search(trimmed))
+        is_follow_up = (
+            force_context or (not has_letters) or bool(self.FOLLOW_UP_PATTERN.search(trimmed))
+        )
 
         return f"{last_msg} {trimmed}" if is_follow_up else trimmed
 

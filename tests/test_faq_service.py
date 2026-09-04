@@ -216,6 +216,29 @@ class TestFaqSearchLogic:
         assert results[0].similarity == 0.75
 
     @pytest.mark.asyncio
+    async def test_search_uses_fts_when_the_embedding_provider_is_unavailable(self) -> None:
+        provider = DummyEmbeddingProvider(dimension=4)
+        provider.embed_mock = AsyncMock(return_value=[])
+        db_manager = MagicMock()
+        session = MagicMock()
+        db_manager.session.return_value.__aenter__.return_value = session
+        row = MagicMock(question="Как оплатить?", answer="Через бот", fts_rank=0.42, image=None)
+        result = MagicMock()
+        result.fetchall.return_value = [row]
+        session.execute = AsyncMock(return_value=result)
+        service = FaqEmbeddingService(db_manager=db_manager, embedding_provider=provider)
+        service.mark_ready()
+
+        results = await service.search("как оплатить")
+
+        assert [(item.question, item.similarity, item.rrf_score) for item in results] == [
+            ("Как оплатить?", 0.0, 0.42)
+        ]
+        params = session.execute.await_args.args[1]
+        assert params["clean_query"] == "как оплатить"
+        assert params["excluded"] == []
+
+    @pytest.mark.asyncio
     async def test_search_with_fallback_connection_issues(self) -> None:
         provider = DummyEmbeddingProvider(dimension=4)
         db_manager = MagicMock()
@@ -486,6 +509,41 @@ class TestBatchIndexing:
         assert await service.index_faq_batch([]) == 0
         assert provider.batch_calls == []
         execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_atomic_replacement_keeps_active_index_on_partial_embedding_failure(self) -> None:
+        service, provider, execute = self._service()
+
+        async def embed_batch(texts: list[str]) -> list[list[float]]:
+            return [[0.5] * 4, []]
+
+        provider.embed_batch = embed_batch  # type: ignore[method-assign]
+
+        indexed = await service.replace_faq_batch([FaqEntry("Q1", "A1"), FaqEntry("Q2", "A2")])
+
+        assert indexed == 1
+        execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_atomic_replacement_deletes_and_inserts_in_one_transaction(self) -> None:
+        service, _, execute = self._service()
+
+        indexed = await service.replace_faq_batch([FaqEntry("Q1", "A1"), FaqEntry("Q2", "A2")])
+
+        assert indexed == 2
+        assert execute.await_count == 2
+        assert "DELETE FROM faq" in str(execute.await_args_list[0].args[0])
+        assert [row["question"] for row in execute.await_args_list[1].args[1]] == ["Q1", "Q2"]
+
+    def test_index_fingerprint_changes_when_embedding_configuration_changes(self) -> None:
+        provider = DummyEmbeddingProvider(dimension=4)
+        provider.model = "model-a"
+        service = FaqEmbeddingService(db_manager=MagicMock(), embedding_provider=provider)
+
+        before = service.get_index_fingerprint("faq-source")
+        provider.model = "model-b"
+
+        assert service.get_index_fingerprint("faq-source") != before
 
 
 class TestEmbedMany:

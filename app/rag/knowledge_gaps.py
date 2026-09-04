@@ -174,11 +174,11 @@ class KnowledgeGapService:
         if best_faq_question is None and max_similarity == 0.0:
             return "NO_MATCH"
 
-        if 0.0 < max_similarity < 0.72:
-            return "LOW_SIMILARITY"
-
         if raw_bot_response and "[ESCALATE]" in raw_bot_response:
             return "ESCALATED"
+
+        if 0.0 < max_similarity < 0.72:
+            return "LOW_SIMILARITY"
 
         if self._is_llm_unsure(raw_bot_response):
             return "LLM_UNSURE"

@@ -1,5 +1,6 @@
 """Recognises a user turning down the answer they were just given."""
 
+import re
 from collections.abc import Sequence
 
 
@@ -22,10 +23,10 @@ class RejectionDetector:
         "не это",
         "не подходит",
         "не помог",
+        "не помогло",
         "другой вариант",
         "другая инструкция",
-        "другое",
-        "нет,",
+        "нет, я про другое",
         # "I did what you said and nothing changed". Without these the exclusion
         # set was reset on every such turn, so the retriever kept handing back
         # the same entries and the user was told to press the same two buttons
@@ -47,6 +48,17 @@ class RejectionDetector:
         "без изменений",
     )
 
+    #: A rejection has to be a complete phrase.  A substring search made
+    #: "Как подключить другое устройство?" reject a previous answer because it
+    #: contains "другое", and read "не только" as "не то".  Those messages
+    #: introduce a new constraint; excluding the previous FAQ for them loses
+    #: useful context.
+    _PHRASE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+        re.compile(rf"(?<!\w){re.escape(phrase.lower().replace('ё', 'е'))}(?!\w)", re.UNICODE)
+        for phrase in REJECTION_PHRASES
+    )
+    _TERSE_REJECTION: re.Pattern[str] = re.compile(r"^другое[.!?]*$", re.UNICODE)
+
     @staticmethod
     def _normalise(text: str) -> str:
         """Lowercase and fold ё to е so a phrase needs only one spelling."""
@@ -58,7 +70,9 @@ class RejectionDetector:
         if not message or not message.strip():
             return False
         normalised = cls._normalise(message)
-        return any(cls._normalise(phrase) in normalised for phrase in cls.REJECTION_PHRASES)
+        return cls._TERSE_REJECTION.fullmatch(normalised) is not None or any(
+            pattern.search(normalised) is not None for pattern in cls._PHRASE_PATTERNS
+        )
 
 
 def is_rejection(message: str | None) -> bool:

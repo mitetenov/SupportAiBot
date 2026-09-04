@@ -43,7 +43,7 @@ class FaqContext:
         return len(self.results) == 0
 
     def questions(self) -> set[str]:
-        """Questions shown to the model, used as an exclusion set on the next turn."""
+        """Questions shown to the model, useful for diagnostics and reporting."""
         return {r.question for r in self.results}
 
 
