@@ -198,7 +198,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
-| `LLM_PROVIDER` | `openai` | `openai`, `gemini`, `deepseek` или `groq` |
+| `LLM_PROVIDER` | `openai` | `openai`, `gemini`, `deepseek`, `groq` или `openrouter` |
 | `LLM_FALLBACK_CHAIN` | — | Необязательные резервные цели в порядке `provider:model` через запятую |
 | `REASONING_EFFORT` | `none` | Профиль reasoning: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `auto` не поддерживается |
 | `OPENAI_API_KEY` | — | Нужен при `LLM_PROVIDER=openai`, `EMBEDDING_PROVIDER=openai` или резервной цели `openai:...` |
@@ -210,6 +210,10 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `GROQ_API_KEY` | — | Нужен при `LLM_PROVIDER=groq` или резервной цели `groq:...` |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Основная модель Groq; резервная цель задаёт модель в `LLM_FALLBACK_CHAIN` |
 | `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | OpenAI-совместимый endpoint Groq |
+| `OPENROUTER_API_KEY` | — | Нужен при `LLM_PROVIDER=openrouter` или резервной цели `openrouter:...` |
+| `OPENROUTER_MODEL` | — | Основная модель OpenRouter (например `z-ai/glm-4.7`); резервная цель задаёт модель в `LLM_FALLBACK_CHAIN` |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-совместимый endpoint OpenRouter |
+| `OPENROUTER_TIMEOUT_SECONDS` | `120.0` | Таймаут HTTP-запросов к OpenRouter в секундах |
 | `EMBEDDING_PROVIDER` | `gemini` | Провайдер поиска по базе знаний: `gemini` или `openai` |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Модель поиска при `EMBEDDING_PROVIDER=openai` |
 
@@ -219,7 +223,17 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 переменной `*_MODEL`. `LLM_FALLBACK_CHAIN` добавляет только резервные цели в
 указанном порядке; каждая имеет формат `provider:model`. Модель в цели цепочки
 переопределяет `*_MODEL` только для этой попытки. Допустимые провайдеры:
-`openai`, `gemini`, `deepseek`, `groq`.
+`openai`, `gemini`, `deepseek`, `groq`, `openrouter`.
+
+Если `openrouter` используется только в `LLM_FALLBACK_CHAIN`, переменная
+`OPENROUTER_MODEL` не требуется — модель берётся из элемента цепочки
+(например, `openrouter:z-ai/glm-4.7`).
+
+> [!NOTE]
+> Адаптер OpenRouter в текущей версии поддерживает текст и вызовы инструментов (MCP),
+> но не поддерживает изображения (`supports_images() == False`). При наличии изображения
+> цепочка fallback пропускает OpenRouter и направляет запрос провайдеру с поддержкой
+> изображений (OpenAI или Gemini).
 
 Минимальная конфигурация с основной и резервной моделью:
 
@@ -231,15 +245,23 @@ GROQ_API_KEY=gsk_example_not_a_real_secret
 LLM_FALLBACK_CHAIN=groq:llama-3.3-70b-versatile
 ```
 
+Пример использования OpenRouter с моделью `z-ai/glm-4.7`:
+
+```env
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=openrouter_example_key_not_a_real_secret
+OPENROUTER_MODEL=z-ai/glm-4.7
+```
+
 Для нескольких резервных целей порядок сохраняется слева направо:
 
 ```env
 LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-example-not-a-real-secret
 OPENAI_MODEL=gpt-5.6-luna
-GROQ_API_KEY=gsk_example_not_a_real_secret
+OPENROUTER_API_KEY=openrouter_example_key_not_a_real_secret
 GEMINI_API_KEY=gemini_example_key_not_a_real_secret
-LLM_FALLBACK_CHAIN=groq:llama-3.3-70b-versatile,gemini:gemini-3.5-flash-lite
+LLM_FALLBACK_CHAIN=openrouter:z-ai/glm-4.7,gemini:gemini-3.5-flash-lite
 ```
 
 В примерах ключи заведомо фиктивны. При запуске приложение проверяет ключ и

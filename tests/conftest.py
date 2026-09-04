@@ -19,6 +19,8 @@ _SETTINGS_ENV_PREFIXES = (
     "DEEPSEEK_",
     "GEMINI_",
     "OPENAI_",
+    "GROQ_",
+    "OPENROUTER_",
     "REMNAWAVE_",
     "PGVECTOR_",
     "CHAT_HISTORY_",

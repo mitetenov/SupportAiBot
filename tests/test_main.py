@@ -111,12 +111,67 @@ def test_create_llm_client(mock_settings: Settings) -> None:
     )
     assert client_openai.get_provider_name() == "OpenAI"
 
+    # OpenRouter
+    mock_settings.llm_provider = "openrouter"
+    mock_settings.openrouter_api_key = "test-openrouter-key"  # type: ignore[assignment]
+    mock_settings.openrouter_model = "z-ai/glm-4.7"
+    client_openrouter = create_llm_client(
+        mock_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert client_openrouter.get_provider_name() == "OpenRouter"
+
     # Invalid provider
     mock_settings.llm_provider = "unsupported"
     with pytest.raises(ValueError, match="Unknown LLM provider"):
         create_llm_client(
             mock_settings, mcp_router, chat_history, faq_service, db_manager, http_client
         )
+
+
+def test_create_llm_client_openrouter_factory(mock_settings: Settings) -> None:
+    from app.config import LlmProviderTarget
+    from app.llm.fallback import LlmFallbackClient
+    from app.llm.openrouter import OpenRouterClient
+
+    mcp_router = MagicMock()
+    chat_history = MagicMock()
+    faq_service = MagicMock()
+    db_manager = MagicMock()
+    http_client = MagicMock()
+
+    mock_settings.llm_provider = "openrouter"
+    mock_settings.openrouter_api_key = "test-openrouter-key"  # type: ignore[assignment]
+    mock_settings.openrouter_model = "z-ai/glm-4.7"
+
+    primary_client = create_llm_client(
+        mock_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert isinstance(primary_client, OpenRouterClient)
+    assert not isinstance(primary_client, LlmFallbackClient)
+    assert primary_client.model == "z-ai/glm-4.7"
+    assert primary_client.get_provider_name() == "OpenRouter"
+
+    fallback_settings = mock_settings.model_copy(
+        update={
+            "llm_provider": "openrouter",
+            "openrouter_model": "z-ai/glm-4.7",
+            "llm_fallback_chain": (LlmProviderTarget(provider="openrouter", model="z-ai/glm-5.3"),),
+            "reasoning_effort": "low",
+        }
+    )
+    fallback_coord = create_llm_client(
+        fallback_settings, mcp_router, chat_history, faq_service, db_manager, http_client
+    )
+    assert isinstance(fallback_coord, LlmFallbackClient)
+    assert len(fallback_coord._clients) == 2
+    c1, c2 = fallback_coord._clients
+    assert isinstance(c1, OpenRouterClient)
+    assert isinstance(c2, OpenRouterClient)
+    assert c1.model == "z-ai/glm-4.7"
+    assert c2.model == "z-ai/glm-5.3"
+    assert c1._http_client is http_client
+    assert c2._http_client is http_client
+    assert fallback_settings.openrouter_model == "z-ai/glm-4.7"
 
 
 @pytest.mark.asyncio
