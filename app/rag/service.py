@@ -156,6 +156,7 @@ class FaqEmbeddingService:
         self.db_manager = db_manager
         self.embedding_provider = embedding_provider
         self.ready: bool = False
+        self.vector_search_enabled: bool = True
         self.embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
 
     def is_ready(self) -> bool:
@@ -166,6 +167,10 @@ class FaqEmbeddingService:
         """Mark the FAQ service as ready for search queries."""
         self.ready = True
         logger.info("FAQ service marked as ready for search")
+
+    def set_vector_search_enabled(self, enabled: bool) -> None:
+        """Allow vector retrieval only after startup verifies the active index."""
+        self.vector_search_enabled = enabled
 
     async def init_schema(self) -> None:
         """Bring the FAQ table in line with the configured embedding provider.
@@ -422,9 +427,6 @@ class FaqEmbeddingService:
         Embeddings are requested before the transaction.  A provider outage or
         partial batch therefore leaves the currently searchable FAQ untouched.
         """
-        if not entries:
-            return 0
-
         rows = await self._rows_for_entries(entries)
         if len(rows) != len(entries):
             logger.error(
@@ -436,7 +438,8 @@ class FaqEmbeddingService:
 
         async with self.db_manager.session() as session:
             await session.execute(text("DELETE FROM faq"))
-            await session.execute(INSERT_FAQ_SQL, rows)
+            if rows:
+                await session.execute(INSERT_FAQ_SQL, rows)
 
         logger.info("Atomically replaced FAQ index with %d entries", len(rows))
         return len(rows)
@@ -506,6 +509,8 @@ class FaqEmbeddingService:
         start_time = time.monotonic()
         raw_clean = re.sub(r"[^a-zA-Zа-яА-Я0-9\s]", " ", query).strip()
         clean_query = raw_clean if raw_clean else query
+        if not self.vector_search_enabled:
+            return await self._search_fts_only(clean_query, exclude)
         vector_str = await self.embed_query_as_vector(query)
         if not vector_str:
             logger.info("FAQ embedding unavailable; degrading to FTS-only search")

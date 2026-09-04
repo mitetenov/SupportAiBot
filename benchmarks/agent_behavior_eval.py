@@ -204,9 +204,9 @@ class ScenarioHistory:
         self._last_faq_context = context
 
     def reject_last_faq(self, telegram_id: int) -> None:
-        context = getattr(self, "_last_faq_context", FaqContext.EMPTY)
-        if context.best_question:
-            self._rejected_faq_questions.add(context.best_question)
+        # Scenario replies, like production text replies, have no verified
+        # source attribution. Retrieval rank alone must not exclude a source.
+        pass
 
     async def get_history(self, telegram_id: int) -> list[dict[str, Any]]:
         return [{"role": msg["role"], "content": msg["content"]} for msg in self._history]

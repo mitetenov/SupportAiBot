@@ -250,7 +250,7 @@ class TestAbstractLlmClient:
         )
 
     @pytest.mark.asyncio
-    async def test_rejection_keeps_new_facts_and_excludes_only_the_last_primary_article(self):
+    async def test_rejection_keeps_new_facts_without_excluding_a_clarification_candidate(self):
         history = ChatHistoryService()
         await history.add_user_message(USER_ID, "Все серверы n/a, VPN не работает")
         await history.add_assistant_message(USER_ID, "Какая операционная система?")
@@ -263,7 +263,7 @@ class TestAbstractLlmClient:
         await client.chat("Не помогло, у меня Android", USER_ID)
 
         faq_embedding_service.build_faq_context.assert_awaited_once_with(
-            "Все серверы n/a, VPN не работает Не помогло, у меня Android", {"Проверить пинг"}
+            "Все серверы n/a, VPN не работает Не помогло, у меня Android", set()
         )
 
     @pytest.mark.asyncio

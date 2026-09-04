@@ -233,16 +233,18 @@ class AbstractLlmClient(ABC, LlmClient):
         # Load persistent history before deriving the retrieval query.  Without
         # this, the first follow-up after a restart searched only for "iOS"
         # instead of the stored "all servers n/a ... iOS" conversation.
-        history = await self._get_conversation_history(telegram_user_id)
+        history = await self.chat_history_service.get_history(telegram_user_id)
         self.chat_history_service.clear_rejected_faqs_if_new_topic(telegram_user_id, user_message)
 
         if is_rejection(user_message):
             self.chat_history_service.reject_last_faq(telegram_user_id)
             search_query = self.build_contextual_search_query(
-                telegram_user_id, user_message, force_context=True
+                telegram_user_id, user_message, force_context=True, history=history
             )
         else:
-            search_query = self.build_contextual_search_query(telegram_user_id, user_message)
+            search_query = self.build_contextual_search_query(
+                telegram_user_id, user_message, history=history
+            )
 
         if not search_query or not search_query.strip():
             search_query = user_message
@@ -459,30 +461,48 @@ class AbstractLlmClient(ABC, LlmClient):
         conversation.append({"role": "user", "content": instruction})
 
     def build_contextual_search_query(
-        self, telegram_user_id: int, user_message: str | None, *, force_context: bool = False
+        self,
+        telegram_user_id: int,
+        user_message: str | None,
+        *,
+        force_context: bool = False,
+        history: list[dict[str, Any]] | None = None,
     ) -> str | None:
-        """Prefix the previous user message when this one cannot stand on its own."""
+        """Accumulate the current issue and follow-ups from the loaded history."""
         if user_message is None or not user_message.strip():
             return user_message
 
-        last_msg = self.chat_history_service.get_last_user_message(telegram_user_id)
-        if (
-            not last_msg
-            or not last_msg.strip()
-            or last_msg.strip().lower() == user_message.strip().lower()
-        ):
-            return user_message
-
         trimmed = user_message.strip()
-        has_letters = any(c.isalpha() for c in trimmed)
-        is_follow_up = (
-            force_context or (not has_letters) or bool(self.FOLLOW_UP_PATTERN.search(trimmed))
+        if not (force_context or self._is_search_follow_up(trimmed)):
+            return trimmed
+
+        previous = [
+            str(msg["content"]).strip()
+            for msg in history or []
+            if msg.get("role") == "user" and msg.get("content")
+        ]
+        if not previous:
+            last_msg = self.chat_history_service.get_last_user_message(telegram_user_id)
+            previous = [last_msg.strip()] if last_msg and last_msg.strip() else []
+
+        parts = [trimmed]
+        for message in reversed(previous):
+            if message.casefold() != parts[-1].casefold():
+                parts.append(message)
+            if not self._is_search_follow_up(message):
+                break
+        return " ".join(reversed(parts))
+
+    @classmethod
+    def _is_search_follow_up(cls, message: str) -> bool:
+        return (
+            is_rejection(message)
+            or not any(c.isalpha() for c in message)
+            or bool(cls.FOLLOW_UP_PATTERN.search(message))
         )
 
-        return f"{last_msg} {trimmed}" if is_follow_up else trimmed
-
     async def _get_conversation_history(self, telegram_user_id: int) -> list[dict[str, Any]]:
-        """Fetch chronological history formatted for provider."""
+        """Fetch chronological history in the shared role/content format."""
         return await self.chat_history_service.get_history(telegram_user_id)
 
     @classmethod

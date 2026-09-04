@@ -28,6 +28,9 @@ class FaqInitializer:
 
     async def run(self) -> None:
         """Run startup sync check and re-index if FAQ file changed."""
+        # A retained index may belong to another model with the same dimension.
+        # Until verified or fully replaced, only its text data is safe to use.
+        self.service.set_vector_search_enabled(False)
         if not self.faq_path.exists():
             logger.info("FAQ file is absent; search starts without indexing")
             self.service.mark_ready()
@@ -59,6 +62,7 @@ class FaqInitializer:
                     "Skipping re-indexing.",
                     indexed_count,
                 )
+                self.service.set_vector_search_enabled(True)
                 self.service.mark_ready()
                 return
 
@@ -97,6 +101,7 @@ class FaqInitializer:
             # run would keep the next start from retrying the missing vectors.
             if current_fingerprint is not None and indexed == len(usable):
                 await self.service.update_faq_index_fingerprint(current_fingerprint)
+                self.service.set_vector_search_enabled(True)
             elif indexed != len(usable):
                 log_failure(
                     logger,
