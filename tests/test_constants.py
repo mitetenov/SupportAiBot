@@ -98,6 +98,12 @@ class TestSupportPrompt:
     def test_system_should_still_allow_troubleshooting_for_already_connected_users(self) -> None:
         assert "Правило не отменяет диагностику" in SupportPrompt.SYSTEM
 
+    def test_system_should_require_a_fresh_account_scoped_hwid_snapshot(self) -> None:
+        prompt = SupportPrompt.SYSTEM
+        assert "этот support-инструмент сам получает все аккаунты" in prompt
+        assert "Не используй старые userId/hwid из истории" in prompt
+        assert "status=already_absent" in prompt
+
     def test_with_telegram_user_id_should_append_id(self) -> None:
         result = SupportPrompt.with_telegram_user_id(12345)
         assert "Telegram ID: 12345" in result
