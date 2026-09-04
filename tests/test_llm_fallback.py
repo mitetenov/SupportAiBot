@@ -163,7 +163,7 @@ class TestLlmFallbackClient:
         assert len(secondary.calls) == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("status_code", [401, 402, 403, 408, 429])
+    @pytest.mark.parametrize("status_code", [401, 402, 403, 408, 413, 429])
     async def test_falls_back_after_each_configured_provider_status(self, status_code: int) -> None:
         primary = _FakeClient(
             "Primary", LlmProcessingException("provider unavailable", status_code=status_code)
@@ -619,3 +619,87 @@ async def test_three_targets_share_results_but_next_turn_executes_tools_again():
     assert [record["tool"] for record in records] == ["nodes_list", "nodes_get"]
     assert history.add_user_message.await_count == 2
     assert faq.build_faq_context.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("after_tool", [False, True])
+@pytest.mark.parametrize("backup_too_large", [False, True])
+async def test_groq_413_falls_back_to_luna_without_retrying_oversized_request(
+    after_tool, backup_too_large
+):
+    requests = []
+    groq_calls = 0
+
+    def handler(request):
+        nonlocal groq_calls
+        requests.append(request)
+        if request.url.host == "groq.invalid":
+            groq_calls += 1
+            if after_tool and groq_calls == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "tool_calls": [
+                                        {
+                                            "id": "lookup",
+                                            "function": {"name": "nodes_list", "arguments": "{}"},
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                )
+            return httpx.Response(413, json={"error": {"message": "request too large"}})
+        assert request.url.host == "luna.invalid"
+        if backup_too_large:
+            return httpx.Response(413, json={"error": {"message": "request too large"}})
+        return httpx.Response(
+            200,
+            json={
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "served by Luna"}],
+                    }
+                ]
+            },
+        )
+
+    router, history, faq, db, _ = _concrete_dependencies()
+    settings = _fallback_settings(
+        llm_provider="groq",
+        groq_model="qwen/qwen3.8-27b",
+        groq_base_url="https://groq.invalid/openai/v1",
+        llm_fallback_chain="openai:gpt-5.6-luna",
+        openai_api_key="sk-test",
+        openai_base_url="https://luna.invalid/v1",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = create_llm_client(settings, router, history, faq, db, http)
+        if backup_too_large:
+            with pytest.raises(LlmFallbackExhaustedError):
+                await client.chat("Need help", 42)
+            history.add_user_message.assert_not_awaited()
+        else:
+            reply = await client.chat("Need help", 42)
+            assert reply.text == "served by Luna"
+            history.add_user_message.assert_awaited_once_with(42, "Need help")
+            history.add_assistant_message.assert_awaited_once_with(42, "served by Luna")
+
+    assert [r.url.host for r in requests] == ["groq.invalid"] * (2 if after_tool else 1) + [
+        "luna.invalid"
+    ]
+    luna_input = json.loads(requests[-1].content)
+    assert luna_input["model"] == "gpt-5.6-luna"
+    assert {"role": "user", "content": "earlier"} in luna_input["input"]
+    assert {"role": "user", "content": "Need help"} in luna_input["input"]
+    if after_tool:
+        router.call_tool.assert_awaited_once_with("nodes_list", {}, 42)
+        assert "tool result" in luna_input["input"][-1]["content"]
+    else:
+        router.call_tool.assert_not_awaited()
+    faq.build_faq_context.assert_awaited_once()

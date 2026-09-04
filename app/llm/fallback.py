@@ -17,7 +17,11 @@ from app.llm.base import (
 
 logger = logging.getLogger(__name__)
 
-_FALLBACK_STATUS_CODES: frozenset[int] = frozenset({401, 402, 403, 408, 429, 500, 502, 503, 504})
+# Request-size limits differ between providers/models. Retrying the same
+# endpoint cannot fix 413, but the next configured target may accept the turn.
+_FALLBACK_STATUS_CODES: frozenset[int] = frozenset(
+    {401, 402, 403, 408, 413, 429, 500, 502, 503, 504}
+)
 
 
 class LlmFallbackExhaustedError(LlmProcessingException):
