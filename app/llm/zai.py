@@ -52,6 +52,16 @@ class ZaiClient(ChatCompletionsClient):
             api_key=reveal(settings.zai_api_key),
             request_timeout_seconds=settings.zai_timeout_seconds,
         )
+        self._log_reasoning_configuration()
+
+    def _log_reasoning_configuration(self) -> None:
+        logger.info(
+            "Selected LLM: provider=%s, model=%s, configured_effort=%s, effective_effort=%s",
+            self.get_provider_name(),
+            self.model,
+            self.settings.reasoning_effort,
+            self.get_effective_reasoning_effort(),
+        )
 
     def get_provider_name(self) -> str:
         return "Z.AI"

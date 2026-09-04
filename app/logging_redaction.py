@@ -34,6 +34,8 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
         "gemini_api_key",
         "openai_api_key",
         "groq_api_key",
+        "openrouter_api_key",
+        "zai_api_key",
         "bedolaga_api_key",
         "bedolaga_webhook_secret",
     }

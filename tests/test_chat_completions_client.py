@@ -1029,12 +1029,13 @@ class TestChatCompletionsLoggingSafety:
         secret_prompt = "TOP_SECRET_USER_PROMPT_999"
         secret_reply = "TOP_SECRET_MODEL_REPLY_888"
 
-        transport = httpx.MockTransport(
-            lambda _req: httpx.Response(
+        def handle_request(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(
                 200,
                 json={"choices": [{"message": {"role": "assistant", "content": secret_reply}}]},
             )
-        )
+
+        transport = httpx.MockTransport(handle_request)
         dummy_client._http_client = httpx.AsyncClient(transport=transport)
         dummy_client._own_client = True
 

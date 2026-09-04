@@ -18,6 +18,7 @@ from app.llm.base import (
     ToolCall,
     is_balance_exhaustion_message,
 )
+from app.llm.fallback import _FALLBACK_STATUS_CODES
 from app.logging_config import TRACE, log_failure
 from app.logging_http import create_logging_hooks
 from app.logging_redaction import safe_serialize
@@ -229,7 +230,9 @@ class ChatCompletionsClient(AbstractLlmClient):
             elif response.text:
                 raw_msg = response.text
 
-            fallback_eligible = is_balance_exhaustion_message(raw_msg)
+            fallback_eligible = (
+                response.status_code in _FALLBACK_STATUS_CODES
+            ) or is_balance_exhaustion_message(raw_msg)
             raise LlmProcessingException(
                 f"{self.get_provider_name()} API error (model={self.model}, status={response.status_code})",
                 "Произошла ошибка при обработке запроса. Попробуйте позже.",

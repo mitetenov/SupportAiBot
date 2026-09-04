@@ -218,7 +218,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `ZAI_MODEL` | — | Основная модель Z.AI (например `glm-4.7`); резервная цель задаёт модель в `LLM_FALLBACK_CHAIN` |
 | `ZAI_BASE_URL` | `https://api.z.ai/api/paas/v4` | OpenAI-совместимый endpoint Z.AI (General API) |
 | `ZAI_TIMEOUT_SECONDS` | `120.0` | Таймаут HTTP-запросов к Z.AI в секундах |
-| `EMBEDDING_PROVIDER` | `gemini` | Провайдер поиска по базе знаний: `gemini` или `openai` |
+| `EMBEDDING_PROVIDER` | `gemini` | Провайдер поиска по базе знаний: `gemini` или `openai`. OpenRouter и Z.AI предоставляют только Chat Completions; для базы знаний всегда настраиваются отдельные credentials |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Модель поиска при `EMBEDDING_PROVIDER=openai` |
 
 ### Резервные LLM-провайдеры
@@ -232,58 +232,62 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 Идентификатор провайдера Z.AI — строго `zai` (`z.ai` является названием компании,
 а не идентификатором цели). Z.AI использует нативный формат имён моделей
 (например, `glm-4.7`, `glm-5.3`), в отличие от OpenRouter, где требуется namespace
-вендора (например, `z-ai/glm-4.7`).
+вендора (например, `z-ai/glm-4.7`, `z-ai/glm-5.3`).
 
 Базовый endpoint `ZAI_BASE_URL` по умолчанию настроен на General API
 (`https://api.z.ai/api/paas/v4`). Обратите внимание: API-ключи тарифа Coding Plan
-могут быть несовместимы с General API.
+несовместимы с General API. Автоматическая смена endpoint не производится:
+запросы отправляются строго на сконфигурированный базовый URL.
 
 Если `openrouter` или `zai` используется только в `LLM_FALLBACK_CHAIN`, переменные
 `OPENROUTER_MODEL` / `ZAI_MODEL` не требуются — модель берётся из элемента цепочки
 (например, `openrouter:z-ai/glm-4.7` или `zai:glm-4.7`).
 
 > [!NOTE]
-> Адаптеры OpenRouter и Z.AI в текущей версии поддерживают текст и вызовы инструментов (MCP),
+> Адаптеры OpenRouter и Z.AI в текущей версии поддерживают только текст и вызовы инструментов (MCP),
 > но не поддерживают изображения (`supports_images() == False`). При наличии изображения
 > цепочка fallback пропускает их и направляет запрос провайдеру с поддержкой
-> изображений (OpenAI или Gemini).
+> изображений (OpenAI или Gemini). Если цепочка состоит только из текстовых моделей,
+> бот сразу возвращает понятное сообщение с просьбой описать проблему текстом.
 
-Минимальная конфигурация с основной и резервной моделью:
+#### Согласованные примеры конфигурации
 
-```env
-LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-example-not-a-real-secret
-OPENAI_MODEL=gpt-5.6-luna
-GROQ_API_KEY=gsk_example_not_a_real_secret
-LLM_FALLBACK_CHAIN=groq:llama-3.3-70b-versatile
-```
+Во всех примерах ниже ключи заведомо фиктивны; для базы знаний обязательно задаются отдельные embedding credentials:
 
-Пример использования OpenRouter с моделью `z-ai/glm-4.7`:
-
+**Пример 1: OpenRouter как основной провайдер с моделью `z-ai/glm-4.7`**
 ```env
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=openrouter_example_key_not_a_real_secret
 OPENROUTER_MODEL=z-ai/glm-4.7
+REASONING_EFFORT=none
+EMBEDDING_PROVIDER=openai
+OPENAI_API_KEY=sk-example-not-a-real-secret
 ```
 
-Пример использования Z.AI с моделью `glm-4.7`:
-
+**Пример 2: Z.AI как основной провайдер с моделью `glm-4.7`**
 ```env
 LLM_PROVIDER=zai
 ZAI_API_KEY=zai_example_key_not_a_real_secret
 ZAI_MODEL=glm-4.7
+REASONING_EFFORT=low
+EMBEDDING_PROVIDER=gemini
+GEMINI_API_KEY=gemini_example_key_not_a_real_secret
 ```
 
-Для нескольких резервных целей порядок сохраняется слева направо:
-
+**Пример 3: OpenAI как основной провайдер с цепочкой fallback `openrouter:z-ai/glm-4.7,zai:glm-4.7`**
 ```env
 LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-example-not-a-real-secret
-OPENAI_MODEL=gpt-5.6-luna
+OPENAI_MODEL=gpt-4.1
 OPENROUTER_API_KEY=openrouter_example_key_not_a_real_secret
-GEMINI_API_KEY=gemini_example_key_not_a_real_secret
-LLM_FALLBACK_CHAIN=openrouter:z-ai/glm-4.7,gemini:gemini-3.5-flash-lite
+ZAI_API_KEY=zai_example_key_not_a_real_secret
+LLM_FALLBACK_CHAIN=openrouter:z-ai/glm-4.7,zai:glm-4.7
+REASONING_EFFORT=low
+EMBEDDING_PROVIDER=openai
 ```
+
+> [!IMPORTANT]
+> Для моделей **GLM-5.3** (как через OpenRouter под именем `z-ai/glm-5.3`, так и напрямую через Z.AI под именем `glm-5.3`) рассуждения являются обязательными: `REASONING_EFFORT` не может быть `none`. Требуется выбрать ненулевой уровень (`low`, `high` или `max`). При значении `none` валидатор конфигурации при старте завершит работу с ошибкой и подсказкой использовать `low`.
 
 В примерах ключи заведомо фиктивны. При запуске приложение проверяет ключ и
 модель основной цели, а также ключ каждого провайдера и модель каждой резервной
@@ -355,6 +359,31 @@ Groq использует [нативные параметры reasoning](https:
 `include_reasoning=false`, Qwen — `reasoning_format=hidden`, в том числе когда
 инструментов MCP нет. Пользователю и в историю диалога передаётся только ответ;
 блоки `<think>` из нестандартных ответов дополнительно удаляются парсером.
+
+OpenRouter преобразует `REASONING_EFFORT` по нативным правилам моделей:
+
+| Модели OpenRouter | Преобразование `REASONING_EFFORT` |
+|---|---|
+| `z-ai/glm-4.7` | `none` → `reasoning: {"enabled": false}`; остальные профили (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) → `reasoning: {"enabled": true}` |
+| `z-ai/glm-5.3` | `none` запрещён (ошибка валидации при старте); `minimal`/`low` → `low`, `medium`/`high`/`xhigh` → `high`, `max` → `max` (`reasoning: {"effort": <effective>}`) |
+| Неизвестные модели | Параметр `reasoning` не передаётся в теле запроса; в логе INFO фиксируется сообщение о пропуске неиспользуемого профиля |
+
+Z.AI использует нативные параметры `thinking` и `reasoning_effort`:
+
+| Модели Z.AI | Преобразование `REASONING_EFFORT` |
+|---|---|
+| `glm-4.7` | `none` → `thinking: {"type": "disabled"}`; остальные профили → `thinking: {"type": "enabled"}` (без поля `reasoning_effort`) |
+| `glm-5.3` | `none` запрещён (ошибка валидации при старте); `minimal`/`low` → `low`, `medium`/`high`/`xhigh` → `high`, `max` → `max` (`thinking: {"type": "enabled"}`, `reasoning_effort: <effective>`) |
+| Неизвестные модели | Параметры `thinking` и `reasoning_effort` не передаются в теле запроса; в логе INFO фиксируется сообщение о пропуске неиспользуемого профиля |
+
+Внутри нативного цикла вызова MCP-инструментов токены рассуждений (`reasoning`, `reasoning_details`, `reasoning_content`) сохраняются в контексте текущего хода, чтобы модель удерживала последовательность действий между вызовами инструментов. При этом токены рассуждений никогда не попадают в итоговый ответ пользователю, не сохраняются в постоянную историю чата БД и не передаются другим моделям при переключении по fallback.
+
+#### Семантика повторов (retry) и таймаутов
+
+- Для каждого провайдера настраивается независимый таймаут HTTP-запросов (по умолчанию `120.0` секунд через поля `*_TIMEOUT_SECONDS`). Допустимы только положительные конечные числа.
+- Все исходящие HTTP-запросы используют единую политику из 3 попыток с экспоненциальным backoff и джиттером для временных сбоев: HTTP `408`, `429`, `500`, `502`, `503`, `504`, сетевые тайм-ауты и ошибки соединения (`httpx.TransportError`).
+- Клиентские ошибки (HTTP `400`, `401`, `403`, `404`, `413`, `422`), а также бизнес-ошибки в теле ответа (например, код `1113` исчерпания баланса или код `1210` в Z.AI) не вызывают бесполезных повторных запросов к тому же endpoint, а сразу переводят ход на fallback (если статус входит в список разрешённых) либо возвращают ошибку.
+- Автоматическая смена или эвристическая подмена endpoint отсутствует: запросы направляются строго по сконфигурированному URL.
 
 ### База данных и образы
 
@@ -459,15 +488,17 @@ pytest -q tests/test_agent_behavior_eval.py tests/test_agent_behavior_contract.p
 
 Живой eval `benchmarks/agent_behavior_eval.py` прогоняет выбранную в `.env`
 модель через production LLM-клиент и `McpRouter`, подставляя синтетические MCP-данные.
+Поддерживаются все шесть провайдеров: `openai`, `gemini`, `deepseek`, `groq`, `openrouter`, `zai`.
 
 Почему требуется явный opt-in (`--confirm-external-api`):
-Eval отправляет system prompt и синтетические пользовательские запросы внешнему API выбранного провайдера (OpenAI, Gemini, DeepSeek). Это приводит к реальным сетевым запросам, расходу платных токенов и передаче контекста во внешний API. Запуск без явного флага блокируется.
+Eval отправляет system prompt и синтетические пользовательские запросы внешнему API выбранного провайдера (OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Z.AI). Это приводит к реальным сетевым запросам, расходу платных токенов и передаче контекста во внешний API. Запуск без явного флага блокируется. Автоматическая внешняя проверка ключей при старте приложения или в CI отсутствует.
 
 ```bash
 python -m benchmarks.agent_behavior_eval --runs 3 --threshold 0.8 --confirm-external-api
 ```
 
 Известные ограничения:
+- Детерминированные offline-тесты с `MockTransport` подтверждают корректность контракта адаптера, сборку контекста, вызовы инструментов и логику fallback без внешних запросов, но не гарантируют доступность конкретной модели или положительный баланс для реального пользовательского аккаунта у провайдера.
 - Offline-тесты проверяют контрактные рамки, изоляцию и работу scorer, но не являются доказательством того, что реальная стохастическая LLM всегда ответит ожидаемым образом.
 - Эвристический scorer оценивает наличие/отсутствие ключевых подстрок, факт вопроса и последовательность вызовов инструментов, но не проводит полной семантической оценки ответа.
 - Окончательная верификация изменений требует как прогона живого benchmark с многократными повторами (`--runs >= 3`), так и мониторинга реальных диалогов в продакшене.

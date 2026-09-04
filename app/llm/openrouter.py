@@ -9,6 +9,7 @@ import httpx
 from app.config import Settings, reveal
 from app.llm.base import LlmProcessingException, LlmResponse, is_balance_exhaustion_message
 from app.llm.chat_completions import ChatCompletionsClient
+from app.llm.fallback import _FALLBACK_STATUS_CODES
 
 if TYPE_CHECKING:
     from app.llm.mcp_router import McpRouter
@@ -58,6 +59,16 @@ class OpenRouterClient(ChatCompletionsClient):
             base_url=settings.openrouter_base_url,
             api_key=reveal(settings.openrouter_api_key),
             request_timeout_seconds=settings.openrouter_timeout_seconds,
+        )
+        self._log_reasoning_configuration()
+
+    def _log_reasoning_configuration(self) -> None:
+        logger.info(
+            "Selected LLM: provider=%s, model=%s, configured_effort=%s, effective_effort=%s",
+            self.get_provider_name(),
+            self.model,
+            self.settings.reasoning_effort,
+            self.get_effective_reasoning_effort(),
         )
 
     def get_provider_name(self) -> str:
@@ -170,14 +181,28 @@ class OpenRouterClient(ChatCompletionsClient):
         self, response: httpx.Response, payload: dict[str, Any] | None
     ) -> None:
         """Inspect HTTP response and OpenRouter error payload for errors."""
+        raw_msg = ""
+        if payload and isinstance(payload.get("error"), (dict, str)):
+            err = payload["error"]
+            raw_msg = str(err.get("message") if isinstance(err, dict) else err)
+        elif response.text:
+            raw_msg = response.text
+
+        is_balance = is_balance_exhaustion_message(raw_msg)
+
         if response.status_code >= 400:
-            super().check_response_error(response, payload)
-            return
+            http_status = response.status_code
+            fallback_eligible = (http_status in _FALLBACK_STATUS_CODES) or is_balance
+            raise LlmProcessingException(
+                f"{self.get_provider_name()} API error (model={self.model}, status={http_status})",
+                "Произошла ошибка при обработке запроса. Попробуйте позже.",
+                status_code=http_status,
+                fallback_eligible=fallback_eligible,
+            )
 
         if payload is not None and "error" in payload and payload["error"] is not None:
             err = payload["error"]
             raw_code = err.get("code") if isinstance(err, dict) else None
-            raw_msg = str(err.get("message") if isinstance(err, dict) else err)
 
             normalized_code: int | None = None
             if isinstance(raw_code, int):
@@ -188,12 +213,14 @@ class OpenRouterClient(ChatCompletionsClient):
                 except ValueError:
                     normalized_code = None
 
-            status_code = (
+            status_code: int | None = (
                 normalized_code
                 if (normalized_code is not None and 100 <= normalized_code <= 599)
                 else None
             )
-            fallback_eligible = is_balance_exhaustion_message(raw_msg)
+            fallback_eligible = (
+                (status_code in _FALLBACK_STATUS_CODES) if status_code is not None else False
+            ) or is_balance
 
             desc = f"{self.get_provider_name()} API error (model={self.model}"
             if status_code is not None:
