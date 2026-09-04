@@ -697,6 +697,12 @@ class TestEditMessage:
 
 
 class TestSenderTraceLogging:
+    @pytest.fixture(autouse=True)
+    def configure_trace_logging(self) -> None:
+        from app.logging_config import setup_logging
+
+        setup_logging("TRACE")
+
     @pytest.mark.asyncio
     async def test_trace_logging_for_send_and_chunks(
         self, caplog: pytest.LogCaptureFixture

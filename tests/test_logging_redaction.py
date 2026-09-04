@@ -233,7 +233,7 @@ class TestSafeSerializationAndErrorMetadata:
         assert meta["operation"] == "connect"
         assert meta["exception_class"] == "ConnectionError"
         assert "raw_secret_in_exception_msg" not in meta["safe_reason"]
-        assert "[REDACTED]" in meta["safe_reason"]
+        assert meta["safe_reason"] == "ConnectionError"
         assert "location" in meta
         # Verify no locals or raw stack dumps leaked into metadata
         assert "locals" not in meta

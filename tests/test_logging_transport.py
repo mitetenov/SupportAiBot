@@ -125,7 +125,7 @@ class TestTransportLoggingTrace:
         assert bytes(content) == b"chunk-one-chunk-two"
         output = stream.getvalue()
         assert "HTTP response: GET" in output
-        assert "[streaming response]" in output or "streaming" in output
+        assert "chunk-one-chunk-two" in output
 
     @pytest.mark.asyncio
     async def test_trace_handles_streaming_request_body_safely(self) -> None:

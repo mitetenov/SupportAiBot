@@ -5,6 +5,7 @@ import logging
 from app.bedolaga.client import DEFAULT_LIST_LIMIT, BedolagaClient
 from app.bedolaga.pipeline import TicketAnswerer
 from app.bedolaga.state import TicketStateStore
+from app.logging_config import TRACE
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +36,14 @@ class TicketPoller:
         try:
             ticket_ids.extend(await self.client.list_awaiting_ticket_ids(self.limit))
         except Exception as e:
-            logger.warning("Bedolaga ticket sweep failed: %s", e)
+            logger.error("Bedolaga ticket sweep failed", exc_info=True)
+            logger.log(TRACE, "Bedolaga ticket sweep failed: %s", e)
 
         try:
             pending_media_ids = await self.state.pending_media_ticket_ids(self.limit)
         except Exception as e:
-            logger.warning("Bedolaga pending-media sweep failed: %s", e)
+            logger.error("Bedolaga pending-media sweep failed", exc_info=True)
+            logger.log(TRACE, "Bedolaga pending-media sweep failed: %s", e)
             pending_media_ids = []
 
         ticket_ids = list(dict.fromkeys([*ticket_ids, *pending_media_ids]))

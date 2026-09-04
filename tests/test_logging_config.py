@@ -224,7 +224,8 @@ class TestSafeConsoleFormatter:
         )
         formatted = formatter.format(record_exc)
         assert "error_class=RuntimeError" in formatted
-        assert "reason=direct error reason" in formatted
+        assert "reason=RuntimeError" in formatted
+        assert "direct error reason" not in formatted
 
         # Boolean or malformed exc_info
         record_bool = logging.LogRecord(

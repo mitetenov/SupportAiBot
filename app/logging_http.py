@@ -55,13 +55,25 @@ def _safe_read_request_body(request: httpx.Request) -> str | None:
         return f"[binary body: {len(raw)} bytes]"
 
 
-def _safe_read_response_body(response: httpx.Response) -> str | None:
-    """Read response body safely for TRACE logging without consuming unread streams."""
+async def _safe_read_response_body(response: httpx.Response) -> str | None:
+    """Read a textual response once for TRACE while preserving response.content for callers."""
     if not logger.isEnabledFor(TRACE):
         return None
-    if not hasattr(response, "_content"):
+    content_type = response.headers.get("content-type", "").lower()
+    if content_type and not (
+        content_type.startswith("text/")
+        or "json" in content_type
+        or "xml" in content_type
+        or "javascript" in content_type
+    ):
+        content_length = response.headers.get("content-length", "unknown")
+        return f"[binary body: {content_length} bytes]"
+    try:
+        raw = response.content if hasattr(response, "_content") else await response.aread()
+    except httpx.ResponseNotRead, RuntimeError:
         return "[streaming response]"
-    raw = response._content
+    except Exception:
+        return "[unavailable response body]"
     if not raw:
         return ""
     try:
@@ -134,7 +146,7 @@ async def log_response(response: httpx.Response, request: httpx.Request | None =
         raw_url = req.url if req is not None else ""
         sanitized_url = sanitize_url(raw_url)
         status_code = response.status_code
-        body = _safe_read_response_body(response)
+        body = await _safe_read_response_body(response)
 
         extra: dict[str, Any] = {
             "method": method,

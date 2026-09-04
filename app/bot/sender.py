@@ -386,7 +386,8 @@ class TelegramMessageSender:
         try:
             result = await self.bot.send_photo(**kwargs)
         except Exception as e:
-            logger.warning("Failed to upload ticket photo to %s: %s", chat_id, e)
+            logger.error("Failed to upload ticket photo", exc_info=True)
+            logger.log(TRACE, "Failed to upload ticket photo to %s: %s", chat_id, e)
             return None
         msg_id = getattr(result, "message_id", None)
         if logger.isEnabledFor(TRACE):

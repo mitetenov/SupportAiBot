@@ -413,6 +413,7 @@ class TestRagTelemetryAndDatabaseTrace:
     async def test_chat_history_diagnostics_on_trace(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
+        setup_logging("TRACE")
         caplog.set_level(TRACE)
 
         db_manager = MagicMock(spec=DatabaseSessionManager)

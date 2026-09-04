@@ -529,6 +529,19 @@ class HttpMcpClient(McpClientInterface):
                     err_msg = err_dict.get("error", "tool returned is_error=True")
                 except Exception:
                     err_msg = "tool returned is_error=True"
+                logger.error(
+                    "MCP call failed: server=%s, tool=%s, error_class=McpToolError",
+                    self.server_name,
+                    tool_name,
+                )
+                if logger.isEnabledFor(TRACE):
+                    logger.log(
+                        TRACE,
+                        "%s tool '%s' returned is_error=True: %s",
+                        self._label,
+                        tool_name,
+                        err_msg,
+                    )
                 await self._notify_admins(
                     f"{self._label} tool error: {tool_name}",
                     RuntimeError(f"Tool {tool_name} returned error: {err_msg}"),

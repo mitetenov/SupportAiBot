@@ -104,7 +104,14 @@ class SafeConsoleFormatter(logging.Formatter):
             component = record.name
 
             # 4. Format and redact raw message
-            raw_msg = record.getMessage()
+            # Exception strings often contain remote response bodies or user input.
+            # At INFO/ERROR keep the stable message template; TRACE is the only
+            # level that is allowed to interpolate diagnostic values freely.
+            raw_msg = (
+                str(record.msg)
+                if canonical_label == "ERROR" and record.args
+                else record.getMessage()
+            )
             sanitized_msg = redact_credentials_in_text(raw_msg)
             escaped_msg = escape_control_chars(sanitized_msg)
 
@@ -349,6 +356,15 @@ def setup_logging(level: str = "INFO", stream: TextIO | None = None) -> None:
     root = logging.getLogger()
     # Ensure root allows TRACE records through to the handler
     root.setLevel(TRACE_LEVEL_NUM)
+    # The root remains open so the handler can normalise dependencies, but
+    # application loggers must reject TRACE calls before they serialize bodies.
+    logging.getLogger("app").setLevel(
+        TRACE_LEVEL_NUM
+        if normalized_level == "TRACE"
+        else logging.ERROR
+        if normalized_level == "ERROR"
+        else logging.INFO
+    )
 
     target_stream = stream if stream is not None else sys.stdout
 

@@ -204,7 +204,11 @@ def get_safe_error_metadata(
 ) -> dict[str, Any]:
     """Generate safe, credential-free error metadata without leaking frame locals or code lines."""
     exc_class = exc.__class__.__name__
-    safe_reason = redact_credentials_in_text(str(exc))
+    # Exception messages are supplied by remote services and may contain user
+    # text, SQL parameters, or response bodies.  The exception type and an
+    # optional status code are enough for INFO/ERROR correlation; full text is
+    # emitted only with the accompanying TRACE record.
+    safe_reason = exc_class
 
     location = "unknown"
     tb = exc.__traceback__

@@ -243,7 +243,7 @@ class TicketAnswerer:
         if not self.rate_limiter.try_acquire(user_key):
             # Nothing is recorded, so the next sweep answers this message once
             # the window has passed.
-            logger.info("Bedolaga ticket %d is rate limited for user %d", ticket.id, user_key)
+            logger.log(TRACE, "Bedolaga ticket %d is rate limited for user %d", ticket.id, user_key)
             return
 
         media_was_resolved = last.id in media_map

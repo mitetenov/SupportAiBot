@@ -139,11 +139,10 @@ class LlmFallbackClient:
                 if not is_fallback_eligible(error):
                     raise
                 logger.error(
-                    "LLM provider %s failed (error_class=%s, status_code=%s, reason=%s)",
+                    "LLM provider %s failed (error_class=%s, status_code=%s)",
                     client.get_provider_name(),
                     type(error).__name__,
                     getattr(error, "status_code", None),
-                    getattr(error, "message", str(error))[:100],
                 )
                 if logger.isEnabledFor(TRACE):
                     logger.log(
