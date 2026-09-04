@@ -455,3 +455,91 @@ class TestBedolagaSettings:
                 bedolaga_webhook_secret="shhh",
                 bedolaga_webhook_path="bedolaga/webhook",
             )
+
+
+class TestBotLogLevelSettings:
+    """Tests for BOT_LOG_LEVEL configuration and validation."""
+
+    def test_should_default_bot_log_level_to_info(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        settings = Settings(**valid_settings_dict)
+        assert settings.bot_log_level == "INFO"
+        assert settings.log_level == "INFO"
+
+    @pytest.mark.parametrize(
+        ("input_value", "expected"),
+        [
+            ("TRACE", "TRACE"),
+            ("INFO", "INFO"),
+            ("ERROR", "ERROR"),
+            ("trace", "TRACE"),
+            ("info", "INFO"),
+            ("error", "ERROR"),
+            ("  Trace  ", "TRACE"),
+            ("\tinfo\n", "INFO"),
+            ("  ERROR  ", "ERROR"),
+        ],
+    )
+    def test_should_accept_valid_log_levels_case_insensitively_with_whitespace(
+        self,
+        valid_settings_dict: dict[str, object],
+        input_value: str,
+        expected: str,
+    ) -> None:
+        valid_settings_dict["bot_log_level"] = input_value
+        settings = Settings(**valid_settings_dict)
+        assert settings.bot_log_level == expected
+        assert settings.log_level == expected
+
+    @pytest.mark.parametrize(
+        "invalid_value",
+        [
+            "",
+            "   ",
+            "\t\n",
+            "DEBUG",
+            "WARNING",
+            "CRITICAL",
+            "VERBOSE",
+            "NONE",
+            "ALL",
+            "UNKNOWN",
+        ],
+    )
+    def test_should_reject_invalid_log_levels(
+        self,
+        valid_settings_dict: dict[str, object],
+        invalid_value: str,
+    ) -> None:
+        valid_settings_dict["bot_log_level"] = invalid_value
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(**valid_settings_dict)
+        error_text = str(exc_info.value)
+        assert "BOT_LOG_LEVEL" in error_text
+        assert "TRACE" in error_text
+        assert "INFO" in error_text
+        assert "ERROR" in error_text
+
+    def test_validation_error_must_not_reveal_raw_input_value_or_credentials(
+        self, valid_settings_dict: dict[str, object]
+    ) -> None:
+        secret_value = "sk-secret-credentials-token-xyz987"
+        valid_settings_dict["bot_log_level"] = secret_value
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(**valid_settings_dict)
+
+        error_message = str(exc_info.value)
+        assert secret_value not in error_message
+        for err in exc_info.value.errors():
+            assert secret_value not in str(err)
+            assert err.get("input") is None
+
+    def test_bot_log_level_read_from_environment(
+        self,
+        valid_settings_dict: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("BOT_LOG_LEVEL", "  trace  ")
+        settings = Settings(**valid_settings_dict)
+        assert settings.bot_log_level == "TRACE"

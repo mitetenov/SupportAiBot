@@ -28,6 +28,8 @@ from app.config import get_settings, reveal
 from app.llm import create_llm_client
 from app.llm.mcp_client import HttpMcpClient, McpClientInterface
 from app.llm.mcp_router import McpRouter
+from app.logging_config import setup_logging
+from app.logging_redaction import register_settings_secrets
 from app.rag.embedding import create_embedding_provider
 from app.rag.initializer import FaqInitializer
 from app.rag.knowledge_gaps import KnowledgeGapService
@@ -50,6 +52,7 @@ __all__ = [
     "health_handler",
     "main",
     "register_bot_commands",
+    "setup_logging",
     "start_health_server",
     "stop_health_server",
 ]
@@ -101,14 +104,10 @@ async def register_bot_commands(bot: Bot) -> None:
 
 async def main() -> None:
     """Application async entrypoint and composition root."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
-    logging.getLogger("mcp").setLevel(logging.WARNING)
-    logger.info("Starting VPN Support Bot...")
-
     settings = get_settings()
+    setup_logging(settings.bot_log_level)
+    register_settings_secrets(settings)
+    logger.info("Starting VPN Support Bot...")
     logger.info(
         "Loaded settings: LLM provider=%s, Embedding provider=%s, Group ID=%d",
         settings.llm_provider,

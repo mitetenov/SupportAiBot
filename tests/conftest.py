@@ -23,6 +23,7 @@ _SETTINGS_ENV_PREFIXES = (
     "CONVERSATION_",
     "HEALTHCHECK_",
     "BEDOLAGA_",
+    "BOT_LOG_",
 )
 
 

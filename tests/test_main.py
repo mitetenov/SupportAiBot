@@ -185,3 +185,70 @@ async def test_main_lifecycle(mock_settings: Settings) -> None:
         mock_mcp.close.assert_called_once()
         mock_bot.session.close.assert_called_once()
         mock_db.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_main_configures_logging_from_settings(mock_settings: Settings) -> None:
+    """Verify that main calls setup_logging with settings.bot_log_level."""
+    from app.main import main
+
+    with (
+        patch("app.main.get_settings", return_value=mock_settings),
+        patch("app.main.setup_logging") as mock_setup_logging,
+        patch("app.main.get_db_manager") as mock_get_db,
+        patch("app.main.HttpMcpClient") as mock_mcp,
+        patch("app.main.FaqInitializer") as mock_faq_init,
+        patch("app.main.KnowledgeGapService") as mock_gap_service,
+        patch("app.main.Dispatcher") as mock_dp,
+        patch("app.main.Bot") as mock_bot,
+        patch("app.main.sync_legacy_schema", new_callable=AsyncMock),
+        patch("app.main.start_health_server", new_callable=AsyncMock),
+        patch("app.main.stop_health_server", new_callable=AsyncMock),
+    ):
+        mock_get_db.return_value.init_models = AsyncMock()
+        mock_get_db.return_value.close = AsyncMock()
+        mock_mcp.return_value.init = AsyncMock(return_value=False)
+        mock_mcp.return_value.close = AsyncMock()
+        mock_faq_init.return_value.run = AsyncMock()
+        mock_gap_service.return_value.init_schema = AsyncMock()
+        mock_bot.return_value.session.close = AsyncMock()
+        mock_bot.return_value.set_my_commands = AsyncMock()
+        mock_dp.return_value.start_polling = AsyncMock()
+
+        await main()
+        mock_setup_logging.assert_called_once_with(mock_settings.bot_log_level)
+
+
+@pytest.mark.asyncio
+async def test_main_stops_before_network_when_settings_fail_validation() -> None:
+    """Startup validation failure must stop main before network setup or client creation."""
+    from pydantic import ValidationError
+
+    from app.main import main
+
+    with (
+        patch(
+            "app.main.get_settings",
+            side_effect=ValidationError.from_exception_data(
+                "Settings",
+                [
+                    {
+                        "type": "value_error",
+                        "loc": ("bot_log_level",),
+                        "input": None,
+                        "ctx": {"error": "Invalid"},
+                    }
+                ],
+                hide_input=True,
+            ),
+        ),
+        patch("app.main.Bot") as mock_bot,
+        patch("app.main.get_db_manager") as mock_db,
+        patch("app.main.httpx.AsyncClient") as mock_http,
+    ):
+        with pytest.raises(ValidationError):
+            await main()
+
+        mock_bot.assert_not_called()
+        mock_db.assert_not_called()
+        mock_http.assert_not_called()
