@@ -53,6 +53,85 @@ def test_parses_text_response():
     assert not response.tool_calls
 
 
+@pytest.mark.parametrize("has_tools", [False, True])
+@pytest.mark.parametrize(
+    "model,effort,native,format_key,format_value",
+    [
+        ("openai/gpt-oss-20b", "none", "low", "include_reasoning", False),
+        ("openai/gpt-oss-120b", "minimal", "low", "include_reasoning", False),
+        ("openai/gpt-oss-120b", "medium", "medium", "include_reasoning", False),
+        ("openai/gpt-oss-safeguard-20b", "max", "high", "include_reasoning", False),
+        ("qwen/qwen3-32b", "none", "none", "reasoning_format", "hidden"),
+        ("qwen/qwen3-32b", "high", "default", "reasoning_format", "hidden"),
+        ("qwen/qwen3.6-27b", "none", "none", "reasoning_format", "hidden"),
+        ("qwen/qwen3.6-27b", "max", "default", "reasoning_format", "hidden"),
+        ("qwen/qwen3.8-27b", "none", "none", "reasoning_format", "hidden"),
+        ("qwen/qwen3.8-27b", "minimal", "low", "reasoning_format", "hidden"),
+        ("qwen/qwen3.8-27b", "medium", "medium", "reasoning_format", "hidden"),
+        ("qwen/qwen3.8-27b", "xhigh", "high", "reasoning_format", "hidden"),
+    ],
+)
+def test_native_reasoning_parameters(model, effort, native, format_key, format_value, has_tools):
+    client = make_client(make_settings(groq_model=model, reasoning_effort=effort))
+    if has_tools:
+        client.tool_definitions = [{"type": "function", "function": {"name": "nodes_list"}}]
+    body = client.build_request_body([])
+    assert body["reasoning_effort"] == native
+    assert body[format_key] == format_value
+    assert "thinking" not in body
+    assert not ({"include_reasoning", "reasoning_format"} <= body.keys())
+    if has_tools:
+        assert body["tool_choice"] == "auto"
+
+
+@pytest.mark.parametrize("model", ["llama-3.3-70b-versatile", "custom-model", "deepseek-v4-pro"])
+def test_unknown_reasoning_controls_are_not_sent(model):
+    client = make_client(make_settings(groq_model=model, reasoning_effort="high"))
+    body = client.build_request_body([])
+    assert (
+        not {"thinking", "reasoning_effort", "reasoning_format", "include_reasoning"} & body.keys()
+    )
+
+
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        ("<think>private</think>Answer", "Answer"),
+        ("<think>private\nreasoning</think>\nAnswer", "Answer"),
+        ("<think>unfinished private reasoning", ""),
+        ("Answer", "Answer"),
+    ],
+)
+def test_raw_thinking_never_becomes_reply_text(content, expected):
+    response = make_client().parse_response({"choices": [{"message": {"content": content}}]})
+    assert response.text == expected
+
+
+def test_parsed_reasoning_is_separate_from_reply_and_tool_history():
+    client = make_client()
+    response = client.parse_response(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "Answer",
+                        "reasoning": "private",
+                        "tool_calls": [
+                            {"id": "one", "function": {"name": "nodes_list", "arguments": "{}"}}
+                        ],
+                    }
+                }
+            ]
+        }
+    )
+    assert response.text == "Answer"
+    assert response.reasoning_content == "private"
+    conversation = []
+    client.add_tool_calls_to_conversation(conversation, response)
+    assert "reasoning_content" not in conversation[0]
+    assert "reasoning" not in conversation[0]
+
+
 def test_parses_tool_call_response():
     client = make_client()
     response = client.parse_response(

@@ -15,6 +15,7 @@ from app.llm.base import (
 )
 from app.llm.deepseek import DeepSeekClient
 from app.llm.escalation import EscalationPolicy
+from app.llm.fallback import LlmFallbackClient, LlmFallbackExhaustedError
 from app.llm.gemini import GeminiClient, sanitize_schema_params
 from app.llm.groq import GroqClient
 from app.llm.mcp_client import (
@@ -41,7 +42,33 @@ def create_llm_client(
     db_manager: DatabaseSessionManager | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> LlmClient:
-    """Factory function creating an LlmClient instance based on settings."""
+    """Create one provider client or an ordered fallback coordinator."""
+    targets = settings.llm_provider_targets
+    clients = [
+        _create_provider_client(
+            settings.model_copy(
+                update={"llm_provider": target.provider, f"{target.provider}_model": target.model}
+            ),
+            mcp_router,
+            chat_history_service,
+            faq_service,
+            db_manager,
+            http_client,
+        )
+        for target in targets
+    ]
+    return clients[0] if len(clients) == 1 else LlmFallbackClient(clients)
+
+
+def _create_provider_client(
+    settings: Settings,
+    mcp_router: McpRouter,
+    chat_history_service: ChatHistoryService,
+    faq_service: FaqEmbeddingService,
+    db_manager: DatabaseSessionManager | None,
+    http_client: httpx.AsyncClient | None,
+) -> AbstractLlmClient:
+    """Create exactly one concrete provider client from one validated target."""
     provider = (settings.llm_provider or "").strip().lower()
     if provider == "gemini":
         return GeminiClient(
@@ -90,6 +117,8 @@ __all__ = [
     "GroqClient",
     "HttpMcpClient",
     "LlmClient",
+    "LlmFallbackClient",
+    "LlmFallbackExhaustedError",
     "LlmProcessingException",
     "LlmReply",
     "LlmResponse",

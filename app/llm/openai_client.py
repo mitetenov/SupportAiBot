@@ -14,6 +14,7 @@ from app.llm.base import (
     LlmResponse,
     TokenUsage,
     ToolCall,
+    is_balance_exhaustion_message,
 )
 from app.retry import post_with_retry
 
@@ -228,21 +229,21 @@ class OpenAiClient(AbstractLlmClient):
             description="OpenAI Responses API",
         )
         if response.status_code == 401:
-            err_msg = (
-                f"OpenAI API error (model={self.model}): 401 - {response.text} | "
-                "Проверьте OPENAI_API_KEY и OPENAI_MODEL в .env"
-            )
+            err_msg = f"OpenAI API error (model={self.model}, status=401)"
             logger.error(err_msg)
             raise LlmProcessingException(
                 err_msg,
                 "Произошла ошибка при обработке запроса. Попробуйте позже.",
+                status_code=response.status_code,
             )
 
         if response.status_code >= 400:
-            logger.error("OpenAI API error (%d): %s", response.status_code, response.text)
+            logger.error("OpenAI API error (model=%s, status=%d)", self.model, response.status_code)
             raise LlmProcessingException(
-                f"OpenAI API error (model={self.model}): {response.status_code} - {response.text}",
+                f"OpenAI API error (model={self.model}, status={response.status_code})",
                 "Произошла ошибка при обработке запроса. Попробуйте позже.",
+                status_code=response.status_code,
+                fallback_eligible=is_balance_exhaustion_message(response.text),
             )
 
         return self.decode_json(response)
