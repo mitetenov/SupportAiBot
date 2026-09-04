@@ -184,6 +184,62 @@ class TestSafeConsoleFormatter:
         assert "user_action=export_report" in formatted
         assert "duration_ms=350" in formatted
 
+    def test_format_redacts_sensitive_top_level_extra_keys(self) -> None:
+        formatter = SafeConsoleFormatter()
+        record = logging.LogRecord(
+            name="app.test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=10,
+            msg="User login attempt",
+            args=(),
+            exc_info=None,
+        )
+        record.token = "raw_super_secret_token_123"  # type: ignore[attr-defined]
+        record.password = "mypassword123"  # type: ignore[attr-defined]
+        record.api_key = "secret_key_456"  # type: ignore[attr-defined]
+        record.user_id = 42  # type: ignore[attr-defined]
+
+        formatted = formatter.format(record)
+        assert "token=[REDACTED]" in formatted
+        assert "password=[REDACTED]" in formatted
+        assert "api_key=[REDACTED]" in formatted
+        assert "user_id=42" in formatted
+        assert "raw_super_secret_token_123" not in formatted
+        assert "mypassword123" not in formatted
+        assert "secret_key_456" not in formatted
+
+    def test_format_handles_non_tuple_and_direct_exception_in_exc_info(self) -> None:
+        formatter = SafeConsoleFormatter()
+        # Direct BaseException instance
+        err = RuntimeError("direct error reason")
+        record_exc = logging.LogRecord(
+            name="app.test",
+            level=logging.ERROR,
+            pathname="test.py",
+            lineno=10,
+            msg="Direct error",
+            args=(),
+            exc_info=err,  # type: ignore[arg-type]
+        )
+        formatted = formatter.format(record_exc)
+        assert "error_class=RuntimeError" in formatted
+        assert "reason=direct error reason" in formatted
+
+        # Boolean or malformed exc_info
+        record_bool = logging.LogRecord(
+            name="app.test",
+            level=logging.ERROR,
+            pathname="test.py",
+            lineno=10,
+            msg="Bool exc",
+            args=(),
+            exc_info=True,  # type: ignore[arg-type]
+        )
+        formatted_bool = formatter.format(record_bool)
+        assert "Bool exc" in formatted_bool
+        assert "[LOGGING_FORMAT_ERROR]" not in formatted_bool
+
 
 class TestCumulativeThresholds:
     """Verify cumulative thresholds for TRACE, INFO, ERROR."""

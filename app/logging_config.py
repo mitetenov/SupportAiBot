@@ -6,7 +6,11 @@ import sys
 from typing import Any, TextIO
 
 from app.logging_context import get_logging_context
-from app.logging_redaction import get_safe_error_metadata, redact_credentials_in_text
+from app.logging_redaction import (
+    get_safe_error_metadata,
+    is_sensitive_key,
+    redact_credentials_in_text,
+)
 
 TRACE_LEVEL_NUM: int = 5
 TRACE_LEVEL_NAME: str = "TRACE"
@@ -123,7 +127,10 @@ class SafeConsoleFormatter(logging.Formatter):
             for k, v in record.__dict__.items():
                 if k not in _STANDARD_LOG_RECORD_ATTRS and not k.startswith("_"):
                     safe_k = escape_control_chars(str(k))
-                    safe_v = escape_control_chars(redact_credentials_in_text(str(v)))
+                    if is_sensitive_key(str(k)):
+                        safe_v = "[REDACTED]"
+                    else:
+                        safe_v = escape_control_chars(redact_credentials_in_text(str(v)))
                     ctx_parts.append(f"{safe_k}={safe_v}")
 
             ctx_str = f" [{' '.join(ctx_parts)}]" if ctx_parts else ""
@@ -131,11 +138,22 @@ class SafeConsoleFormatter(logging.Formatter):
             line = f"{timestamp} [{canonical_label}] {component}: {escaped_msg}{ctx_str}"
 
             # 6. Format exceptions if present
-            if record.exc_info and record.exc_info[1]:
-                exc = record.exc_info[1]
+            exc: BaseException | None = None
+            if isinstance(record.exc_info, tuple) and len(record.exc_info) >= 2:
+                if isinstance(record.exc_info[1], BaseException):
+                    exc = record.exc_info[1]
+            elif isinstance(record.exc_info, BaseException):
+                exc = record.exc_info
+
+            if exc is not None:
                 if canonical_label == "TRACE":
                     try:
-                        exc_text = self.formatException(record.exc_info)
+                        exc_info_arg = (
+                            record.exc_info
+                            if isinstance(record.exc_info, tuple)
+                            else (type(exc), exc, exc.__traceback__)
+                        )
+                        exc_text = self.formatException(exc_info_arg)
                         sanitized_exc = redact_credentials_in_text(exc_text)
                         escaped_exc = escape_control_chars(sanitized_exc)
                         line = f"{line} | exc={escaped_exc}"

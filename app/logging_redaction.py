@@ -133,6 +133,14 @@ def redact_credentials_in_text(text: str) -> str:
     return result
 
 
+def is_sensitive_key(key: str) -> bool:
+    """Check if a dictionary or attribute key indicates sensitive credential data."""
+    str_key = str(key).lower()
+    return str_key in SENSITIVE_KEYS or any(
+        s in str_key for s in ("password", "secret", "token", "api_key", "apikey", "auth", "cookie")
+    )
+
+
 def redact_data(data: Any) -> Any:
     """Recursively redact credentials in mappings, sequences, and strings without mutating originals."""
     if data is None or isinstance(data, (int, float, bool)):
@@ -147,10 +155,7 @@ def redact_data(data: Any) -> Any:
     if isinstance(data, Mapping):
         redacted_dict: dict[Any, Any] = {}
         for key, value in data.items():
-            str_key = str(key).lower()
-            if str_key in SENSITIVE_KEYS or any(
-                s in str_key for s in ("password", "secret", "token", "api_key")
-            ):
+            if is_sensitive_key(str(key)):
                 redacted_dict[key] = "[REDACTED]"
             else:
                 redacted_dict[key] = redact_data(value)

@@ -1,10 +1,12 @@
 """Global test fixtures and configuration."""
 
 import os
+from collections.abc import Iterator
 
 import pytest
 
 from app.config import Settings, get_settings
+from app.logging_redaction import clear_registered_secrets
 
 # Every field the bot reads from the environment. Left in place, a developer's
 # own .env or exported shell variables leak into Settings(...) and quietly change
@@ -35,6 +37,14 @@ def isolate_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         if name.startswith(_SETTINGS_ENV_PREFIXES):
             monkeypatch.delenv(name, raising=False)
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def isolate_logging_registered_secrets() -> Iterator[None]:
+    """Ensure registered secrets do not leak across test cases."""
+    clear_registered_secrets()
+    yield
+    clear_registered_secrets()
 
 
 @pytest.fixture

@@ -1,10 +1,9 @@
 import copy
 
-import pytest
-
 from app.logging_redaction import (
     clear_registered_secrets,
     get_safe_error_metadata,
+    is_sensitive_key,
     redact_credentials_in_text,
     redact_data,
     register_secret,
@@ -12,11 +11,24 @@ from app.logging_redaction import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _isolate_secrets() -> None:
-    clear_registered_secrets()
-    yield
-    clear_registered_secrets()
+class TestIsSensitiveKey:
+    """Tests for identifying credential keys in structures."""
+
+    def test_sensitive_keys_identified(self) -> None:
+        assert is_sensitive_key("token")
+        assert is_sensitive_key("Token")
+        assert is_sensitive_key("bot_token")
+        assert is_sensitive_key("password")
+        assert is_sensitive_key("api_key")
+        assert is_sensitive_key("authorization")
+        assert is_sensitive_key("cookie")
+        assert is_sensitive_key("SECRET_VAL")
+
+    def test_non_sensitive_keys_preserved(self) -> None:
+        assert not is_sensitive_key("user_id")
+        assert not is_sensitive_key("action")
+        assert not is_sensitive_key("chat_id")
+        assert not is_sensitive_key("duration_ms")
 
 
 class TestCredentialRedactionInText:
