@@ -79,7 +79,7 @@ class OpenRouterClient(ChatCompletionsClient):
         normalized_model = self.model.strip().lower()
         effort = self.settings.reasoning_effort
 
-        if normalized_model == "z-ai/glm-4.7":
+        if normalized_model in ("z-ai/glm-4.7", "z-ai/glm-5.3-flash"):
             if effort == "none":
                 return "none"
             return "enabled"
@@ -101,7 +101,7 @@ class OpenRouterClient(ChatCompletionsClient):
         normalized_model = self.model.strip().lower()
         effort = self.settings.reasoning_effort
 
-        if normalized_model == "z-ai/glm-4.7":
+        if normalized_model in ("z-ai/glm-4.7", "z-ai/glm-5.3-flash"):
             if effort == "none":
                 body["reasoning"] = {"enabled": False}
             else:

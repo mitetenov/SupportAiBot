@@ -19,7 +19,7 @@ from app.llm.openrouter import OpenRouterClient, OpenRouterResponse
 @pytest.fixture
 def make_openrouter_settings(valid_settings_dict: dict[str, object]):
     def _maker(
-        model: str = "z-ai/glm-4.7",
+        model: str = "z-ai/glm-5.3-flash",
         effort: str = "none",
         base_url: str = "https://openrouter.ai/api/v1",
         timeout: float = 120.0,
@@ -84,23 +84,25 @@ def mock_faq_service() -> MagicMock:
 
 
 class TestOpenRouterReasoningMatrix:
-    """Validate the exact reasoning matrix for glm-4.7, glm-5.3, and unknown models."""
+    """Validate the exact reasoning matrix for glm-5.3-flash, glm-4.7, glm-5.3, and unknown models."""
 
     ALL_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
+    @pytest.mark.parametrize("model", ["z-ai/glm-5.3-flash", "z-ai/glm-4.7"])
     @pytest.mark.parametrize("effort", ALL_EFFORTS)
     @pytest.mark.parametrize("with_tools", [True, False])
-    def test_glm_4_7_reasoning(
+    def test_glm_toggle_reasoning(
         self,
         make_openrouter_settings,
         mock_mcp_router,
         mock_empty_mcp_router,
         mock_history_service,
         mock_faq_service,
+        model: str,
         effort: str,
         with_tools: bool,
     ) -> None:
-        settings = make_openrouter_settings(model="z-ai/glm-4.7", effort=effort)
+        settings = make_openrouter_settings(model=model, effort=effort)
         router = mock_mcp_router if with_tools else mock_empty_mcp_router
         client = OpenRouterClient(
             settings=settings,
