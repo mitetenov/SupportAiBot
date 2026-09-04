@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from app.logging_config import log_failure
 from app.rag.service import FaqEmbeddingService
 from app.rag.types import FaqEntry
 
@@ -28,7 +29,7 @@ class FaqInitializer:
     async def run(self) -> None:
         """Run startup sync check and re-index if FAQ file changed."""
         if not self.faq_path.exists():
-            logger.warning("FAQ file not found at path: %s", self.faq_path)
+            logger.info("FAQ file is absent; search starts without indexing")
             self.service.mark_ready()
             return
 
@@ -57,8 +58,8 @@ class FaqInitializer:
                 return
 
             if faq_count > 0 and indexed_count < faq_count:
-                logger.warning(
-                    "%d of %d FAQ entries have no embedding — re-indexing regardless of the hash",
+                logger.info(
+                    "%d of %d FAQ entries have no embedding; re-indexing",
                     faq_count - indexed_count,
                     faq_count,
                 )
@@ -93,18 +94,18 @@ class FaqInitializer:
             if current_hash is not None and indexed == len(usable):
                 await self.service.update_faq_hash(current_hash)
             elif indexed != len(usable):
-                logger.warning(
-                    "Only %d of %d FAQ entries were indexed — leaving the stored hash alone "
-                    "so the next start retries",
-                    indexed,
-                    len(usable),
+                log_failure(
+                    logger,
+                    "FAQ indexing incomplete; next start will retry",
+                    indexed=indexed,
+                    expected=len(usable),
                 )
 
             logger.info("FAQ indexing complete: %d entries indexed", indexed)
             self.service.mark_ready()
 
         except Exception as e:
-            logger.error("Failed to load FAQ file — FAQ search will be unavailable: %s", e)
+            log_failure(logger, "FAQ loading failed; search unavailable", e)
 
     @staticmethod
     def compute_hash(file_path: Path) -> str | None:
@@ -116,7 +117,7 @@ class FaqInitializer:
                     hasher.update(chunk)
             return hasher.hexdigest()
         except Exception as e:
-            logger.error("Failed to compute FAQ file hash for %s: %s", file_path, e)
+            log_failure(logger, "FAQ file hashing failed", e, details={"path": str(file_path)})
             return None
 
     @staticmethod

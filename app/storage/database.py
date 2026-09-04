@@ -56,7 +56,7 @@ class DatabaseSessionManager:
             autocommit=False,
             autoflush=False,
         )
-        logger.info("DatabaseSessionManager initialized with URL: %s", database_url.split("@")[-1])
+        logger.info("DatabaseSessionManager initialized")
 
     @property
     def is_initialized(self) -> bool:

@@ -104,13 +104,17 @@ class TestTransportLoggingTrace:
         class CustomStream(httpx.AsyncByteStream):
             def __init__(self) -> None:
                 self.chunks = [b"chunk-one-", b"chunk-two"]
+                self.read_count = 0
 
             async def __aiter__(self) -> AsyncGenerator[bytes]:
                 for c in self.chunks:
+                    self.read_count += 1
                     yield c
 
+        body = CustomStream()
+
         def mock_handler(_request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, stream=CustomStream())
+            return httpx.Response(200, stream=body, headers={"Content-Type": "text/plain"})
 
         client = httpx.AsyncClient(
             event_hooks=create_logging_hooks(),
@@ -118,6 +122,7 @@ class TestTransportLoggingTrace:
         )
 
         async with client.stream("GET", "https://api.example.com/stream") as resp:
+            assert body.read_count == 0
             content = bytearray()
             async for chunk in resp.aiter_bytes():
                 content.extend(chunk)

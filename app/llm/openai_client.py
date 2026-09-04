@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from app.storage.chat_history import ChatHistoryService
     from app.storage.database import DatabaseSessionManager
 
+from app.logging_config import log_failure
+
 logger = logging.getLogger(__name__)
 
 OPENAI_GPT_56_EFFORTS: frozenset[str] = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
@@ -118,9 +120,8 @@ class OpenAiClient(AbstractLlmClient):
         )
         if not self.reasoning_supported:
             if self.reasoning_effort != "none":
-                logger.warning(
-                    "OpenAI model %s does not support reasoning; "
-                    "REASONING_EFFORT=%s is ignored and requests are sent without reasoning",
+                logger.info(
+                    "OpenAI model %s does not support reasoning; REASONING_EFFORT=%s is ignored and requests are sent without reasoning",
                     self.model,
                     self.reasoning_effort,
                 )
@@ -132,7 +133,7 @@ class OpenAiClient(AbstractLlmClient):
             self.reasoning_effort,
         )
         if self.reasoning_effort != "none" and self.temperature is not None:
-            logger.warning(
+            logger.info(
                 "OPENAI_TEMPERATURE=%s is ignored while REASONING_EFFORT=%s is enabled",
                 self.temperature,
                 self.reasoning_effort,
@@ -352,7 +353,7 @@ class OpenAiClient(AbstractLlmClient):
         except LlmProcessingException:
             raise
         except Exception as e:
-            logger.error("Failed to parse OpenAI response: %s", e)
+            log_failure(logger, "OpenAI response parsing failed", e)
             raise LlmProcessingException(
                 f"Parse error: {e}", "Ошибка обработки ответа модели."
             ) from e

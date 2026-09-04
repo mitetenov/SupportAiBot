@@ -6,6 +6,7 @@ from typing import Any, Protocol, runtime_checkable
 import httpx
 
 from app.config import Settings, reveal
+from app.logging_config import log_failure
 from app.retry import post_with_retry
 
 logger = logging.getLogger(__name__)
@@ -127,28 +128,31 @@ class GeminiEmbeddingProvider(_HttpEmbeddingProvider):
             response = await self._post(url, headers, payload)
 
             if response.status_code != 200:
-                logger.error(
-                    "Gemini embedding failed with status %d: %s",
-                    response.status_code,
-                    response.text,
+                log_failure(
+                    logger,
+                    "Gemini embedding failed",
+                    status_code=response.status_code,
+                    details=response.text,
                 )
                 return []
 
             data = response.json()
             embedding_node = data.get("embedding")
             if not embedding_node or not isinstance(embedding_node, dict):
-                logger.error("No embedding object in Gemini response: %s", response.text)
+                log_failure(logger, "No embedding object in Gemini response", details=response.text)
                 return []
 
             values = embedding_node.get("values")
             if not values or not isinstance(values, list):
-                logger.error("Unexpected values in Gemini embedding response: %s", response.text)
+                log_failure(
+                    logger, "Unexpected values in Gemini embedding response", details=response.text
+                )
                 return []
 
             return [float(x) for x in values]
 
         except Exception as e:
-            logger.error("Gemini embedding request exception: %s", e)
+            log_failure(logger, "Gemini embedding request exception", e)
             return []
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
@@ -175,21 +179,24 @@ class GeminiEmbeddingProvider(_HttpEmbeddingProvider):
         try:
             response = await self._post(url, headers, payload)
             if response.status_code != 200:
-                logger.error(
-                    "Gemini batch embedding failed with status %d: %s",
-                    response.status_code,
-                    response.text,
+                log_failure(
+                    logger,
+                    "Gemini batch embedding failed",
+                    status_code=response.status_code,
+                    details=response.text,
                 )
                 return [[] for _ in texts]
 
             embeddings = response.json().get("embeddings")
             if not isinstance(embeddings, list):
-                logger.error("No embeddings array in Gemini batch response: %s", response.text)
+                log_failure(
+                    logger, "No embeddings array in Gemini batch response", details=response.text
+                )
                 return [[] for _ in texts]
 
             return _read_values(embeddings, len(texts), key="values")
         except Exception as e:
-            logger.error("Gemini batch embedding request exception: %s", e)
+            log_failure(logger, "Gemini batch embedding request exception", e)
             return [[] for _ in texts]
 
 
@@ -236,29 +243,34 @@ class OpenAiEmbeddingProvider(_HttpEmbeddingProvider):
             response = await self._post(url, headers, payload)
 
             if response.status_code != 200:
-                logger.error(
-                    "OpenAI embedding failed with status %d: %s",
-                    response.status_code,
-                    response.text,
+                log_failure(
+                    logger,
+                    "OpenAI embedding failed",
+                    status_code=response.status_code,
+                    details=response.text,
                 )
                 return []
 
             data = response.json()
             data_list = data.get("data")
             if not data_list or not isinstance(data_list, list):
-                logger.error("No data array in OpenAI embedding response: %s", response.text)
+                log_failure(
+                    logger, "No data array in OpenAI embedding response", details=response.text
+                )
                 return []
 
             first_entry = data_list[0]
             embedding = first_entry.get("embedding") if isinstance(first_entry, dict) else None
             if not embedding or not isinstance(embedding, list):
-                logger.error("Unexpected embedding format in OpenAI response: %s", response.text)
+                log_failure(
+                    logger, "Unexpected embedding format in OpenAI response", details=response.text
+                )
                 return []
 
             return [float(x) for x in embedding]
 
         except Exception as e:
-            logger.error("OpenAI embedding request exception: %s", e)
+            log_failure(logger, "OpenAI embedding request exception", e)
             return []
 
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
@@ -280,16 +292,21 @@ class OpenAiEmbeddingProvider(_HttpEmbeddingProvider):
         try:
             response = await self._post(url, headers, payload)
             if response.status_code != 200:
-                logger.error(
-                    "OpenAI batch embedding failed with status %d: %s",
-                    response.status_code,
-                    response.text,
+                log_failure(
+                    logger,
+                    "OpenAI batch embedding failed",
+                    status_code=response.status_code,
+                    details=response.text,
                 )
                 return [[] for _ in texts]
 
             data_list = response.json().get("data")
             if not isinstance(data_list, list):
-                logger.error("No data array in OpenAI batch embedding response: %s", response.text)
+                log_failure(
+                    logger,
+                    "No data array in OpenAI batch embedding response",
+                    details=response.text,
+                )
                 return [[] for _ in texts]
 
             # The API documents that entries may come back out of order.
@@ -302,7 +319,7 @@ class OpenAiEmbeddingProvider(_HttpEmbeddingProvider):
                     ordered[index] = entry
             return _read_values(ordered, len(texts), key="embedding")
         except Exception as e:
-            logger.error("OpenAI batch embedding request exception: %s", e)
+            log_failure(logger, "OpenAI batch embedding request exception", e)
             return [[] for _ in texts]
 
 

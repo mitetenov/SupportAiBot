@@ -16,7 +16,7 @@ from app.llm.base import (
     ToolCall,
     is_balance_exhaustion_message,
 )
-from app.logging_config import TRACE
+from app.logging_config import TRACE, log_failure
 from app.logging_http import create_logging_hooks
 from app.logging_redaction import safe_serialize
 from app.retry import post_with_retry
@@ -215,9 +215,8 @@ class GeminiClient(AbstractLlmClient):
         )
         if self.reasoning_version is None:
             if self.reasoning_effort != "none":
-                logger.warning(
-                    "Gemini model %s does not support configurable thinking; "
-                    "REASONING_EFFORT=%s is ignored and requests are sent without thinking config",
+                logger.info(
+                    "Gemini model %s does not support configurable thinking; REASONING_EFFORT=%s is ignored and requests are sent without thinking config",
                     self.model,
                     self.reasoning_effort,
                 )
@@ -225,9 +224,8 @@ class GeminiClient(AbstractLlmClient):
 
         if self.reasoning_version == "3" and self.reasoning_effort == "none":
             native_level = resolve_gemini_3_level(self.model, self.reasoning_effort)
-            logger.warning(
-                "Gemini 3 model %s cannot fully disable thinking; "
-                "REASONING_EFFORT=none is mapped to %s",
+            logger.info(
+                "Gemini 3 model %s cannot fully disable thinking; REASONING_EFFORT=none is mapped to %s",
                 self.model,
                 native_level,
             )
@@ -237,9 +235,8 @@ class GeminiClient(AbstractLlmClient):
             and "pro" in self.model.lower()
             and self.reasoning_effort == "none"
         ):
-            logger.warning(
-                "Gemini 2.5 Pro model %s cannot disable thinking; "
-                "REASONING_EFFORT=none is ignored and dynamic thinking remains enabled",
+            logger.info(
+                "Gemini 2.5 Pro model %s cannot disable thinking; REASONING_EFFORT=none is ignored and dynamic thinking remains enabled",
                 self.model,
             )
             return
@@ -424,15 +421,8 @@ class GeminiClient(AbstractLlmClient):
             json_response = payload
             candidates = json_response.get("candidates")
             if not candidates or not isinstance(candidates, list) or len(candidates) == 0:
-                block_reason = (
-                    json.dumps(json_response.get("promptFeedback"))
-                    if "promptFeedback" in json_response
-                    else "неизвестно"
-                )
-                logger.error(
-                    "Empty candidates in Gemini response (model=%s, component=GeminiClient, operation=parse_response, block_reason=%s)",
-                    self.model,
-                    block_reason,
+                log_failure(
+                    logger, "Empty candidates in Gemini response", model=self.model, details=payload
                 )
                 if logger.isEnabledFor(TRACE):
                     logger.log(

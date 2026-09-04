@@ -238,7 +238,7 @@ class Settings(BaseSettings):
                 try:
                     result.add(int(item_str))
                 except ValueError:
-                    logger.warning("Invalid admin Telegram ID ignored: %s", item_str)
+                    logger.error("Invalid admin Telegram ID ignored")
                     continue
             return result
         return set()
@@ -345,10 +345,8 @@ class Settings(BaseSettings):
             )
 
         if not self.telegram_support_admin_telegram_ids:
-            logger.warning(
-                "TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS не задан — "
-                "уведомления об ошибках и запросы оператора не будут отправляться администраторам. "
-                "Добавьте в .env: TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS=123456789,987654321"
+            logger.info(
+                "TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS is empty; admin notifications are disabled"
             )
 
         # 2. Validate LLM Provider

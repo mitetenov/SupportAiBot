@@ -125,7 +125,7 @@ class GroqClient(AbstractLlmClient):
         )
         if not self.reasoning_supported:
             if self.reasoning_effort != "none":
-                logger.warning(
+                logger.info(
                     "No known reasoning controls for Groq model %s; REASONING_EFFORT=%s is ignored",
                     self.model,
                     self.reasoning_effort,
@@ -133,7 +133,7 @@ class GroqClient(AbstractLlmClient):
             return
         native_effort = reasoning_parameters(self.model, self.reasoning_effort)["reasoning_effort"]
         if self.model.strip().lower() in GROQ_GPT_OSS_MODELS and self.reasoning_effort == "none":
-            logger.warning(
+            logger.info(
                 "Groq model %s cannot disable reasoning; using native effort=low", self.model
             )
         logger.info(

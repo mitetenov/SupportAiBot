@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from app.logging_config import log_failure
 from app.logging_context import request_context
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ async def post_with_retry(
                 last_error = e
                 if is_last:
                     raise
+                log_failure(logger, "HTTP attempt failed", e, request_operation=description)
                 delay = backoff_delay(attempt, base_delay)
                 logger.info(
                     "%s failed (%s) — retrying in %.1fs (attempt %d/%d)",
@@ -90,6 +92,12 @@ async def post_with_retry(
                 continue
 
             if response.status_code in RETRYABLE_STATUS and not is_last:
+                log_failure(
+                    logger,
+                    "HTTP attempt failed",
+                    request_operation=description,
+                    status_code=response.status_code,
+                )
                 delay = _retry_after_seconds(response) or backoff_delay(attempt, base_delay)
                 logger.info(
                     "%s returned %d — retrying in %.1fs (attempt %d/%d)",

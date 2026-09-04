@@ -14,7 +14,7 @@ from mcp.client import Client
 from mcp.shared.exceptions import MCPError
 from mcp.types import CallToolResult, Implementation, TextContent
 
-from app.logging_config import TRACE
+from app.logging_config import TRACE, log_failure
 from app.logging_redaction import safe_serialize
 
 logger = logging.getLogger(__name__)
@@ -395,10 +395,9 @@ class HttpMcpClient(McpClientInterface):
                     page,
                 )
             logger.info(
-                "%s HTTP client initialized with %d tools at %s (protocol: %s)",
+                "%s HTTP client initialized with %d tools (protocol: %s)",
                 self._label,
                 len(self._cached_tools),
-                self.base_url,
                 self._protocol_version,
             )
             return True
@@ -412,12 +411,12 @@ class HttpMcpClient(McpClientInterface):
                     e,
                     exc_info=True,
                 )
-            logger.error(
-                "%s initialization failed — bot will run without tools from %s: %s",
-                self._label,
-                self.base_url,
+            log_failure(
+                logger,
+                "MCP initialization failed",
                 e,
-                exc_info=True,
+                server=self.server_name,
+                details={"url": self.base_url},
             )
             await self._close_stack_internal()
             await self._notify_admins(f"{self._label} init failed for {self.base_url}", e)
@@ -430,7 +429,7 @@ class HttpMcpClient(McpClientInterface):
         try:
             await self.admin_notifier.notify_error(context, error=error)
         except Exception as e:
-            logger.warning("Failed to notify admins about %s: %s", context, e)
+            log_failure(logger, "MCP admin notification failed", e, details={"context": context})
 
     async def _recover_session_internal(self, failed_generation: int) -> bool:
         """Re-establish connection after a broken session or server restart."""
@@ -453,16 +452,19 @@ class HttpMcpClient(McpClientInterface):
                 self._label,
                 failed_generation,
             )
-        logger.warning(
-            "%s connection at %s lost/expired — re-initializing", self._label, self.base_url
-        )
+        logger.info("%s connection lost/expired; re-initializing", self._label)
         previous_tools = {tool.name for tool in self._cached_tools}
 
         recovered = await self._init_internal()
         self._session_generation += 1
 
         if not recovered:
-            logger.error("%s could not re-establish connection at %s", self._label, self.base_url)
+            log_failure(
+                logger,
+                "MCP reconnection failed",
+                server=self.server_name,
+                details={"url": self.base_url},
+            )
             return False
 
         if logger.isEnabledFor(TRACE):
@@ -474,7 +476,7 @@ class HttpMcpClient(McpClientInterface):
             )
         current_tools = {tool.name for tool in self._cached_tools}
         if current_tools != previous_tools:
-            logger.warning(
+            logger.info(
                 "%s tool set changed after reconnect: %s -> %s",
                 self._label,
                 sorted(previous_tools),
@@ -578,8 +580,12 @@ class HttpMcpClient(McpClientInterface):
             try:
                 await stack.aclose()
             except Exception as error:
-                logger.warning(
-                    "%s failed to close MCP client at %s: %s", self._label, self.base_url, error
+                log_failure(
+                    logger,
+                    "MCP closing failed",
+                    error,
+                    server=self.server_name,
+                    details={"url": self.base_url},
                 )
 
     async def init(self) -> bool:
@@ -616,6 +622,13 @@ class HttpMcpClient(McpClientInterface):
         """Execute a tool with given arguments and return JSON string result."""
         started, generation, active_client = await self._start_tool_call()
         if not started:
+            if not self._closing:
+                log_failure(
+                    logger,
+                    "MCP tool call unavailable: not initialized",
+                    server=self.server_name,
+                    tool=tool_name,
+                )
             if logger.isEnabledFor(TRACE):
                 logger.log(
                     TRACE,
@@ -630,21 +643,19 @@ class HttpMcpClient(McpClientInterface):
                 return await self._invoke_tool(active_client, tool_name, arguments)
             except Exception as e:
                 if not _is_recoverable_error(e):
-                    logger.error(
-                        "%s failed to call tool: %s: %s", self._label, tool_name, e, exc_info=True
+                    log_failure(
+                        logger, "MCP tool call failed", e, server=self.server_name, tool=tool_name
                     )
                     await self._notify_admins(f"{self._label} tool call failed: {tool_name}", e)
                     return json.dumps({"error": str(e) if str(e) else "unknown error"})
 
-                if logger.isEnabledFor(TRACE):
-                    logger.log(
-                        TRACE,
-                        "%s tool '%s' failed with recoverable error %s: %s — initiating recovery",
-                        self._label,
-                        tool_name,
-                        type(e).__name__,
-                        e,
-                    )
+                log_failure(
+                    logger,
+                    "MCP tool call failed; reconnecting",
+                    e,
+                    server=self.server_name,
+                    tool=tool_name,
+                )
 
                 async with self._recovery_lock:
                     if self._session_generation == generation:
@@ -675,12 +686,12 @@ class HttpMcpClient(McpClientInterface):
                         )
                     return await self._invoke_tool(retry_client, tool_name, arguments)
                 except Exception as retry_e:
-                    logger.error(
-                        "%s tool %s failed after reconnect: %s",
-                        self._label,
-                        tool_name,
+                    log_failure(
+                        logger,
+                        "MCP tool call failed after reconnect",
                         retry_e,
-                        exc_info=True,
+                        server=self.server_name,
+                        tool=tool_name,
                     )
                     await self._notify_admins(
                         f"{self._label} tool call failed after reconnect: {tool_name}", retry_e

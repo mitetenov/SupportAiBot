@@ -23,7 +23,7 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, AsyncSession
 
-from app.logging_config import TRACE
+from app.logging_config import TRACE, log_failure
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ async def ensure_vector_extension(session: AsyncSession | AsyncConnection) -> No
     try:
         await session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     except Exception as e:
-        logger.warning("Could not create vector extension (may already exist): %s", e)
+        log_failure(logger, "Could not create vector extension (may already exist)", e)
 
 
 async def ensure_vector_column(
@@ -172,7 +172,7 @@ async def ensure_hnsw_index(
             """)
         )
     except Exception as e:
-        logger.warning("Could not create HNSW index on %s.%s: %s", table_name, column_name, e)
+        log_failure(logger, "Could not create HNSW index", e, table=table_name, column=column_name)
 
 
 async def ensure_faq_search_schema(session: AsyncSession, dimension: int) -> bool:
@@ -191,7 +191,7 @@ async def ensure_faq_search_schema(session: AsyncSession, dimension: int) -> boo
         await session.execute(text("ALTER TABLE faq DROP COLUMN IF EXISTS images"))
         await session.execute(text("ALTER TABLE faq ADD COLUMN IF NOT EXISTS image VARCHAR(255)"))
     except Exception as e:
-        logger.warning("Could not reconcile FAQ columns: %s", e)
+        log_failure(logger, "Could not reconcile FAQ columns", e)
 
     await ensure_hnsw_index(session, "faq", "embedding")
     try:
@@ -199,7 +199,7 @@ async def ensure_faq_search_schema(session: AsyncSession, dimension: int) -> boo
             text(f"CREATE INDEX IF NOT EXISTS faq_fts_idx ON faq USING gin ({FAQ_FTS_EXPRESSION})")
         )
     except Exception as e:
-        logger.warning("Could not create FAQ full-text index: %s", e)
+        log_failure(logger, "Could not create FAQ full-text index", e)
 
     return rebuilt
 
@@ -250,7 +250,7 @@ async def sync_legacy_schema(engine: AsyncEngine) -> list[str]:
                 )
                 applied.append(f"{table_name}.{column_name}: added")
             except Exception as e:
-                logger.warning("Could not reconcile %s.%s: %s", table_name, column_name, e)
+                log_failure(logger, "Could not reconcile", e, table=table_name, column=column_name)
 
         for table_name, column_name in BEDOLAGA_STATE_COLUMNS:
             exists = await conn.execute(_TABLE_EXISTS_SQL, {"table_name": table_name})
@@ -272,7 +272,7 @@ async def sync_legacy_schema(engine: AsyncEngine) -> list[str]:
                 )
                 applied.append(f"{table_name}.{column_name}: added")
             except Exception as e:
-                logger.warning("Could not reconcile %s.%s: %s", table_name, column_name, e)
+                log_failure(logger, "Could not reconcile", e, table=table_name, column=column_name)
 
         for table_name, column_name in UTC_TIMESTAMP_COLUMNS:
             exists = await conn.execute(_TABLE_EXISTS_SQL, {"table_name": table_name})
@@ -303,7 +303,7 @@ async def sync_legacy_schema(engine: AsyncEngine) -> list[str]:
                     )
                     applied.append(f"{table_name}.{column_name}: timestamp -> timestamptz")
             except Exception as e:
-                logger.warning("Could not reconcile %s.%s: %s", table_name, column_name, e)
+                log_failure(logger, "Could not reconcile", e, table=table_name, column=column_name)
 
         for table_name, column_name in NULLABLE_UTC_TIMESTAMP_COLUMNS:
             exists = await conn.execute(_TABLE_EXISTS_SQL, {"table_name": table_name})
@@ -331,7 +331,7 @@ async def sync_legacy_schema(engine: AsyncEngine) -> list[str]:
                     )
                     applied.append(f"{table_name}.{column_name}: timestamp -> timestamptz")
             except Exception as e:
-                logger.warning("Could not reconcile %s.%s: %s", table_name, column_name, e)
+                log_failure(logger, "Could not reconcile", e, table=table_name, column=column_name)
 
     if applied:
         logger.info("Reconciled legacy schema: %s", "; ".join(applied))

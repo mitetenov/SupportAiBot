@@ -20,7 +20,7 @@ from app.bedolaga.types import (
     TicketMedia,
     ticket_from_payload,
 )
-from app.logging_config import TRACE
+from app.logging_config import TRACE, log_failure
 from app.logging_http import sanitize_headers, sanitize_url
 from app.logging_redaction import safe_serialize
 from app.retry import post_with_retry
@@ -144,19 +144,24 @@ class BedolagaClient:
                     duration,
                     e,
                 )
-            logger.warning("Bedolaga: could not read ticket %d: %s", ticket_id, e)
+            log_failure(logger, "Bedolaga ticket read failed", e, details={"ticket_id": ticket_id})
             return None
 
         if response.status_code != 200:
-            logger.warning(
-                "Bedolaga: reading ticket %d returned %d", ticket_id, response.status_code
+            log_failure(
+                logger,
+                "Bedolaga ticket read failed",
+                status_code=response.status_code,
+                details={"ticket_id": ticket_id},
             )
             return None
 
         try:
             return ticket_from_payload(response.json())
         except (ValueError, KeyError, TypeError) as e:
-            logger.warning("Bedolaga: ticket %d came back malformed: %s", ticket_id, e)
+            log_failure(
+                logger, "Bedolaga ticket response malformed", e, details={"ticket_id": ticket_id}
+            )
             return None
 
     async def list_awaiting_ticket_ids(self, limit: int = DEFAULT_LIST_LIMIT) -> list[int]:
@@ -205,19 +210,24 @@ class BedolagaClient:
                         duration,
                         e,
                     )
-                logger.warning("Bedolaga: could not list %s tickets: %s", status, e)
+                log_failure(logger, "Bedolaga ticket list failed", e, ticket_status=status)
                 continue
 
             if response.status_code != 200:
-                logger.warning(
-                    "Bedolaga: listing %s tickets returned %d", status, response.status_code
+                log_failure(
+                    logger,
+                    "Bedolaga ticket list failed",
+                    ticket_status=status,
+                    status_code=response.status_code,
                 )
                 continue
 
             try:
                 raw = response.json()
             except Exception as e:
-                logger.warning("Bedolaga: listing %s tickets returned invalid JSON: %s", status, e)
+                log_failure(
+                    logger, "Bedolaga ticket list returned invalid JSON", e, ticket_status=status
+                )
                 continue
 
             items: list[Any] = []
@@ -226,8 +236,8 @@ class BedolagaClient:
             elif isinstance(raw, dict) and isinstance(raw.get("items"), list):
                 items = raw["items"]
             else:
-                logger.warning(
-                    "Bedolaga: listing %s tickets returned unexpected payload format", status
+                log_failure(
+                    logger, "Bedolaga ticket list returned unexpected format", ticket_status=status
                 )
                 continue
 
@@ -239,8 +249,11 @@ class BedolagaClient:
                     try:
                         ids.append(int(ticket_id))
                     except (TypeError, ValueError) as _:
-                        logger.warning(
-                            "Bedolaga: unparseable ticket id %r in %s list", ticket_id, status
+                        log_failure(
+                            logger,
+                            "Bedolaga ticket list contains invalid ID",
+                            ticket_status=status,
+                            details={"ticket_id": ticket_id},
                         )
         if logger.isEnabledFor(TRACE):
             logger.log(
@@ -312,10 +325,10 @@ class BedolagaClient:
         try:
             content = base64.b64decode(base64_image, validate=True)
         except (ValueError, binascii.Error) as _:
-            logger.warning("Bedolaga: refusing invalid base64 photo upload")
+            log_failure(logger, "Bedolaga photo upload rejected: invalid base64")
             return None
         if not content or len(content) > MAX_MEDIA_BYTES:
-            logger.warning("Bedolaga: refusing photo upload of %d bytes", len(content))
+            logger.info("Bedolaga photo upload rejected: invalid size (%d bytes)", len(content))
             return None
 
         extension = {
@@ -362,14 +375,15 @@ class BedolagaClient:
                     duration,
                     e,
                 )
-            logger.error("Bedolaga: uploading a ticket photo failed: %s", e)
+            log_failure(logger, "Bedolaga photo upload failed", e)
             return None
 
         if response.status_code not in (200, 201):
-            logger.error(
-                "Bedolaga: uploading a ticket photo returned %d: %s",
-                response.status_code,
-                response.text[:200],
+            log_failure(
+                logger,
+                "Bedolaga photo upload failed",
+                status_code=response.status_code,
+                details=response.text,
             )
             return None
 
@@ -383,7 +397,7 @@ class BedolagaClient:
                 file_id=file_id,
             )
         except (ValueError, KeyError, TypeError) as e:
-            logger.warning("Bedolaga: photo upload returned no file id: %s", e)
+            log_failure(logger, "Bedolaga photo upload response has no file ID", e)
             return None
 
     async def _post_reply(
@@ -430,25 +444,26 @@ class BedolagaClient:
                     duration,
                     e,
                 )
-            logger.error("Bedolaga: replying to ticket %d failed: %s", ticket_id, e)
+            log_failure(logger, "Bedolaga ticket reply failed", e, details={"ticket_id": ticket_id})
             return None
 
         if response.status_code not in (200, 201):
-            logger.error(
-                "Bedolaga: replying to ticket %d returned %d: %s",
-                ticket_id,
-                response.status_code,
-                response.text[:200],
+            log_failure(
+                logger,
+                "Bedolaga ticket reply failed",
+                status_code=response.status_code,
+                details={"ticket_id": ticket_id, "body": response.text},
             )
             return None
 
         try:
             return PostedTicketReply(message_id=int((response.json() or {})["message"]["id"]))
         except (ValueError, KeyError, TypeError) as e:
-            logger.warning(
-                "Bedolaga: the reply to ticket %d landed but came back without a message id: %s",
-                ticket_id,
+            log_failure(
+                logger,
+                "Bedolaga reply response has no message ID",
                 e,
+                details={"ticket_id": ticket_id},
             )
             # The write landed, so it must not enter retry/backoff. Keeping the
             # missing id explicit also prevents callers from overwriting a real
@@ -498,7 +513,9 @@ class BedolagaClient:
                     duration,
                     e,
                 )
-            logger.warning("Bedolaga: setting priority on ticket %d failed: %s", ticket_id, e)
+            log_failure(
+                logger, "Bedolaga priority update failed", e, details={"ticket_id": ticket_id}
+            )
             return False
         return response.status_code == 200
 
@@ -559,11 +576,16 @@ class BedolagaClient:
                     duration,
                     e,
                 )
-            logger.warning("Bedolaga: could not read user %d: %s", user_id, e)
+            log_failure(logger, "Bedolaga user read failed", e, details={"user_id": user_id})
             return TELEGRAM_ID_UNKNOWN
 
         if response.status_code != 200:
-            logger.warning("Bedolaga: reading user %d returned %d", user_id, response.status_code)
+            log_failure(
+                logger,
+                "Bedolaga user read failed",
+                status_code=response.status_code,
+                details={"user_id": user_id},
+            )
             return TELEGRAM_ID_UNKNOWN
 
         telegram_id = (response.json() or {}).get("telegram_id")
@@ -602,19 +624,19 @@ class BedolagaClient:
 
         # Forbid downgrade from HTTPS to HTTP
         if base_parts.scheme == "https" and parsed.scheme != "https":
-            logger.warning("Bedolaga: refusing HTTPS -> HTTP downgrade for media: %s", absolute)
+            log_failure(logger, "Bedolaga media rejected: HTTPS downgrade", details=absolute)
             return None
 
         if parsed.scheme != base_parts.scheme:
-            logger.warning("Bedolaga: refusing scheme mismatch for media: %s", absolute)
+            log_failure(logger, "Bedolaga media rejected: scheme mismatch", details=absolute)
             return None
 
         # Check hostname (case-insensitive)
         if (parsed.hostname or "").lower() != (base_parts.hostname or "").lower():
-            logger.warning(
-                "Bedolaga: refusing to fetch media from a foreign host: %s (base %s)",
-                parsed.hostname,
-                base_parts.hostname,
+            log_failure(
+                logger,
+                "Bedolaga media rejected: foreign host",
+                details={"host": parsed.hostname, "base_host": base_parts.hostname},
             )
             return None
 
@@ -626,10 +648,10 @@ class BedolagaClient:
             443 if base_parts.scheme == "https" else 80 if base_parts.scheme == "http" else None
         )
         if parsed_port != base_port:
-            logger.warning(
-                "Bedolaga: refusing media with different port %s (base %s)",
-                parsed_port,
-                base_port,
+            log_failure(
+                logger,
+                "Bedolaga media rejected: port mismatch",
+                details={"port": parsed_port, "base_port": base_port},
             )
             return None
 
@@ -681,7 +703,9 @@ class BedolagaClient:
                     duration,
                     e,
                 )
-            logger.warning("Bedolaga: could not describe media of message %d: %s", message_id, e)
+            log_failure(
+                logger, "Bedolaga media description failed", e, details={"message_id": message_id}
+            )
             return None
 
         if response.status_code != 200:
@@ -697,7 +721,7 @@ class BedolagaClient:
 
         media_url_raw = payload.get("media_url")
         if not media_url_raw or not isinstance(media_url_raw, str):
-            logger.info("Bedolaga: message %d has media the panel cannot serve", message_id)
+            logger.log(TRACE, "Bedolaga: message %d has media the panel cannot serve", message_id)
             return None
 
         resolved_url = self.resolve_media_url(media_url_raw)
@@ -774,25 +798,20 @@ class BedolagaClient:
                 if declared_length is not None:
                     try:
                         if int(declared_length) > MAX_MEDIA_BYTES:
-                            logger.warning(
-                                "Bedolaga: media %s declares an oversized body (%s bytes)",
-                                media.filename,
-                                declared_length,
-                            )
+                            logger.info("Bedolaga media rejected: declared size exceeds limit")
                             return None
                     except ValueError:
-                        logger.warning(
-                            "Bedolaga: media %s returned invalid Content-Length %r",
-                            media.filename,
-                            declared_length,
+                        log_failure(
+                            logger,
+                            "Bedolaga media returned invalid Content-Length",
+                            details={"filename": media.filename, "content_length": declared_length},
                         )
 
                 content = bytearray()
                 async for chunk in downloaded.aiter_bytes():
                     if len(content) + len(chunk) > MAX_MEDIA_BYTES:
-                        logger.warning(
-                            "Bedolaga: media %s exceeded %d bytes while streaming",
-                            media.filename,
+                        logger.info(
+                            "Bedolaga media rejected: size exceeded %d bytes while streaming",
                             MAX_MEDIA_BYTES,
                         )
                         return None
@@ -821,7 +840,9 @@ class BedolagaClient:
                     duration,
                     e,
                 )
-            logger.warning("Bedolaga: could not download media %s: %s", media.filename, e)
+            log_failure(
+                logger, "Bedolaga media download failed", e, details={"filename": media.filename}
+            )
             return None
 
         return ImageAttachment(

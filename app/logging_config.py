@@ -10,6 +10,7 @@ from app.logging_redaction import (
     get_safe_error_metadata,
     is_sensitive_key,
     redact_credentials_in_text,
+    safe_serialize,
 )
 
 TRACE_LEVEL_NUM: int = 5
@@ -104,14 +105,7 @@ class SafeConsoleFormatter(logging.Formatter):
             component = record.name
 
             # 4. Format and redact raw message
-            # Exception strings often contain remote response bodies or user input.
-            # At INFO/ERROR keep the stable message template; TRACE is the only
-            # level that is allowed to interpolate diagnostic values freely.
-            raw_msg = (
-                str(record.msg)
-                if canonical_label == "ERROR" and record.args
-                else record.getMessage()
-            )
+            raw_msg = record.getMessage()
             sanitized_msg = redact_credentials_in_text(raw_msg)
             escaped_msg = escape_control_chars(sanitized_msg)
 
@@ -251,11 +245,6 @@ class NormalizingFilter(logging.Filter):
 
         # Route third-party loggers
         is_app = record.name == "app" or record.name.startswith("app.")
-        if is_app and logging.WARNING <= record.levelno < logging.ERROR:
-            # The public contract has no WARNING level. Existing diagnostic
-            # warnings are trace detail, while actual failures use ERROR.
-            record.levelno = TRACE_LEVEL_NUM
-            record.levelname = TRACE_LEVEL_NAME
         if not is_app and record.name != "root":
             if record.levelno < logging.ERROR:
                 # Route third-party DEBUG, INFO, WARNING to TRACE
@@ -315,6 +304,10 @@ class NormalizingFilter(logging.Filter):
                 record.msg = safe_summary
                 record.args = ()
                 record.exc_info = None
+                # Dependency extras may contain query parameters or payloads too.
+                for key in list(record.__dict__):
+                    if key not in _STANDARD_LOG_RECORD_ATTRS and not key.startswith("_"):
+                        del record.__dict__[key]
 
         # Cumulative threshold check
         return record.levelno >= self.min_levelno
@@ -322,6 +315,35 @@ class NormalizingFilter(logging.Filter):
 
 _CURRENT_FILTER: NormalizingFilter | None = None
 _CURRENT_HANDLER: SafeConsoleHandler | None = None
+
+
+def log_failure(
+    logger: logging.Logger,
+    operation: str,
+    error: BaseException | None = None,
+    *,
+    details: Any = None,
+    **safe_fields: Any,
+) -> None:
+    """Emit a stable ERROR summary and, only at TRACE, private diagnostics.
+
+    operation and safe_fields must contain only application-defined metadata
+    (provider, tool, status, count). User identifiers, response bodies and other
+    untrusted data belong in details. Exception text is never part of ERROR.
+    """
+    exc = error if error is not None else sys.exception()
+    exc_info = (type(exc), exc, exc.__traceback__) if exc is not None else None
+    logger.error(operation, extra=safe_fields, exc_info=exc_info)
+    if logger.isEnabledFor(TRACE_LEVEL_NUM):
+        logger.log(
+            TRACE_LEVEL_NUM,
+            "%s: %s",
+            operation,
+            safe_serialize(details),
+            extra=safe_fields,
+            exc_info=exc_info,
+        )
+
 
 THIRD_PARTY_LOGGERS: tuple[str, ...] = (
     "httpx",

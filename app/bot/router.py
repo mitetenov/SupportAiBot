@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from app.bedolaga.relay import TicketOperatorRelay
 
 
+from app.logging_config import log_failure
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,7 +51,7 @@ async def ensure_user_info(db_manager: DatabaseSessionManager, user: Any) -> Non
             db_user.last_name = getattr(user, "last_name", None)
             db_user.updated_at = datetime.now(UTC)
     except Exception as e:
-        logger.warning("Failed to record user profile for %s: %s", user_id, e)
+        log_failure(logger, "User profile recording failed", e, details={"user_id": user_id})
 
 
 def setup_router(
@@ -103,7 +105,7 @@ def setup_router(
                 res = await session.execute(stmt)
                 mapping = res.scalar_one_or_none()
         except Exception as e:
-            logger.warning("Failed to look up mapping for reaction sync: %s", e)
+            log_failure(logger, "Reaction mapping lookup failed", e)
             return
 
         if mapping is None:
@@ -257,7 +259,7 @@ def setup_router(
                     res = await session.execute(stmt)
                     msg_mapping = res.scalar_one_or_none()
             except Exception as e:
-                logger.warning("Failed to resolve operator reply target: %s", e)
+                log_failure(logger, "Operator reply target lookup failed", e)
                 msg_mapping = None
 
             if msg_mapping is not None:
@@ -274,7 +276,9 @@ def setup_router(
                 if mapping is not None:
                     mapping.active_ticket_id = None
         except Exception as e:
-            logger.warning("Failed to switch user %d topic back to Telegram: %s", user_id, e)
+            log_failure(
+                logger, "Telegram topic source update failed", e, details={"user_id": user_id}
+            )
 
     # 3. Direct user messages
     @router.message()

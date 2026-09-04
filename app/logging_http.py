@@ -2,7 +2,7 @@
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any
 
 import httpx
@@ -55,25 +55,26 @@ def _safe_read_request_body(request: httpx.Request) -> str | None:
         return f"[binary body: {len(raw)} bytes]"
 
 
-async def _safe_read_response_body(response: httpx.Response) -> str | None:
-    """Read a textual response once for TRACE while preserving response.content for callers."""
-    if not logger.isEnabledFor(TRACE):
-        return None
-    content_type = response.headers.get("content-type", "").lower()
-    if content_type and not (
+def _is_textual_response(response: httpx.Response) -> bool:
+    content_type = response.headers.get("content-type", "").lower().split(";")[0]
+    return content_type != "text/event-stream" and (
         content_type.startswith("text/")
         or "json" in content_type
         or "xml" in content_type
         or "javascript" in content_type
-    ):
+    )
+
+
+async def _safe_read_response_body(response: httpx.Response) -> str | None:
+    """Inspect only an already buffered body. Never advance the response stream."""
+    if not logger.isEnabledFor(TRACE):
+        return None
+    if not _is_textual_response(response) and response.headers.get("content-type"):
         content_length = response.headers.get("content-length", "unknown")
         return f"[binary body: {content_length} bytes]"
-    try:
-        raw = response.content if hasattr(response, "_content") else await response.aread()
-    except httpx.ResponseNotRead, RuntimeError:
+    if not hasattr(response, "_content"):
         return "[streaming response]"
-    except Exception:
-        return "[unavailable response body]"
+    raw = response.content
     if not raw:
         return ""
     try:
@@ -81,6 +82,42 @@ async def _safe_read_response_body(response: httpx.Response) -> str | None:
         return redact_credentials_in_text(text)
     except UnicodeDecodeError:
         return f"[binary body: {len(raw)} bytes]"
+
+
+class _ResponseBodyLogger(httpx.AsyncByteStream):
+    """Observe bytes read by httpx/caller without changing iteration or errors."""
+
+    def __init__(
+        self, stream: httpx.AsyncByteStream, response: httpx.Response, context: dict[str, Any]
+    ) -> None:
+        self._stream = stream
+        self._headers = response.headers
+        self._status = response.status_code
+        self._context = context
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        chunks: list[bytes] = []
+        try:
+            async for chunk in self._stream:
+                chunks.append(chunk)
+                yield chunk
+            if logger.isEnabledFor(TRACE):
+                try:
+                    # The transport stream may be compressed. Decode a separate
+                    # response so the application's decoder and bytes stay intact.
+                    body = httpx.Response(
+                        self._status, headers=self._headers, content=b"".join(chunks)
+                    ).text
+                    logger.log(TRACE, "HTTP response body: %s", body, extra=self._context)
+                except Exception:
+                    logger.log(
+                        TRACE, "HTTP response body: [LOGGING_DECODE_ERROR]", extra=self._context
+                    )
+        finally:
+            chunks.clear()
+
+    async def aclose(self) -> None:
+        await self._stream.aclose()
 
 
 async def log_request(request: httpx.Request) -> None:
@@ -167,6 +204,13 @@ async def log_response(response: httpx.Response, request: httpx.Request | None =
             f"HTTP response: {method} {sanitized_url} -> {status_code} ({duration:.3f}s, attempt {attempt}){body_snippet}",
             extra=extra,
         )
+        if (
+            not hasattr(response, "_content")
+            and _is_textual_response(response)
+            and not isinstance(response.stream, _ResponseBodyLogger)
+            and isinstance(response.stream, httpx.AsyncByteStream)
+        ):
+            response.stream = _ResponseBodyLogger(response.stream, response, extra)
 
 
 def create_logging_hooks() -> dict[str, list[Callable[..., Any]]]:

@@ -10,7 +10,7 @@ from collections.abc import Sequence
 
 from sqlalchemy import text
 
-from app.logging_config import TRACE
+from app.logging_config import TRACE, log_failure
 from app.rag.embedding import EmbeddingProvider
 from app.rag.types import FaqContext, FaqEntry, FaqResult
 from app.storage.database import DatabaseSessionManager
@@ -313,7 +313,7 @@ class FaqEmbeddingService:
         embedding = await self.embed(self.embed_text(question, answer, searchable))
 
         if not embedding or len(embedding) != self.embedding_provider.get_dimension():
-            logger.error("Failed to embed FAQ (question_preview=%s)", question[:50])
+            log_failure(logger, "FAQ embedding failed", details={"question": question})
             if logger.isEnabledFor(TRACE):
                 logger.log(TRACE, "Failed to embed FAQ full question: %s", question)
             return
@@ -352,7 +352,9 @@ class FaqEmbeddingService:
 
             for entry, searchable, vector in zip(chunk, searchables, vectors, strict=True):
                 if not vector or len(vector) != dimension:
-                    logger.error("Failed to embed FAQ (question_preview=%s)", entry.question[:50])
+                    log_failure(
+                        logger, "FAQ embedding failed", details={"question": entry.question}
+                    )
                     if logger.isEnabledFor(TRACE):
                         logger.log(TRACE, "Failed to embed FAQ full question: %s", entry.question)
                     continue
@@ -457,6 +459,7 @@ class FaqEmbeddingService:
                 return results
         except Exception as e:
             duration = time.monotonic() - start_time
+            log_failure(logger, "RAG hybrid search failed", e)
             logger.info(
                 "FAQ hybrid search degraded to pure vector search (reason=%s)",
                 type(e).__name__,

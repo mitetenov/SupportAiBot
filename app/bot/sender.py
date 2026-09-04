@@ -16,7 +16,7 @@ from aiohttp import ClientTimeout
 
 from app.bedolaga.types import TicketMedia
 from app.bot.formatting import markdown_to_telegram_html, split_telegram_html, strip_html_tags
-from app.logging_config import TRACE
+from app.logging_config import TRACE, log_failure
 
 logger = logging.getLogger(__name__)
 
@@ -223,10 +223,11 @@ class TelegramMessageSender:
                     )
             except Exception as e:
                 if _is_entity_parse_error(e):
-                    logger.warning(
-                        "Telegram failed to parse HTML in message to %s (%s), falling back to plain text",
-                        chat_id,
+                    log_failure(
+                        logger,
+                        "Telegram HTML parsing failed; retrying as plain text",
                         e,
+                        details={"chat_id": chat_id},
                     )
                     try:
                         kwargs["text"] = strip_html_tags(chunk)
@@ -240,9 +241,16 @@ class TelegramMessageSender:
                                 getattr(fallback_sent, "message_id", None),
                             )
                     except Exception as plain_err:
-                        logger.error("Failed to send message to %s: %s", chat_id, plain_err)
+                        log_failure(
+                            logger,
+                            "Telegram message sending failed",
+                            plain_err,
+                            details={"chat_id": chat_id},
+                        )
                 else:
-                    logger.error("Failed to send message to %s: %s", chat_id, e)
+                    log_failure(
+                        logger, "Telegram message sending failed", e, details={"chat_id": chat_id}
+                    )
 
     async def edit_message(
         self,
@@ -279,9 +287,14 @@ class TelegramMessageSender:
                     )
                     return True
                 except Exception as plain_err:
-                    logger.error("Failed to edit message in %s: %s", chat_id, plain_err)
+                    log_failure(
+                        logger,
+                        "Telegram message editing failed",
+                        plain_err,
+                        details={"chat_id": chat_id},
+                    )
                     return False
-            logger.error("Failed to edit message in %s: %s", chat_id, e)
+            log_failure(logger, "Telegram message editing failed", e, details={"chat_id": chat_id})
             return False
 
     async def send_photo(
@@ -304,7 +317,11 @@ class TelegramMessageSender:
             photo = cached
         else:
             if not path.is_file():
-                logger.warning("Illustration %s is not in the image — skipping it", path)
+                log_failure(
+                    logger,
+                    "Telegram illustration sending failed: file missing",
+                    details={"path": str(path)},
+                )
                 return None
             photo = FSInputFile(path)
 
@@ -325,7 +342,12 @@ class TelegramMessageSender:
         try:
             result = await self.bot.send_photo(**kwargs)
         except Exception as e:
-            logger.error("Failed to send photo %s to %s: %s", path, chat_id, e)
+            log_failure(
+                logger,
+                "Telegram photo sending failed",
+                e,
+                details={"path": str(path), "chat_id": chat_id},
+            )
             return None
 
         if cached is None:
@@ -352,10 +374,12 @@ class TelegramMessageSender:
         try:
             content = base64.b64decode(base64_image, validate=True)
         except (ValueError, binascii.Error) as _:
-            logger.warning("Refusing an invalid base64 picture for chat %s", chat_id)
+            log_failure(
+                logger, "Telegram photo rejected: invalid base64", details={"chat_id": chat_id}
+            )
             return None
         if not content:
-            logger.warning("Refusing an empty picture for chat %s", chat_id)
+            log_failure(logger, "Telegram photo rejected: empty body", details={"chat_id": chat_id})
             return None
 
         extension = {
@@ -408,9 +432,8 @@ class TelegramMessageSender:
     ) -> int | None:
         """Stream ticket media directly to Telegram via URLInputFile."""
         if media.file_size is not None and media.file_size > MAX_TELEGRAM_MEDIA_BYTES:
-            logger.warning(
-                "Rejecting oversized ticket media %s (%d bytes, limit %d bytes)",
-                media.filename,
+            logger.info(
+                "Telegram ticket media rejected: size exceeds limit (%d bytes, limit %d)",
                 media.file_size,
                 MAX_TELEGRAM_MEDIA_BYTES,
             )
@@ -456,11 +479,11 @@ class TelegramMessageSender:
                         **kwargs,
                     )
                 except TelegramBadRequest as e:
-                    logger.warning(
-                        "Telegram rejected video %s for chat %s (%s), falling back to send_document",
-                        media.filename,
-                        chat_id,
+                    log_failure(
+                        logger,
+                        "Telegram video sending failed; retrying as document",
                         e,
+                        details={"filename": media.filename, "chat_id": chat_id},
                     )
                     result = await self.bot.send_document(
                         document=_create_input_file(),
@@ -479,12 +502,11 @@ class TelegramMessageSender:
                 )
             return msg_id
         except Exception as e:
-            logger.warning(
-                "Failed to send ticket media %s (type %s) to %s: %s",
-                media.filename,
-                media.media_type,
-                chat_id,
+            log_failure(
+                logger,
+                "Telegram ticket media sending failed",
                 e,
+                details={"filename": media.filename, "chat_id": chat_id},
             )
             return None
 
@@ -524,7 +546,12 @@ class TelegramMessageSender:
         try:
             result = await self.bot.copy_message(**kwargs)
         except Exception as e:
-            logger.warning("Failed to copy message %d to %s: %s", message_id, chat_id, e)
+            log_failure(
+                logger,
+                "Telegram message copying failed",
+                e,
+                details={"message_id": message_id, "chat_id": chat_id},
+            )
             return None
         msg_id = getattr(result, "message_id", None)
         if logger.isEnabledFor(TRACE):
@@ -566,8 +593,11 @@ class TelegramMessageSender:
                     message_id,
                 )
         except Exception as e:
-            logger.error(
-                "Error setting reaction on message %d in chat %s: %s", message_id, chat_id, e
+            log_failure(
+                logger,
+                "Telegram reaction update failed",
+                e,
+                details={"message_id": message_id, "chat_id": chat_id},
             )
 
     @staticmethod

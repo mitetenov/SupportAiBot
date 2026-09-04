@@ -8,6 +8,7 @@ from app.bedolaga.types import TicketMedia
 from app.bot.sender import TelegramMessageSender
 from app.bot.topic_manager import TopicManager
 from app.constants import get_message
+from app.logging_config import log_failure
 from app.storage.database import DatabaseSessionManager
 from app.storage.models import MessageMapping, TopicMapping
 
@@ -57,7 +58,7 @@ class SupportGroupForwarder:
         topic_id = await self.topic_manager.resolve_topic_id(user_id, user_name)
 
         if topic_id is None:
-            logger.warning("Cannot forward to support group: no topic for user %s", user_id)
+            log_failure(logger, "Support forwarding failed: no topic", details={"user_id": user_id})
             return None
 
         if not user_message_ids:
@@ -74,16 +75,18 @@ class SupportGroupForwarder:
         # Recreate topic on first failure only
         ok = await self._forward_user_message(user_chat_id, user_message_ids[0], topic_id)
         if not ok:
-            logger.warning(
-                "Failed to forward to topic %s, recreating for user %s", topic_id, user_id
-            )
+            logger.info("Support forwarding failed; recreating topic")
             topic_id = await self.topic_manager.recreate_stale_topic(user_id, user_name, topic_id)
             if topic_id is None:
-                logger.error("Failed to recreate topic for user %s", user_id)
+                log_failure(logger, "Support topic recreation failed", details={"user_id": user_id})
                 return None
             ok = await self._forward_user_message(user_chat_id, user_message_ids[0], topic_id)
             if not ok:
-                logger.error("Still failed to forward after topic recreation for user %s", user_id)
+                log_failure(
+                    logger,
+                    "Support forwarding failed after topic recreation",
+                    details={"user_id": user_id},
+                )
                 return None
 
         for msg_id in user_message_ids[1:]:
@@ -111,8 +114,8 @@ class SupportGroupForwarder:
         topic_id = await self.topic_manager.resolve_topic_id(user_id, user_name)
 
         if topic_id is None:
-            logger.warning(
-                "Cannot forward ticket media to support group: no topic for user %s", user_id
+            log_failure(
+                logger, "Ticket media forwarding failed: no topic", details={"user_id": user_id}
             )
             return None
 
@@ -173,15 +176,15 @@ class SupportGroupForwarder:
             async with self.db_manager.session() as session:
                 mapping = await session.get(TopicMapping, user_id)
                 if mapping is None or mapping.topic_id != topic_id:
-                    logger.warning(
-                        "Could not mark active source for topic %d and user %d",
-                        topic_id,
-                        user_id,
+                    log_failure(
+                        logger,
+                        "Active source update failed: missing topic mapping",
+                        details={"topic_id": topic_id, "user_id": user_id},
                     )
                     return
                 mapping.active_ticket_id = ticket_id
         except Exception as e:
-            logger.warning("Failed to mark active ticket for topic %d: %s", topic_id, e)
+            log_failure(logger, "Active ticket update failed", e, details={"topic_id": topic_id})
 
     async def _forward_illustration(
         self,
@@ -220,8 +223,11 @@ class SupportGroupForwarder:
                 )
                 session.add(mapping)
         except Exception as e:
-            logger.warning(
-                "Copied message %d but failed to record its mapping: %s", user_message_id, e
+            log_failure(
+                logger,
+                "Copied message mapping recording failed",
+                e,
+                details={"message_id": user_message_id},
             )
         return True
 
@@ -257,13 +263,13 @@ class SupportGroupForwarder:
         """Report processing failure into the user forum topic with admin escalation tag."""
         user_id = getattr(user, "id", None)
         if user_id is None:
-            logger.warning("Cannot forward error to support group: the message has no sender")
+            log_failure(logger, "Error forwarding failed: message has no sender")
             return
 
         user_name = self.resolve_user_name(user)
         topic_id = await self.topic_manager.resolve_topic_id(int(user_id), user_name)
         if topic_id is None:
-            logger.warning("Cannot forward error to support group: no topic for user %s", user_id)
+            log_failure(logger, "Error forwarding failed: no topic", details={"user_id": user_id})
             return
 
         await self._set_active_ticket(int(user_id), topic_id, None)

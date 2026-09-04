@@ -28,7 +28,7 @@ from app.config import get_settings, reveal
 from app.llm import create_llm_client
 from app.llm.mcp_client import HttpMcpClient, McpClientInterface
 from app.llm.mcp_router import McpRouter
-from app.logging_config import setup_logging
+from app.logging_config import log_failure, setup_logging
 from app.logging_http import create_logging_hooks
 from app.logging_redaction import register_settings_secrets
 from app.rag.embedding import create_embedding_provider
@@ -402,9 +402,8 @@ async def main() -> None:
                     timeout=TICKET_DRAIN_TIMEOUT_SECONDS,
                 )
             except TimeoutError:
-                logger.warning(
-                    "Bedolaga ticket turns did not finish within %.0fs; "
-                    "the next sweep after restart picks them up",
+                logger.info(
+                    "Bedolaga ticket turns did not finish within %.0fs; the next sweep after restart picks them up",
                     TICKET_DRAIN_TIMEOUT_SECONDS,
                 )
         if typing_indicator is not None:
@@ -413,10 +412,11 @@ async def main() -> None:
             try:
                 await mcp_client.close()
             except Exception as e:
-                logger.warning(
-                    "Error closing MCP client %s: %s",
-                    getattr(mcp_client, "server_name", "unknown"),
+                log_failure(
+                    logger,
+                    "MCP closing failed",
                     e,
+                    server=getattr(mcp_client, "server_name", "unknown"),
                 )
         await http_client.aclose()
         if bot.session:

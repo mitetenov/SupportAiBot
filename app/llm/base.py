@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from app.storage.chat_history import ChatHistoryService
     from app.storage.database import DatabaseSessionManager
 
+from app.logging_config import log_failure
+
 logger = logging.getLogger(__name__)
 
 BALANCE_EXHAUSTION_MARKERS: tuple[str, ...] = (
@@ -326,12 +328,7 @@ class AbstractLlmClient(ABC, LlmClient):
             except LlmProcessingException:
                 raise
             except Exception as e:
-                logger.error(
-                    "%s request failed: error_class=%s, reason=%s",
-                    self.get_provider_name(),
-                    type(e).__name__,
-                    str(e),
-                )
+                log_failure(logger, "LLM request failed", e, provider=self.get_provider_name())
                 if logger.isEnabledFor(TRACE):
                     logger.log(
                         TRACE,
@@ -491,11 +488,8 @@ class AbstractLlmClient(ABC, LlmClient):
         try:
             payload = json.loads(response.text)
         except ValueError as e:
-            logger.error(
-                "%s returned malformed JSON: error_class=%s, reason=%s",
-                self.get_provider_name(),
-                type(e).__name__,
-                str(e),
+            log_failure(
+                logger, "LLM response contains malformed JSON", e, provider=self.get_provider_name()
             )
             if logger.isEnabledFor(TRACE):
                 logger.log(
@@ -536,11 +530,7 @@ class AbstractLlmClient(ABC, LlmClient):
                     )
                 )
         except Exception as e:
-            logger.error(
-                "Failed to save token usage: error_class=%s, reason=%s",
-                type(e).__name__,
-                str(e),
-            )
+            log_failure(logger, "Token usage persistence failed", e)
             if logger.isEnabledFor(TRACE):
                 logger.log(
                     TRACE,

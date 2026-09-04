@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from app.storage.chat_history import ChatHistoryService
     from app.storage.database import DatabaseSessionManager
 
+from app.logging_config import log_failure
+
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_REASONING_EFFORT_MAP: dict[str, str] = {
@@ -98,9 +100,8 @@ class DeepSeekClient(AbstractLlmClient):
         )
         if not self.reasoning_supported:
             if self.reasoning_effort != "none":
-                logger.warning(
-                    "DeepSeek model %s does not support reasoning; "
-                    "REASONING_EFFORT=%s is ignored and requests are sent without reasoning",
+                logger.info(
+                    "DeepSeek model %s does not support reasoning; REASONING_EFFORT=%s is ignored and requests are sent without reasoning",
                     self.model,
                     self.reasoning_effort,
                 )
@@ -259,7 +260,7 @@ class DeepSeekClient(AbstractLlmClient):
         try:
             choices = payload.get("choices")
             if not choices or not isinstance(choices, list) or len(choices) == 0:
-                logger.error("Empty choices in DeepSeek response: %s", payload)
+                log_failure(logger, "DeepSeek response has no choices", details=payload)
                 raise LlmProcessingException(
                     "Empty choices",
                     "Не удалось получить ответ от модели. Попробуйте позже.",
@@ -314,7 +315,7 @@ class DeepSeekClient(AbstractLlmClient):
         except LlmProcessingException:
             raise
         except Exception as e:
-            logger.error("Failed to parse DeepSeek response: %s", e)
+            log_failure(logger, "DeepSeek response parsing failed", e)
             raise LlmProcessingException("Parse error", "Ошибка обработки ответа модели.") from e
 
     def add_tool_calls_to_conversation(

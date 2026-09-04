@@ -94,8 +94,7 @@ def create_ticket_support(
         max_concurrent=settings.bedolaga_max_concurrent_tickets,
     )
     logger.info(
-        "Bedolaga ticket integration enabled: %s, sweeping every %ds, %d ticket(s) at a time",
-        settings.bedolaga_api_url,
+        "Bedolaga ticket integration enabled: sweeping every %ds, %d ticket(s) at a time",
         settings.bedolaga_poll_interval_seconds,
         settings.bedolaga_max_concurrent_tickets,
     )

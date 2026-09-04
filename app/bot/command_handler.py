@@ -8,6 +8,7 @@ from sqlalchemy import CursorResult, delete, func, select
 
 from app.bot.sender import TelegramMessageSender
 from app.constants import get_message
+from app.logging_config import log_failure
 from app.rag.knowledge_gaps import KnowledgeGapService
 from app.storage.database import DatabaseSessionManager
 from app.storage.models import LlmTokenUsage, User
@@ -187,7 +188,7 @@ class SupportCommandHandler:
         try:
             removed = await self.knowledge_gap_service.clear_all()
         except Exception as e:
-            logger.error("Failed to clear knowledge gaps: %s", e, exc_info=True)
+            log_failure(logger, "Knowledge gaps clearing failed", e)
             await self.sender.send(chat_id, get_message("bot.clear.failed", self._describe(e)))
             return
         await self.sender.send(chat_id, get_message("bot.gaps.cleared", removed))
@@ -200,7 +201,7 @@ class SupportCommandHandler:
                 result = cast(CursorResult[Any], await session.execute(delete(LlmTokenUsage)))
             removed = int(result.rowcount or 0)
         except Exception as e:
-            logger.error("Failed to clear token usage stats: %s", e, exc_info=True)
+            log_failure(logger, "Token usage clearing failed", e)
             await self.sender.send(chat_id, get_message("bot.clear.failed", self._describe(e)))
             return
         logger.info("Cleared token usage stats: %d rows removed", removed)

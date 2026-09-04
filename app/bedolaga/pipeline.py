@@ -16,7 +16,7 @@ from app.bot.rate_limiter import UserRateLimiter
 from app.constants import get_message
 from app.llm.base import LlmClient, LlmReply
 from app.llm.escalation import EscalationPolicy
-from app.logging_config import TRACE
+from app.logging_config import TRACE, log_failure
 from app.logging_context import operation_context
 from app.rag.knowledge_gaps import KnowledgeGapService
 
@@ -205,9 +205,9 @@ class TicketAnswerer:
             # blip: a forum topic, a chat history and every future Remnawave
             # lookup for this person hang off it. Nothing is marked, so the
             # sweep a minute from now asks again.
-            logger.info(
-                "Bedolaga ticket %d: the panel did not resolve user %d, leaving it for the "
-                "next sweep",
+            logger.log(
+                TRACE,
+                "Bedolaga ticket %d: the panel did not resolve user %d, leaving it for the next sweep",
                 ticket.id,
                 ticket.user_id,
             )
@@ -301,7 +301,8 @@ class TicketAnswerer:
         # and no new user messages arrived during the LLM call.
         fresh_ticket = await self.client.get_ticket(ticket.id)
         if fresh_ticket is None:
-            logger.info(
+            logger.log(
+                TRACE,
                 "Bedolaga ticket %d: could not verify state before reply, dropping stale answer",
                 ticket.id,
             )
@@ -315,7 +316,8 @@ class TicketAnswerer:
             fresh_ticket.status in OPEN_STATUSES and ticket.status in OPEN_STATUSES
         )
         if not status_is_compatible:
-            logger.info(
+            logger.log(
+                TRACE,
                 "Bedolaga ticket %d: status changed from %s to %s, dropping stale answer",
                 ticket.id,
                 ticket.status,
@@ -327,14 +329,16 @@ class TicketAnswerer:
 
         if new_messages:
             if any(message.is_from_admin for message in new_messages):
-                logger.info(
+                logger.log(
+                    TRACE,
                     "Bedolaga ticket %d: operator replied during LLM call, dropping stale answer",
                     ticket.id,
                 )
                 self._reply_backoff.pop(ticket.id, None)
                 return
             # User sent new message(s) during model generation. Drop stale answer and schedule rerun.
-            logger.info(
+            logger.log(
+                TRACE,
                 "Bedolaga ticket %d: new user message %r arrived during LLM call, scheduling rerun",
                 ticket.id,
                 fresh_ticket.last_user_message.id if fresh_ticket.last_user_message else None,
@@ -359,7 +363,9 @@ class TicketAnswerer:
         if escalate:
             success = await self.client.set_priority(ticket.id, "high")
             if not success:
-                logger.error("Bedolaga ticket %d: set_priority to high failed", ticket.id)
+                log_failure(
+                    logger, "Bedolaga priority update failed", details={"ticket_id": ticket.id}
+                )
 
         await self.mirror(
             ticket,
@@ -436,7 +442,8 @@ class TicketAnswerer:
             return
         latest_user = fresh_ticket.last_user_message
         if latest_user is not None and latest_user.id > answered_message_id:
-            logger.info(
+            logger.log(
+                TRACE,
                 "Bedolaga ticket %d: user message %d arrived while the reply was landing; rerunning",
                 ticket_id,
                 latest_user.id,
@@ -448,7 +455,8 @@ class TicketAnswerer:
         entry = self._reply_backoff.get(ticket_id)
         if entry is None or time.monotonic() >= entry.retry_at:
             return False
-        logger.info(
+        logger.log(
+            TRACE,
             "Bedolaga ticket %d is backing off after %d failed repl(ies), %.0fs to go",
             ticket_id,
             entry.failures,
@@ -470,11 +478,12 @@ class TicketAnswerer:
             failures=failures,
             retry_at=time.monotonic() + delay,
         )
-        logger.error(
-            "Bedolaga ticket %d: reply failed %d time(s), next attempt in %.0fs",
-            ticket_id,
-            failures,
-            delay,
+        log_failure(
+            logger,
+            "Bedolaga reply failed",
+            failures=failures,
+            retry_delay=delay,
+            details={"ticket_id": ticket_id},
         )
         await self.admin_notifier.notify_error(
             get_message("bedolaga.reply.failed", ticket_id),
@@ -548,11 +557,11 @@ class TicketAnswerer:
                     break
                 await self.state.record_mirrored_media(ticket.id, msg.id)
             except Exception as e:
-                logger.error(
-                    "Bedolaga ticket %d: could not mirror media for message %d (error_class=%s)",
-                    ticket.id,
-                    msg.id,
-                    type(e).__name__,
+                log_failure(
+                    logger,
+                    "Bedolaga media mirroring failed",
+                    e,
+                    details={"ticket_id": ticket.id, "message_id": msg.id},
                 )
                 if logger.isEnabledFor(TRACE):
                     logger.log(TRACE, "Could not mirror media exception: %s", e, exc_info=True)
@@ -622,10 +631,8 @@ class TicketAnswerer:
                 ticket_id=ticket.id,
             )
         except Exception as e:
-            logger.error(
-                "Could not mirror Bedolaga ticket %d to the topic (error_class=%s)",
-                ticket.id,
-                type(e).__name__,
+            log_failure(
+                logger, "Bedolaga ticket mirroring failed", e, details={"ticket_id": ticket.id}
             )
             if logger.isEnabledFor(TRACE):
                 logger.log(

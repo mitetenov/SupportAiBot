@@ -26,7 +26,7 @@ from typing import Any
 
 from app.config import Settings
 from app.llm.mcp_client import McpClientInterface, McpTool
-from app.logging_config import TRACE
+from app.logging_config import TRACE, log_failure
 from app.logging_redaction import safe_serialize
 
 logger = logging.getLogger(__name__)
@@ -365,7 +365,7 @@ class McpRouter:
                     "McpRouter blocked call to non-allowed tool '%s'",
                     tool_name,
                 )
-            logger.error("Blocked call to non-allowed tool: %s", tool_name)
+            log_failure(logger, "Blocked call to non-allowed MCP tool", details={"tool": tool_name})
             return json.dumps({"error": f"Tool not allowed: {tool_name}"})
 
         if telegram_user_id < 0:
@@ -378,12 +378,12 @@ class McpRouter:
                         route.owner,
                         telegram_user_id,
                     )
-                logger.error(
-                    "Blocked call to %s on %s: email-only key %d has no Telegram "
-                    "identity and no provable panel userId",
-                    tool_name,
-                    route.owner,
-                    telegram_user_id,
+                log_failure(
+                    logger,
+                    "MCP call blocked: caller has no provable panel identity",
+                    tool=tool_name,
+                    server=route.owner,
+                    details={"user_id": telegram_user_id},
                 )
                 return self._identity_unavailable(tool_name)
             if logger.isEnabledFor(TRACE):
@@ -394,7 +394,8 @@ class McpRouter:
                     route.owner,
                     telegram_user_id,
                 )
-            logger.info(
+            logger.log(
+                TRACE,
                 "Serving %s on %s for email-only key %d with pinned internal user_id",
                 tool_name,
                 route.owner,

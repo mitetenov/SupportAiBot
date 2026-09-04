@@ -9,7 +9,7 @@ from typing import Any
 
 from aiogram import Bot
 
-from app.logging_config import TRACE
+from app.logging_config import TRACE, log_failure
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,9 @@ class PhotoDownloader:
             file_info = await self.bot.get_file(file_id)
             file_path = getattr(file_info, "file_path", None) if file_info else None
             if not file_path:
-                logger.warning("Telegram get_file returned no file path for %s", file_id)
+                log_failure(
+                    logger, "Telegram get_file returned no file path", details={"file_id": file_id}
+                )
                 return PhotoDownloadResult.failed("bot.photo.upload.error")
 
             if logger.isEnabledFor(TRACE):
@@ -128,5 +130,5 @@ class PhotoDownloader:
             b64_str = base64.b64encode(image_bytes).decode("ascii")
             return PhotoDownloadResult.ok(b64_str, mime)
         except Exception as e:
-            logger.error("Error downloading photo from Telegram: %s", e, exc_info=True)
+            log_failure(logger, "Telegram photo download failed", e)
             return PhotoDownloadResult.failed("bot.photo.error")

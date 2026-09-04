@@ -90,12 +90,12 @@ class TestDeepSeekClient:
         assert body["tool_choice"] == "auto"
         assert body["temperature"] == deepseek_client.TEMPERATURE
 
-    def test_unsupported_model_omits_reasoning_and_logs_warning(
+    def test_unsupported_model_omits_reasoning_and_logs_info(
         self, settings: Settings, deepseek_client: DeepSeekClient, caplog: pytest.LogCaptureFixture
     ):
         settings.deepseek_model = "third-party-chat-model"
         settings.reasoning_effort = "low"
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("INFO"):
             client = DeepSeekClient(
                 settings=settings,
                 mcp_router=deepseek_client.mcp_router,
