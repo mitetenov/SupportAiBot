@@ -33,6 +33,7 @@ class _FakeClient:
             add_user_message=AsyncMock(),
             add_assistant_message=AsyncMock(),
             add_rejected_faq_questions=MagicMock(),
+            record_faq_context=MagicMock(),
         )
 
     async def prepare_turn(self, user_message: str, telegram_user_id: int) -> object:
@@ -51,6 +52,13 @@ class _FakeClient:
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
+
+    async def persist_success(
+        self, telegram_user_id: int, history_message: str, reply: LlmReply
+    ) -> None:
+        await self.chat_history_service.add_user_message(telegram_user_id, history_message)
+        await self.chat_history_service.add_assistant_message(telegram_user_id, reply.text)
+        self.chat_history_service.record_faq_context(telegram_user_id, reply.faq_context)
 
     def get_provider_name(self) -> str:
         return self.name

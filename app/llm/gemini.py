@@ -339,7 +339,13 @@ class GeminiClient(AbstractLlmClient):
         )
 
         if history:
-            contents.extend(history)
+            contents.extend(
+                {
+                    "role": "model" if message["role"] == "assistant" else "user",
+                    "parts": [{"text": message["content"]}],
+                }
+                for message in history
+            )
 
         user_parts: list[dict[str, Any]] = []
         if base64_image and base64_image.strip():
@@ -360,9 +366,6 @@ class GeminiClient(AbstractLlmClient):
 
         contents.append({"role": "user", "parts": user_parts})
         return contents
-
-    async def _get_conversation_history(self, telegram_user_id: int) -> list[dict[str, Any]]:
-        return await self.chat_history_service.to_gemini_contents(telegram_user_id)
 
     async def call_api(
         self,

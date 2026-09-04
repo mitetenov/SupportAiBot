@@ -28,6 +28,9 @@ class FaqInitializer:
 
     async def run(self) -> None:
         """Run startup sync check and re-index if FAQ file changed."""
+        # A retained index may belong to another model with the same dimension.
+        # Until verified or fully replaced, only its text data is safe to use.
+        self.service.set_vector_search_enabled(False)
         if not self.faq_path.exists():
             logger.info("FAQ file is absent; search starts without indexing")
             self.service.mark_ready()
@@ -37,23 +40,29 @@ class FaqInitializer:
             await self.service.init_schema()
 
             current_hash = self.compute_hash(self.faq_path)
-            stored_hash = await self.service.get_faq_hash()
+            current_fingerprint = (
+                self.service.get_index_fingerprint(current_hash)
+                if current_hash is not None
+                else None
+            )
+            stored_fingerprint = await self.service.get_faq_index_fingerprint()
             faq_count = await self.service.get_faq_count()
             # Rows without an embedding are invisible to search, so counting rows
             # alone is not evidence that the FAQ is usable.
             indexed_count = await self.service.get_indexed_faq_count()
 
             if (
-                current_hash is not None
-                and current_hash == stored_hash
+                current_fingerprint is not None
+                and current_fingerprint == stored_fingerprint
                 and faq_count > 0
                 and indexed_count == faq_count
             ):
                 logger.info(
-                    "FAQ database is up to date (hash matches, %d entries embedded). "
+                    "FAQ database is up to date (index fingerprint matches, %d entries embedded). "
                     "Skipping re-indexing.",
                     indexed_count,
                 )
+                self.service.set_vector_search_enabled(True)
                 self.service.mark_ready()
                 return
 
@@ -68,10 +77,10 @@ class FaqInitializer:
                 entries: list[dict[str, Any]] = json.load(f)
 
             logger.info(
-                "Indexing %d FAQ entries (stored hash = %s, current hash = %s)",
+                "Indexing %d FAQ entries (stored fingerprint = %s, current fingerprint = %s)",
                 len(entries),
-                stored_hash,
-                current_hash,
+                stored_fingerprint,
+                current_fingerprint,
             )
 
             usable = [
@@ -85,14 +94,14 @@ class FaqInitializer:
                 if entry.get("question") and entry.get("answer")
             ]
 
-            await self.service.clear_faq()
-            indexed = await self.service.index_faq_batch(usable)
+            indexed = await self.service.replace_faq_batch(usable)
 
-            # The hash is the promise that what is in the table matches the file.
-            # Storing it after a partial run would keep the next start from
-            # noticing the entries that never got embedded.
-            if current_hash is not None and indexed == len(usable):
-                await self.service.update_faq_hash(current_hash)
+            # The fingerprint is the promise that source content and embedding
+            # representation match the active rows.  Storing it after a partial
+            # run would keep the next start from retrying the missing vectors.
+            if current_fingerprint is not None and indexed == len(usable):
+                await self.service.update_faq_index_fingerprint(current_fingerprint)
+                self.service.set_vector_search_enabled(True)
             elif indexed != len(usable):
                 log_failure(
                     logger,

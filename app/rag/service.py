@@ -1,6 +1,8 @@
 """FAQ vector embedding service with PGVector hybrid search and Reciprocal Rank Fusion."""
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
 import time
@@ -41,6 +43,7 @@ CANDIDATE_LIMIT: int = 20
 
 #: Texts sent to the embedding provider in one HTTP call while indexing.
 EMBED_BATCH_SIZE: int = 32
+INDEX_PREPARATION_VERSION: str = "faq-document-v2"
 
 GLOBAL_SEARCH_ALIASES: list[str] = ["vpn", "впн", "вэпэн"]
 
@@ -124,6 +127,23 @@ VECTOR_SEARCH_SQL = text("""
     LIMIT :limit
 """)
 
+# A healthy PostgreSQL full-text index can still answer common support queries
+# while the external embedding provider is rate-limited or unavailable.  Keep
+# this query independent of pgvector so it is a real degradation path rather
+# than another call that needs an embedding first.
+FTS_SEARCH_SQL = text(f"""
+    SELECT question,
+           answer,
+           image,
+           ts_rank({FAQ_FTS_EXPRESSION}, websearch_to_tsquery('russian', :clean_query))
+               AS fts_rank
+    FROM faq
+    WHERE {FAQ_FTS_EXPRESSION} @@ websearch_to_tsquery('russian', :clean_query)
+      AND NOT (question = ANY(CAST(:excluded AS text[])))
+    ORDER BY fts_rank DESC
+    LIMIT :limit
+""")
+
 
 class FaqEmbeddingService:
     """Service for indexing, hybrid searching, and managing FAQ vector embeddings."""
@@ -136,6 +156,7 @@ class FaqEmbeddingService:
         self.db_manager = db_manager
         self.embedding_provider = embedding_provider
         self.ready: bool = False
+        self.vector_search_enabled: bool = True
         self.embedding_cache: OrderedDict[str, list[float]] = OrderedDict()
 
     def is_ready(self) -> bool:
@@ -146,6 +167,10 @@ class FaqEmbeddingService:
         """Mark the FAQ service as ready for search queries."""
         self.ready = True
         logger.info("FAQ service marked as ready for search")
+
+    def set_vector_search_enabled(self, enabled: bool) -> None:
+        """Allow vector retrieval only after startup verifies the active index."""
+        self.vector_search_enabled = enabled
 
     async def init_schema(self) -> None:
         """Bring the FAQ table in line with the configured embedding provider.
@@ -174,6 +199,23 @@ class FaqEmbeddingService:
                 logger.log(TRACE, "Failed to fetch FAQ hash exception: %s", e, exc_info=True)
             return None
 
+    async def get_faq_index_fingerprint(self) -> str | None:
+        """Return the version of the FAQ data and embedding representation."""
+        try:
+            async with self.db_manager.session() as session:
+                result = await session.execute(
+                    text("SELECT val FROM faq_metadata WHERE key = 'faq_index_fingerprint'")
+                )
+                row = result.fetchone()
+                return str(row[0]) if row else None
+        except Exception as e:
+            logger.error("Failed to fetch FAQ index fingerprint (error_class=%s)", type(e).__name__)
+            if logger.isEnabledFor(TRACE):
+                logger.log(
+                    TRACE, "Failed to fetch FAQ index fingerprint exception: %s", e, exc_info=True
+                )
+            return None
+
     async def update_faq_hash(self, hash_val: str) -> None:
         """Update the stored SHA-256 hash of the indexed FAQ file."""
         async with self.db_manager.session() as session:
@@ -184,6 +226,36 @@ class FaqEmbeddingService:
                 """),
                 {"hash_val": hash_val},
             )
+
+    async def update_faq_index_fingerprint(self, fingerprint: str) -> None:
+        """Store the fingerprint that guarantees query and document vector compatibility."""
+        async with self.db_manager.session() as session:
+            await session.execute(
+                text("""
+                INSERT INTO faq_metadata (key, val) VALUES ('faq_index_fingerprint', :fingerprint)
+                ON CONFLICT (key) DO UPDATE SET val = EXCLUDED.val
+                """),
+                {"fingerprint": fingerprint},
+            )
+
+    def get_index_fingerprint(self, faq_hash: str) -> str:
+        """Fingerprint source data and every setting that changes its vectors.
+
+        Dimension alone is insufficient: two embedding models can produce the
+        same-sized vectors in incompatible spaces.  This intentionally contains
+        no credential and can be safely logged or compared across deployments.
+        """
+        provider = self.embedding_provider
+        payload = {
+            "faq_hash": faq_hash,
+            "preparation": INDEX_PREPARATION_VERSION,
+            "provider": f"{type(provider).__module__}.{type(provider).__qualname__}",
+            "model": getattr(provider, "model", getattr(provider, "MODEL", None)),
+            "base_url": getattr(provider, "base_url", getattr(provider, "DEFAULT_BASE_URL", None)),
+            "dimension": provider.get_dimension(),
+        }
+        encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode()).hexdigest()
 
     async def get_faq_count(self) -> int:
         """Get the number of indexed FAQ rows in PostgreSQL."""
@@ -337,6 +409,43 @@ class FaqEmbeddingService:
         if not entries:
             return 0
 
+        rows = await self._rows_for_entries(entries)
+
+        if not rows:
+            logger.error("No FAQ entry could be embedded — search will find nothing")
+            return 0
+
+        async with self.db_manager.session() as session:
+            await session.execute(INSERT_FAQ_SQL, rows)
+
+        logger.info("Indexed %d of %d FAQ entries", len(rows), len(entries))
+        return len(rows)
+
+    async def replace_faq_batch(self, entries: Sequence[FaqEntry]) -> int:
+        """Atomically replace FAQ rows only after every new embedding is ready.
+
+        Embeddings are requested before the transaction.  A provider outage or
+        partial batch therefore leaves the currently searchable FAQ untouched.
+        """
+        rows = await self._rows_for_entries(entries)
+        if len(rows) != len(entries):
+            logger.error(
+                "FAQ replacement aborted: embedded %d of %d entries; keeping the active index",
+                len(rows),
+                len(entries),
+            )
+            return len(rows)
+
+        async with self.db_manager.session() as session:
+            await session.execute(text("DELETE FROM faq"))
+            if rows:
+                await session.execute(INSERT_FAQ_SQL, rows)
+
+        logger.info("Atomically replaced FAQ index with %d entries", len(rows))
+        return len(rows)
+
+    async def _rows_for_entries(self, entries: Sequence[FaqEntry]) -> list[dict[str, object]]:
+        """Embed FAQ entries before choosing whether to insert or replace them."""
         dimension = self.embedding_provider.get_dimension()
         rows: list[dict[str, object]] = []
 
@@ -362,15 +471,7 @@ class FaqEmbeddingService:
                     self._faq_row(entry.question, entry.answer, searchable, vector, entry.image)
                 )
 
-        if not rows:
-            logger.error("No FAQ entry could be embedded — search will find nothing")
-            return 0
-
-        async with self.db_manager.session() as session:
-            await session.execute(INSERT_FAQ_SQL, rows)
-
-        logger.info("Indexed %d of %d FAQ entries", len(rows), len(entries))
-        return len(rows)
+        return rows
 
     @staticmethod
     def embed_text(question: str, answer: str, searchable_keywords: str) -> str:
@@ -406,12 +507,14 @@ class FaqEmbeddingService:
             return []
 
         start_time = time.monotonic()
-        vector_str = await self.embed_query_as_vector(query)
-        if not vector_str:
-            return []
-
         raw_clean = re.sub(r"[^a-zA-Zа-яА-Я0-9\s]", " ", query).strip()
         clean_query = raw_clean if raw_clean else query
+        if not self.vector_search_enabled:
+            return await self._search_fts_only(clean_query, exclude)
+        vector_str = await self.embed_query_as_vector(query)
+        if not vector_str:
+            logger.info("FAQ embedding unavailable; degrading to FTS-only search")
+            return await self._search_fts_only(clean_query, exclude)
 
         try:
             params = {
@@ -467,6 +570,43 @@ class FaqEmbeddingService:
             if logger.isEnabledFor(TRACE):
                 logger.log(TRACE, "FAQ hybrid search failure details: %s", e, exc_info=True)
             return await self._search_pure_vector(vector_str, exclude)
+
+    async def _search_fts_only(
+        self, clean_query: str, exclude: set[str] | None = None
+    ) -> list[FaqResult]:
+        """Search the PostgreSQL text index when no query embedding is available."""
+        start_time = time.monotonic()
+        try:
+            params = {
+                "clean_query": clean_query,
+                "limit": SEARCH_LIMIT,
+                "excluded": sorted(exclude) if exclude else [],
+            }
+            async with self.db_manager.session() as session:
+                result = await session.execute(FTS_SEARCH_SQL, params)
+                rows = result.fetchall()
+            results = [
+                FaqResult(
+                    question=str(row.question),
+                    answer=str(row.answer),
+                    similarity=0.0,
+                    rrf_score=float(row.fts_rank),
+                    image=str(row.image) if row.image else None,
+                )
+                for row in rows
+                if float(row.fts_rank) >= MIN_FTS_RANK
+            ]
+            logger.info(
+                "RAG search: operation=fts_only_search, candidates_count=%d, outcome=success, duration=%.3fs",
+                len(results),
+                time.monotonic() - start_time,
+            )
+            return results
+        except Exception as e:
+            logger.error("FAQ FTS-only search failed (error_class=%s)", type(e).__name__)
+            if logger.isEnabledFor(TRACE):
+                logger.log(TRACE, "FAQ FTS-only search exception: %s", e, exc_info=True)
+            return []
 
     async def _search_pure_vector(
         self, vector_str: str, exclude: set[str] | None = None

@@ -85,6 +85,7 @@ class LlmTurnState:
     """Provider-neutral state prepared once and shared by fallback attempts."""
 
     faq_context: FaqContext
+    history: list[dict[str, Any]] = field(default_factory=list)
     completed_tool_results: dict[str, str] = field(default_factory=dict)
     replay_completed_tool_results: bool = False
 
@@ -216,21 +217,34 @@ class AbstractLlmClient(ABC, LlmClient):
     ) -> LlmReply:
         reply = await self.do_chat(user_message, telegram_user_id, base64_image, mime_type)
 
+        await self.persist_success(telegram_user_id, history_message, reply)
+        return reply
+
+    async def persist_success(
+        self, telegram_user_id: int, history_message: str, reply: LlmReply
+    ) -> None:
+        """Commit a completed turn and its retrieval context exactly once."""
         await self.chat_history_service.add_user_message(telegram_user_id, history_message)
         await self.chat_history_service.add_assistant_message(telegram_user_id, reply.text)
-        self.chat_history_service.add_rejected_faq_questions(
-            telegram_user_id, reply.faq_context.questions()
-        )
-        return reply
+        self.chat_history_service.record_faq_context(telegram_user_id, reply.faq_context)
 
     async def prepare_turn(self, user_message: str, telegram_user_id: int) -> LlmTurnState:
         """Build retrieval state once before one or more provider attempts."""
+        # Load persistent history before deriving the retrieval query.  Without
+        # this, the first follow-up after a restart searched only for "iOS"
+        # instead of the stored "all servers n/a ... iOS" conversation.
+        history = await self.chat_history_service.get_history(telegram_user_id)
         self.chat_history_service.clear_rejected_faqs_if_new_topic(telegram_user_id, user_message)
 
         if is_rejection(user_message):
-            search_query = self.chat_history_service.get_last_user_message(telegram_user_id)
+            self.chat_history_service.reject_last_faq(telegram_user_id)
+            search_query = self.build_contextual_search_query(
+                telegram_user_id, user_message, force_context=True, history=history
+            )
         else:
-            search_query = self.build_contextual_search_query(telegram_user_id, user_message)
+            search_query = self.build_contextual_search_query(
+                telegram_user_id, user_message, history=history
+            )
 
         if not search_query or not search_query.strip():
             search_query = user_message
@@ -239,7 +253,7 @@ class AbstractLlmClient(ABC, LlmClient):
         faq_context = await self.faq_embedding_service.build_faq_context(
             search_query or "", rejected_faqs
         )
-        return LlmTurnState(faq_context=faq_context)
+        return LlmTurnState(faq_context=faq_context, history=history)
 
     async def do_chat(
         self,
@@ -256,14 +270,13 @@ class AbstractLlmClient(ABC, LlmClient):
             turn_state = await self.prepare_turn(user_message, telegram_user_id)
         faq_context = turn_state.faq_context
 
-        history = await self._get_conversation_history(telegram_user_id)
         conversation = self.build_initial_conversation(
             user_message,
             telegram_user_id,
             faq_context.text,
             base64_image,
             mime_type,
-            history=history,
+            history=turn_state.history,
         )
         if turn_state.replay_completed_tool_results and turn_state.completed_tool_results:
             # Transfer facts as data, not fabricated provider-specific tool calls:
@@ -448,28 +461,48 @@ class AbstractLlmClient(ABC, LlmClient):
         conversation.append({"role": "user", "content": instruction})
 
     def build_contextual_search_query(
-        self, telegram_user_id: int, user_message: str | None
+        self,
+        telegram_user_id: int,
+        user_message: str | None,
+        *,
+        force_context: bool = False,
+        history: list[dict[str, Any]] | None = None,
     ) -> str | None:
-        """Prefix the previous user message when this one cannot stand on its own."""
+        """Accumulate the current issue and follow-ups from the loaded history."""
         if user_message is None or not user_message.strip():
             return user_message
 
-        last_msg = self.chat_history_service.get_last_user_message(telegram_user_id)
-        if (
-            not last_msg
-            or not last_msg.strip()
-            or last_msg.strip().lower() == user_message.strip().lower()
-        ):
-            return user_message
-
         trimmed = user_message.strip()
-        has_letters = any(c.isalpha() for c in trimmed)
-        is_follow_up = (not has_letters) or bool(self.FOLLOW_UP_PATTERN.search(trimmed))
+        if not (force_context or self._is_search_follow_up(trimmed)):
+            return trimmed
 
-        return f"{last_msg} {trimmed}" if is_follow_up else trimmed
+        previous = [
+            str(msg["content"]).strip()
+            for msg in history or []
+            if msg.get("role") == "user" and msg.get("content")
+        ]
+        if not previous:
+            last_msg = self.chat_history_service.get_last_user_message(telegram_user_id)
+            previous = [last_msg.strip()] if last_msg and last_msg.strip() else []
+
+        parts = [trimmed]
+        for message in reversed(previous):
+            if message.casefold() != parts[-1].casefold():
+                parts.append(message)
+            if not self._is_search_follow_up(message):
+                break
+        return " ".join(reversed(parts))
+
+    @classmethod
+    def _is_search_follow_up(cls, message: str) -> bool:
+        return (
+            is_rejection(message)
+            or not any(c.isalpha() for c in message)
+            or bool(cls.FOLLOW_UP_PATTERN.search(message))
+        )
 
     async def _get_conversation_history(self, telegram_user_id: int) -> list[dict[str, Any]]:
-        """Fetch chronological history formatted for provider."""
+        """Fetch chronological history in the shared role/content format."""
         return await self.chat_history_service.get_history(telegram_user_id)
 
     @classmethod

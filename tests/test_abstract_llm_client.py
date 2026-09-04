@@ -246,7 +246,50 @@ class TestAbstractLlmClient:
         await client.chat("это не то", USER_ID)
 
         faq_embedding_service.build_faq_context.assert_called_once_with(
-            "не подключается на макбуке", set()
+            "не подключается на макбуке это не то", set()
+        )
+
+    @pytest.mark.asyncio
+    async def test_rejection_keeps_new_facts_without_excluding_a_clarification_candidate(self):
+        history = ChatHistoryService()
+        await history.add_user_message(USER_ID, "Все серверы n/a, VPN не работает")
+        await history.add_assistant_message(USER_ID, "Какая операционная система?")
+        history.record_faq_context(USER_ID, context_with("Проверить пинг", "Установить приложение"))
+        faq_embedding_service = MagicMock(spec=FaqEmbeddingService)
+        faq_embedding_service.build_faq_context = AsyncMock(return_value=FaqContext.EMPTY)
+        client = ScriptedClient(MagicMock(spec=McpRouter), history, faq_embedding_service)
+        client.script_text("Готово")
+
+        await client.chat("Не помогло, у меня Android", USER_ID)
+
+        faq_embedding_service.build_faq_context.assert_awaited_once_with(
+            "Все серверы n/a, VPN не работает Не помогло, у меня Android", set()
+        )
+
+    @pytest.mark.asyncio
+    async def test_loads_persisted_history_before_retrieval(self):
+        history = ChatHistoryService()
+
+        async def load_from_database(user_id: int) -> None:
+            history._histories[user_id] = deque(
+                [
+                    {"role": "user", "content": "Все серверы n/a, VPN не работает"},
+                    {"role": "assistant", "content": "Какая операционная система?"},
+                ],
+                maxlen=history.max_messages,
+            )
+            history._loaded_from_db.add(user_id)
+
+        history._load_from_database = load_from_database  # type: ignore[method-assign]
+        faq_embedding_service = MagicMock(spec=FaqEmbeddingService)
+        faq_embedding_service.build_faq_context = AsyncMock(return_value=FaqContext.EMPTY)
+        client = ScriptedClient(MagicMock(spec=McpRouter), history, faq_embedding_service)
+        client.script_text("Установите подходящее приложение")
+
+        await client.chat("iOS", USER_ID)
+
+        faq_embedding_service.build_faq_context.assert_awaited_once_with(
+            "Все серверы n/a, VPN не работает iOS", set()
         )
 
     @pytest.mark.asyncio
@@ -261,7 +304,7 @@ class TestAbstractLlmClient:
         faq_embedding_service.build_faq_context.assert_called_once_with("не помогло", rejected)
 
     @pytest.mark.asyncio
-    async def test_should_record_entries_shown_for_next_turn(self, mock_deps):
+    async def test_should_remember_retrieval_without_rejecting_every_candidate(self, mock_deps):
         client, _, chat_history_service, faq_embedding_service = mock_deps
         context = context_with("Как обновить подписку?", "Как сделать пинг?")
         faq_embedding_service.build_faq_context.return_value = context
@@ -269,9 +312,8 @@ class TestAbstractLlmClient:
 
         await client.chat("не работает", USER_ID)
 
-        chat_history_service.add_rejected_faq_questions.assert_called_once_with(
-            USER_ID, {"Как обновить подписку?", "Как сделать пинг?"}
-        )
+        chat_history_service.record_faq_context.assert_called_once_with(USER_ID, context)
+        chat_history_service.add_rejected_faq_questions.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_should_carry_retrieval_out_on_reply(self, mock_deps):

@@ -11,6 +11,7 @@ from sqlalchemy import delete, select
 
 from app.llm.rejection import is_rejection
 from app.logging_config import TRACE
+from app.rag.types import FaqContext
 from app.storage.database import DatabaseSessionManager
 from app.storage.models import ChatMessage
 
@@ -34,6 +35,8 @@ class ChatHistoryService:
         self._last_activity: dict[int, float] = {}
         self._loaded_from_db: set[int] = set()
         self._rejected_faq_questions: dict[int, set[str]] = {}
+        # Candidate rank does not establish which instructions an answer used.
+        self._last_used_faq_questions: dict[int, set[str]] = {}
 
     async def get_history(self, user_id: int) -> list[dict[str, str]]:
         """Retrieve chronological history for a user, loading from DB if not in memory."""
@@ -128,10 +131,27 @@ class ChatHistoryService:
         return set(self._rejected_faq_questions.get(user_id, set()))
 
     def add_rejected_faq_questions(self, user_id: int, questions: Iterable[str] | None) -> None:
-        """Record rejected FAQ questions for exclusion in follow-up queries."""
-        if not questions:
-            return
-        self._rejected_faq_questions.setdefault(user_id, set()).update(questions)
+        """Add explicit rejected FAQ questions.
+
+        Kept for administrative and test callers.  Normal model replies no
+        longer call this method; ``reject_last_faq`` is the conversational path.
+        """
+        if questions:
+            self._rejected_faq_questions.setdefault(user_id, set()).update(questions)
+
+    def record_faq_context(
+        self, user_id: int, context: FaqContext, *, used_questions: Iterable[str] = ()
+    ) -> None:
+        """Record explicitly attributed sources, never infer usage from ranking.
+
+        Plain-text LLM replies provide no verified attribution, so the default
+        clears the previous attribution without excluding any candidate.
+        """
+        self._last_used_faq_questions[user_id] = context.questions().intersection(used_questions)
+
+    def reject_last_faq(self, user_id: int) -> None:
+        """Exclude only sources explicitly attributed to the previous answer."""
+        self.add_rejected_faq_questions(user_id, self._last_used_faq_questions.get(user_id))
 
     def clear_rejected_faqs_if_new_topic(self, user_id: int, user_message: str | None) -> None:
         """Reset rejected FAQ questions if the incoming message is a new topic, not a rejection."""
@@ -146,6 +166,7 @@ class ChatHistoryService:
         self._last_activity.pop(user_id, None)
         self._loaded_from_db.discard(user_id)
         self._rejected_faq_questions.pop(user_id, None)
+        self._last_used_faq_questions.pop(user_id, None)
 
         if self.db_manager is not None:
             try:
@@ -201,6 +222,7 @@ class ChatHistoryService:
             self._last_activity.pop(uid, None)
             self._loaded_from_db.discard(uid)
             self._rejected_faq_questions.pop(uid, None)
+            self._last_used_faq_questions.pop(uid, None)
             if logger.isEnabledFor(TRACE):
                 logger.log(TRACE, "Evicted stale in-memory history for user %d", uid)
 

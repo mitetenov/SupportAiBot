@@ -23,8 +23,7 @@ from app.storage.database import get_db_manager
 
 QUERIES_PATH = Path(__file__).with_name("retrieval_queries.json")
 
-#: (MIN_VECTOR_SIMILARITY, SEARCH_LIMIT) pairs to compare. The first is what
-#: ships today.
+#: (MIN_VECTOR_SIMILARITY, SEARCH_LIMIT) pairs to compare.
 GRID: list[tuple[float, int]] = [
     (0.65, 3),
     (0.60, 3),
@@ -92,12 +91,11 @@ _real_referral = FaqEmbeddingService._looks_like_referral_query
 _real_search_with_fallback = FaqEmbeddingService.search_with_fallback
 
 #: How the topic fallbacks behave in a given run.
-#:  "compete" — what ships: fallback hits are merged in and everything is
-#:              re-sorted by RRF score, so a canned query that matches its own
-#:              FAQ entry almost exactly can take rank 1 from the user's actual
-#:              question.
-#:  "append"  — fallback hits keep the primary ranking above them: they can only
-#:              fill positions the primary search left empty.
+#:  "compete" — the historical behaviour: fallback hits are merged in and
+#:              sorted by their own RRF scores, so a canned query may take rank
+#:              1 from the user's actual question.
+#:  "append"  — production behaviour: fallback hits keep the primary ranking
+#:              above them and only fill remaining positions.
 #:  "off"     — no fallback search at all.
 FallbackMode = str
 FALLBACK_MODES: tuple[FallbackMode, ...] = ("compete", "append", "off")
@@ -123,6 +121,29 @@ async def _search_appending(
     return results[: rag.MAX_RESULTS]
 
 
+async def _search_competing(
+    self: FaqEmbeddingService,
+    query: str,
+    exclude: set[str] | None = None,
+) -> list[rag.FaqResult]:
+    """Historical fallback behaviour kept only for an honest comparison."""
+    searches = [self.search(query, exclude)]
+    if _real_connection(query):
+        searches.append(self.search(rag.CONNECTION_FAQ_QUERY, exclude))
+    if _real_referral(query):
+        searches.append(self.search(rag.REFERRAL_FAQ_QUERY, exclude))
+
+    merged: dict[str, rag.FaqResult] = {}
+    for result_set in await asyncio.gather(*searches):
+        for result in result_set:
+            current = merged.get(result.question)
+            if current is None or result.rrf_score > current.rrf_score:
+                merged[result.question] = result
+    return sorted(merged.values(), key=lambda result: result.rrf_score, reverse=True)[
+        : rag.MAX_RESULTS
+    ]
+
+
 def set_fallback_mode(mode: FallbackMode) -> None:
     """Install one of the three fallback behaviours for the next run."""
     predicate_on = mode != "off"
@@ -132,13 +153,15 @@ def set_fallback_mode(mode: FallbackMode) -> None:
     FaqEmbeddingService._looks_like_referral_query = staticmethod(  # type: ignore[method-assign]
         _real_referral if predicate_on else lambda query: False
     )
-    FaqEmbeddingService.search_with_fallback = (  # type: ignore[method-assign]
-        _searching_appending_or_real(mode)
-    )
+    FaqEmbeddingService.search_with_fallback = _search_for_mode(mode)  # type: ignore[method-assign]
 
 
-def _searching_appending_or_real(mode: FallbackMode):  # type: ignore[no-untyped-def]
-    return _search_appending if mode == "append" else _real_search_with_fallback
+def _search_for_mode(mode: FallbackMode):
+    if mode == "compete":
+        return _search_competing
+    if mode == "append":
+        return _search_appending
+    return _real_search_with_fallback
 
 
 async def score_grid_point(
@@ -222,7 +245,7 @@ async def main() -> None:
         faq_service.mark_ready()
 
     cases = load_cases()
-    baseline_sim, baseline_limit = GRID[0]
+    baseline_sim, baseline_limit = rag.MIN_VECTOR_SIMILARITY, rag.SEARCH_LIMIT
 
     print(
         f"\n{len(cases)} queries — {sum(1 for c in cases if not c.is_control)} labelled, "
@@ -238,8 +261,8 @@ async def main() -> None:
     print("  " + "-" * 74)
 
     labels = {
-        "compete": "fallbacks compete for rank 1 (ships today)",
-        "append": "fallbacks append below the primary ranking",
+        "compete": "historical: fallbacks compete for rank 1",
+        "append": "production: fallbacks append below the primary ranking",
         "off": "no fallbacks",
     }
     details: dict[float, list[tuple[Case, str | None]]] = {}
@@ -250,7 +273,7 @@ async def main() -> None:
             score, detail = await score_grid_point(faq_service, cases, min_sim, limit)
             marker = (
                 "  <- ships today"
-                if mode == "compete" and (min_sim, limit) == (baseline_sim, baseline_limit)
+                if mode == "append" and (min_sim, limit) == (baseline_sim, baseline_limit)
                 else ""
             )
             print("  " + score.line(min_sim, limit) + marker)

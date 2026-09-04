@@ -9,6 +9,16 @@ import pytest
 from app.rag.initializer import FaqInitializer
 
 
+def configure_index_service(service: MagicMock, *, indexed: int) -> None:
+    """Configure the index-specific service contract used by the initializer."""
+    service.get_index_fingerprint = MagicMock(
+        side_effect=lambda source_hash: f"fingerprint:{source_hash}"
+    )
+    service.get_faq_index_fingerprint = AsyncMock(return_value=None)
+    service.replace_faq_batch = AsyncMock(return_value=indexed)
+    service.update_faq_index_fingerprint = AsyncMock()
+
+
 class TestFaqInitializer:
     """Test suite for FaqInitializer."""
 
@@ -53,17 +63,17 @@ class TestFaqInitializer:
         mock_service.index_faq_batch = AsyncMock(return_value=0)
         mock_service.update_faq_hash = AsyncMock()
         mock_service.mark_ready = MagicMock()
+        configure_index_service(mock_service, indexed=0)
 
         initializer = FaqInitializer(service=mock_service, faq_path=faq_file)
         current_hash = initializer.compute_hash(faq_file)
-        mock_service.get_faq_hash.return_value = current_hash
+        mock_service.get_faq_index_fingerprint.return_value = f"fingerprint:{current_hash}"
 
         await initializer.run()
 
         mock_service.init_schema.assert_awaited_once()
-        mock_service.clear_faq.assert_not_called()
-        mock_service.index_faq_batch.assert_not_called()
-        mock_service.update_faq_hash.assert_not_called()
+        mock_service.replace_faq_batch.assert_not_called()
+        mock_service.update_faq_index_fingerprint.assert_not_called()
         mock_service.mark_ready.assert_called_once()
 
     @pytest.mark.asyncio
@@ -84,19 +94,19 @@ class TestFaqInitializer:
         mock_service.index_faq_batch = AsyncMock(return_value=2)
         mock_service.update_faq_hash = AsyncMock()
         mock_service.mark_ready = MagicMock()
+        configure_index_service(mock_service, indexed=2)
 
         initializer = FaqInitializer(service=mock_service, faq_path=faq_file)
         await initializer.run()
 
         mock_service.init_schema.assert_awaited_once()
-        mock_service.clear_faq.assert_awaited_once()
-        mock_service.index_faq_batch.assert_awaited_once()
-        indexed = mock_service.index_faq_batch.await_args.args[0]
+        mock_service.replace_faq_batch.assert_awaited_once()
+        indexed = mock_service.replace_faq_batch.await_args.args[0]
         assert [(e.question, e.answer, e.keywords) for e in indexed] == [
             ("Q1", "A1", "k1, k2"),
             ("Q2", "A2", "single_keyword"),
         ]
-        mock_service.update_faq_hash.assert_awaited_once()
+        mock_service.update_faq_index_fingerprint.assert_awaited_once()
         mock_service.mark_ready.assert_called_once()
 
     @pytest.mark.asyncio
@@ -135,14 +145,13 @@ class TestFaqInitializer:
         mock_service.index_faq_batch = AsyncMock(return_value=0)
         mock_service.update_faq_hash = AsyncMock()
         mock_service.mark_ready = MagicMock()
+        configure_index_service(mock_service, indexed=0)
 
         initializer = FaqInitializer(service=mock_service, faq_path=faq_file)
-        mock_service.get_faq_hash = AsyncMock(return_value=initializer.compute_hash(faq_file))
-
         await initializer.run()
 
-        mock_service.clear_faq.assert_awaited_once()
-        indexed = mock_service.index_faq_batch.await_args.args[0]
+        mock_service.replace_faq_batch.assert_awaited_once()
+        indexed = mock_service.replace_faq_batch.await_args.args[0]
         assert [e.question for e in indexed] == ["Q1", "Q2"]
         mock_service.mark_ready.assert_called_once()
 
@@ -159,13 +168,12 @@ class TestFaqInitializer:
         mock_service.index_faq_batch = AsyncMock(return_value=0)
         mock_service.update_faq_hash = AsyncMock()
         mock_service.mark_ready = MagicMock()
+        configure_index_service(mock_service, indexed=0)
 
         initializer = FaqInitializer(service=mock_service, faq_path=faq_file)
-        mock_service.get_faq_hash = AsyncMock(return_value=initializer.compute_hash(faq_file))
-
         await initializer.run()
 
-        mock_service.clear_faq.assert_awaited_once()
+        mock_service.replace_faq_batch.assert_awaited_once()
 
 
 class TestPartialIndexingKeepsTheHashStale:
@@ -188,10 +196,11 @@ class TestPartialIndexingKeepsTheHashStale:
         mock_service.index_faq_batch = AsyncMock(return_value=1)
         mock_service.update_faq_hash = AsyncMock()
         mock_service.mark_ready = MagicMock()
+        configure_index_service(mock_service, indexed=1)
 
         await FaqInitializer(service=mock_service, faq_path=faq_file).run()
 
-        mock_service.update_faq_hash.assert_not_called()
+        mock_service.update_faq_index_fingerprint.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_hash_is_stored_when_every_entry_landed(self, tmp_path: Path) -> None:
@@ -207,10 +216,11 @@ class TestPartialIndexingKeepsTheHashStale:
         mock_service.index_faq_batch = AsyncMock(return_value=1)
         mock_service.update_faq_hash = AsyncMock()
         mock_service.mark_ready = MagicMock()
+        configure_index_service(mock_service, indexed=1)
 
         await FaqInitializer(service=mock_service, faq_path=faq_file).run()
 
-        mock_service.update_faq_hash.assert_awaited_once()
+        mock_service.update_faq_index_fingerprint.assert_awaited_once()
 
 
 class TestIllustrations:
@@ -238,9 +248,10 @@ class TestIllustrations:
         service.index_faq_batch = AsyncMock(return_value=2)
         service.update_faq_hash = AsyncMock()
         service.mark_ready = MagicMock()
+        configure_index_service(service, indexed=2)
 
         await FaqInitializer(service=service, faq_path=faq_file).run()
 
-        indexed = service.index_faq_batch.await_args.args[0]
+        indexed = service.replace_faq_batch.await_args.args[0]
         assert indexed[0].image == "happ-buttons.png"
         assert indexed[1].image is None

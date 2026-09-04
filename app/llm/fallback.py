@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from inspect import isawaitable
 
 import httpx
 
@@ -182,8 +183,15 @@ class LlmFallbackClient:
         reply: LlmReply,
     ) -> None:
         """Commit a successful turn once, after all fallback processing is complete."""
+        persist = getattr(client, "persist_success", None)
+        if callable(persist):
+            outcome = persist(telegram_user_id, history_message, reply)
+            if isawaitable(outcome):
+                await outcome
+                return
+
+        # Compatibility with clients implementing the former lightweight
+        # fallback contract.  Concrete application clients inherit the method
+        # above and also store the retrieval context.
         await client.chat_history_service.add_user_message(telegram_user_id, history_message)
         await client.chat_history_service.add_assistant_message(telegram_user_id, reply.text)
-        client.chat_history_service.add_rejected_faq_questions(
-            telegram_user_id, reply.faq_context.questions()
-        )
