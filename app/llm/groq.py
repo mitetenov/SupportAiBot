@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -27,23 +28,50 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DEEPSEEK_REASONING_EFFORT_MAP: dict[str, str] = {
-    "minimal": "high",
-    "low": "high",
-    "medium": "high",
+# https://console.groq.com/docs/reasoning
+GROQ_GPT_OSS_MODELS = frozenset(
+    {"openai/gpt-oss-20b", "openai/gpt-oss-120b", "openai/gpt-oss-safeguard-20b"}
+)
+GROQ_QWEN_TOGGLE_MODELS = frozenset({"qwen/qwen3-32b", "qwen/qwen3.6-27b"})
+GROQ_QWEN_LEVEL_MODELS = frozenset({"qwen/qwen3.8-27b"})
+GROQ_REASONING_EFFORT_MAP = {
+    "none": "low",  # GPT-OSS cannot disable thinking; use its lowest effort.
+    "minimal": "low",
+    "low": "low",
+    "medium": "medium",
     "high": "high",
-    "xhigh": "max",
-    "max": "max",
+    "xhigh": "high",
+    "max": "high",
 }
+_RAW_REASONING = re.compile(r"<think\b[^>]*>.*?(?:</think\s*>|$)", re.DOTALL | re.IGNORECASE)
 
 
 def supports_reasoning(model: str) -> bool:
-    """Return whether the official Groq model supports dual thinking mode."""
+    """Return whether this client knows the model's native reasoning controls."""
+    return model.strip().lower() in (
+        GROQ_GPT_OSS_MODELS | GROQ_QWEN_TOGGLE_MODELS | GROQ_QWEN_LEVEL_MODELS
+    )
+
+
+def reasoning_parameters(model: str, effort: str) -> dict[str, Any]:
+    """Keep thinking out of user-visible content, with or without MCP tools."""
     normalized = model.strip().lower()
-    return normalized.startswith("deepseek-v4-") or normalized in {
-        "deepseek-chat",
-        "deepseek-reasoner",
-    }
+    if normalized in GROQ_GPT_OSS_MODELS:
+        return {
+            "reasoning_effort": GROQ_REASONING_EFFORT_MAP[effort],
+            "include_reasoning": False,
+        }
+    if normalized in GROQ_QWEN_TOGGLE_MODELS:
+        return {
+            "reasoning_effort": "none" if effort == "none" else "default",
+            "reasoning_format": "hidden",
+        }
+    if normalized in GROQ_QWEN_LEVEL_MODELS:
+        return {
+            "reasoning_effort": "none" if effort == "none" else GROQ_REASONING_EFFORT_MAP[effort],
+            "reasoning_format": "hidden",
+        }
+    return {}
 
 
 class GroqClient(AbstractLlmClient):
@@ -71,7 +99,7 @@ class GroqClient(AbstractLlmClient):
         self.base_url = (settings.groq_base_url or "https://api.groq.com/openai/v1").rstrip("/")
         self.api_key = reveal(settings.groq_api_key)
         self.reasoning_effort = settings.reasoning_effort
-        self.reasoning_supported = False
+        self.reasoning_supported = supports_reasoning(self.model)
         self._http_client = http_client
         self._own_client = False
         self.tool_definitions = self._build_tool_definitions()
@@ -81,21 +109,18 @@ class GroqClient(AbstractLlmClient):
         if not self.reasoning_supported:
             if self.reasoning_effort != "none":
                 logger.warning(
-                    "Groq model %s does not support reasoning; "
-                    "REASONING_EFFORT=%s is ignored and requests are sent without reasoning",
+                    "No known reasoning controls for Groq model %s; REASONING_EFFORT=%s is ignored",
                     self.model,
                     self.reasoning_effort,
                 )
             return
-        native_effort = (
-            "none"
-            if self.reasoning_effort == "none"
-            else DEEPSEEK_REASONING_EFFORT_MAP[self.reasoning_effort]
-        )
+        native_effort = reasoning_parameters(self.model, self.reasoning_effort)["reasoning_effort"]
+        if self.model.strip().lower() in GROQ_GPT_OSS_MODELS and self.reasoning_effort == "none":
+            logger.warning(
+                "Groq model %s cannot disable reasoning; using native effort=low", self.model
+            )
         logger.info(
-            "Groq reasoning %s for model %s "
-            "(REASONING_EFFORT=%s, native effort=%s, MCP tools compatible)",
-            "disabled" if self.reasoning_effort == "none" else "enabled",
+            "Groq reasoning for model %s (REASONING_EFFORT=%s, native effort=%s)",
             self.model,
             self.reasoning_effort,
             native_effort,
@@ -139,18 +164,11 @@ class GroqClient(AbstractLlmClient):
             "model": self.model,
             "messages": messages,
         }
-        thinking_enabled = self.reasoning_supported and self.reasoning_effort != "none"
-        if self.reasoning_supported:
-            body["thinking"] = {"type": "enabled" if thinking_enabled else "disabled"}
-            if thinking_enabled:
-                body["reasoning_effort"] = DEEPSEEK_REASONING_EFFORT_MAP[self.reasoning_effort]
-        if not thinking_enabled:
-            body["temperature"] = self.TEMPERATURE
+        body.update(reasoning_parameters(self.model, self.reasoning_effort))
+        body["temperature"] = self.TEMPERATURE
         if self.tool_definitions:
             body["tools"] = self.tool_definitions
-            # Groq V4 rejects tool_choice when thinking mode is enabled.
-            if not thinking_enabled:
-                body["tool_choice"] = "auto"
+            body["tool_choice"] = "auto"
         return body
 
     def build_initial_conversation(
@@ -235,6 +253,9 @@ class GroqClient(AbstractLlmClient):
                 )
 
             content = message.get("content") or ""
+            # Also protect custom/unknown models that emit raw thinking despite
+            # the requested format. An unfinished <think> block is never a reply.
+            content = _RAW_REASONING.sub("", content).strip()
             tool_calls: list[ToolCall] = []
             tool_calls_node = message.get("tool_calls")
             if tool_calls_node and isinstance(tool_calls_node, list):
@@ -252,7 +273,7 @@ class GroqClient(AbstractLlmClient):
                     tc_id = tc.get("id", "")
                     tool_calls.append(ToolCall(name=fn_name, id=tc_id, arguments=args))
 
-            reasoning_content = message.get("reasoning_content")
+            reasoning_content = message.get("reasoning")
             return LlmResponse(
                 text=content,
                 tool_calls=tool_calls,
@@ -285,12 +306,9 @@ class GroqClient(AbstractLlmClient):
             )
         assistant_message: dict[str, Any] = {
             "role": "assistant",
-            # Groq thinking tool loops require non-null assistant content.
             "content": response.text,
             "tool_calls": tool_call_maps,
         }
-        if response.reasoning_content is not None:
-            assistant_message["reasoning_content"] = response.reasoning_content
         conversation.append(assistant_message)
 
     def add_tool_result_to_conversation(

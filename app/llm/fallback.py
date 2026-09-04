@@ -11,6 +11,7 @@ from app.llm.base import (
     AbstractLlmClient,
     LlmProcessingException,
     LlmReply,
+    LlmToolExecutionException,
     is_balance_exhaustion_message,
 )
 
@@ -31,8 +32,10 @@ class LlmFallbackExhaustedError(LlmProcessingException):
 
 def is_fallback_eligible(error: Exception) -> bool:
     """Return whether retrying the same turn at another provider is meaningful."""
-    current: Exception | None = error
+    current: BaseException | None = error
     while current is not None:
+        if isinstance(current, LlmToolExecutionException):
+            return False
         if isinstance(current, LlmProcessingException):
             if current.status_code in _FALLBACK_STATUS_CODES:
                 return True
@@ -113,12 +116,6 @@ class LlmFallbackClient:
                     turn_state=turn_state,
                 )
             except Exception as error:
-                if turn_state.completed_tool_results:
-                    logger.warning(
-                        "LLM provider %s failed after tool execution; refusing unsafe failover",
-                        client.get_provider_name(),
-                    )
-                    break
                 if not is_fallback_eligible(error):
                     raise
                 logger.warning(

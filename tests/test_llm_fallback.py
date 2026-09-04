@@ -222,9 +222,9 @@ class TestLlmFallbackClient:
         assert "denied" not in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_does_not_fail_over_after_a_completed_tool_call(self) -> None:
+    async def test_fails_over_after_a_completed_tool_call(self) -> None:
         primary = _FakeClient("Primary", LlmProcessingException("timeout", status_code=408))
-        secondary = _FakeClient("Secondary", LlmReply(text="must not be used"))
+        secondary = _FakeClient("Secondary", LlmReply(text="served by backup"))
 
         async def fail_after_tool(
             user_message: str,
@@ -240,10 +240,11 @@ class TestLlmFallbackClient:
         primary.do_chat = fail_after_tool  # type: ignore[method-assign]
         client = LlmFallbackClient([primary, secondary])
 
-        with pytest.raises(LlmFallbackExhaustedError):
-            await client.chat("Need help", 42)
+        reply = await client.chat("Need help", 42)
 
-        assert secondary.calls == []
+        assert reply.text == "served by backup"
+        assert len(secondary.calls) == 1
+        assert secondary.calls[0][2].completed_tool_results == {"hwid_device_delete:{}": "deleted"}
 
     @pytest.mark.asyncio
     async def test_real_clients_use_mock_transport_and_preserve_turn_state_on_failover(
@@ -299,60 +300,75 @@ class TestLlmFallbackClient:
         assert (usage.prompt_tokens, usage.completion_tokens, usage.total_tokens) == (11, 7, 18)
 
     @pytest.mark.asyncio
-    async def test_real_tool_call_is_not_replayed_after_provider_failure(self) -> None:
+    @pytest.mark.parametrize("tool_name", ["nodes_list", "hwid_device_delete"])
+    @pytest.mark.parametrize("repeat_call", [False, True])
+    async def test_completed_tools_survive_failover_without_reexecution(
+        self, tool_name: str, repeat_call: bool
+    ) -> None:
         requests: list[httpx.Request] = []
+        backup_requests: list[dict] = []
+        args = {"userId": "user-42", "hwid": "device-1"}
+
+        def tool_payload(call_id: str, arguments: dict) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": call_id,
+                                    "function": {
+                                        "name": tool_name,
+                                        "arguments": json.dumps(arguments),
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+            }
 
         def handler(request: httpx.Request) -> httpx.Response:
             requests.append(request)
-            if request.url.host == "primary.invalid" and len(requests) == 1:
-                return httpx.Response(
-                    200,
-                    json={
-                        "choices": [
-                            {
-                                "message": {
-                                    "content": "",
-                                    "tool_calls": [
-                                        {
-                                            "id": "call-1",
-                                            "function": {
-                                                "name": "nodes_list",
-                                                "arguments": "{}",
-                                            },
-                                        }
-                                    ],
-                                }
-                            }
-                        ]
-                    },
-                )
             if request.url.host == "primary.invalid":
+                if len(requests) == 1:
+                    return httpx.Response(200, json=tool_payload("primary-call", args))
                 return httpx.Response(401, json={"error": "provider failure"})
-            raise AssertionError(
-                f"fallback must not make a request after a tool call: {request.url!s}"
-            )
+            body = json.loads(request.content)
+            backup_requests.append(body)
+            if repeat_call and len(backup_requests) == 1:
+                # Call IDs and dictionary insertion order are provider-specific.
+                return httpx.Response(
+                    200, json=tool_payload("backup-call", dict(reversed(list(args.items()))))
+                )
+            return httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]})
 
-        mcp_router, history, faq_service, db_manager, _ = _concrete_dependencies()
-        mcp_router.list_tools.return_value = [
-            SimpleNamespace(name="nodes_list", description="List nodes", input_schema={})
+        router, history, faq, db, token_session = _concrete_dependencies()
+        router.list_tools.return_value = [
+            SimpleNamespace(name=tool_name, description="Tool", input_schema={})
         ]
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
-            client = create_llm_client(
-                _fallback_settings(),
-                mcp_router,
-                history,
-                faq_service,
-                db_manager,
-                http_client,
-            )
+        router.call_tool.return_value = '{"status":"done"}'
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = create_llm_client(_fallback_settings(), router, history, faq, db, http)
+            reply = await client.chat("Need help", 42)
 
-            with pytest.raises(LlmFallbackExhaustedError):
-                await client.chat("Need help", 42)
-
-        assert [request.url.host for request in requests] == ["primary.invalid", "primary.invalid"]
-        mcp_router.call_tool.assert_awaited_once_with("nodes_list", {}, 42)
-        history.add_user_message.assert_not_awaited()
-        history.add_assistant_message.assert_not_awaited()
+        assert reply.text == "done"
+        router.call_tool.assert_awaited_once_with(tool_name, args, 42)
+        summary = backup_requests[0]["messages"][-1]["content"]
+        records = json.loads(summary.split("\n", 1)[1])
+        assert records == [{"tool": tool_name, "arguments": args, "result": '{"status":"done"}'}]
+        if repeat_call:
+            result = backup_requests[1]["messages"][-1]
+            assert result == {
+                "role": "tool",
+                "tool_call_id": "backup-call",
+                "content": '{"status":"done"}',
+            }
+        assert token_session.add.call_count == (2 if repeat_call else 1)
+        history.add_user_message.assert_awaited_once_with(42, "Need help")
+        history.add_assistant_message.assert_awaited_once_with(42, "done")
+        faq.build_faq_context.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_exhaustion_logs_and_exceptions_never_include_provider_response_secrets(
@@ -411,3 +427,195 @@ class TestFallbackConfiguration:
 
         with pytest.raises(ValidationError, match="LLM_FALLBACK_CHAIN"):
             Settings(**valid_settings_dict)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backup", ["gemini", "openai"])
+async def test_cross_provider_transfer_uses_native_text_and_tool_results(backup):
+    primary_count = 0
+    backup_requests = []
+    args = {"hwid": "device-1", "userId": "user-42"}
+
+    def handler(request):
+        nonlocal primary_count
+        if request.url.host == "primary.invalid":
+            primary_count += 1
+            if primary_count == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "tool_calls": [
+                                        {
+                                            "id": "primary-call",
+                                            "function": {
+                                                "name": "hwid_device_delete",
+                                                "arguments": json.dumps(args),
+                                            },
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                )
+            return httpx.Response(401)
+        body = json.loads(request.content)
+        backup_requests.append(body)
+        if backup == "gemini":
+            parts = (
+                [
+                    {
+                        "functionCall": {
+                            "name": "hwid_device_delete",
+                            "args": args,
+                            "id": "backup-call",
+                        },
+                        "thoughtSignature": "backup-signature",
+                    }
+                ]
+                if len(backup_requests) == 1
+                else [{"text": "done"}]
+            )
+            return httpx.Response(
+                200, json={"candidates": [{"content": {"role": "model", "parts": parts}}]}
+            )
+        output = (
+            [
+                {
+                    "type": "function_call",
+                    "name": "hwid_device_delete",
+                    "arguments": json.dumps(args),
+                    "call_id": "backup-call",
+                }
+            ]
+            if len(backup_requests) == 1
+            else [{"type": "message", "content": [{"type": "output_text", "text": "done"}]}]
+        )
+        return httpx.Response(200, json={"output": output})
+
+    router, history, faq, db, _ = _concrete_dependencies()
+    history.to_gemini_contents = AsyncMock(return_value=[])
+    history.to_openai_messages = AsyncMock(return_value=[])
+    router.list_tools.return_value = [
+        SimpleNamespace(name="hwid_device_delete", description="Delete device", input_schema={})
+    ]
+    settings = _fallback_settings(
+        llm_fallback_chain=f"{backup}:"
+        + ("gemini-3.5-flash" if backup == "gemini" else "gpt-5.6-luna"),
+        openai_api_key="sk-test",
+        gemini_base_url="https://backup.invalid",
+        openai_base_url="https://backup.invalid",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        reply = await create_llm_client(settings, router, history, faq, db, http).chat(
+            "Delete device", 42
+        )
+    assert reply.text == "done"
+    router.call_tool.assert_awaited_once_with("hwid_device_delete", args, 42)
+    if backup == "gemini":
+        contents = backup_requests[0]["contents"]
+        assert "tool result" in contents[-1]["parts"][0]["text"]
+        assert "primary-call" not in json.dumps(contents)
+        assert "backup-signature" in json.dumps(backup_requests[1])
+        assert backup_requests[1]["contents"][-1]["parts"][0]["functionResponse"]["response"] == {
+            "output": "tool result"
+        }
+    else:
+        assert "tool result" in backup_requests[0]["input"][-1]["content"]
+        assert "primary-call" not in json.dumps(backup_requests[0])
+        assert backup_requests[1]["input"][-1] == {
+            "type": "function_call_output",
+            "call_id": "backup-call",
+            "output": "tool result",
+        }
+    history.add_user_message.assert_awaited_once()
+    history.add_assistant_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mcp_timeout_with_unknown_outcome_does_not_reexecute_on_backup():
+    from app.llm.base import LlmToolExecutionException
+
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "one",
+                                    "function": {"name": "hwid_device_delete", "arguments": "{}"},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    router, history, faq, db, _ = _concrete_dependencies()
+    router.call_tool.side_effect = httpx.ReadTimeout("unknown MCP outcome")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = create_llm_client(_fallback_settings(), router, history, faq, db, http)
+        with pytest.raises(LlmToolExecutionException):
+            await client.chat("Delete device", 42)
+    assert len(requests) == 1
+    router.call_tool.assert_awaited_once()
+    history.add_user_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_three_targets_share_results_but_next_turn_executes_tools_again():
+    counts = {}
+    requests = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        model = body["model"]
+        counts[model] = counts.get(model, 0) + 1
+        requests.append(body)
+        # Each target first requests a tool, then either fails or answers.
+        if counts[model] % 2 == 1:
+            tool = "nodes_get" if model == "backup-one" else "nodes_list"
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {"id": model, "function": {"name": tool, "arguments": "{}"}}
+                                ]
+                            }
+                        }
+                    ]
+                },
+            )
+        if model == "backup-two":
+            return httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]})
+        return httpx.Response(401)
+
+    router, history, faq, db, _ = _concrete_dependencies()
+    settings = _fallback_settings(llm_fallback_chain="groq:backup-one,groq:backup-two")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = create_llm_client(settings, router, history, faq, db, http)
+        for _ in range(2):
+            reply = await client.chat("Need help", 42)
+            assert reply.text == "done"
+    assert [call.args[0] for call in router.call_tool.await_args_list] == [
+        "nodes_list",
+        "nodes_get",
+    ] * 2
+    third_target_context = requests[4]["messages"][-1]["content"]
+    records = json.loads(third_target_context.split("\n", 1)[1])
+    assert [record["tool"] for record in records] == ["nodes_list", "nodes_get"]
+    assert history.add_user_message.await_count == 2
+    assert faq.build_faq_context.await_count == 2
