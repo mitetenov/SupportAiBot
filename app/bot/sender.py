@@ -351,7 +351,7 @@ class TelegramMessageSender:
         """Upload an in-memory picture, returning its Telegram message ID."""
         try:
             content = base64.b64decode(base64_image, validate=True)
-        except ValueError, binascii.Error:
+        except (ValueError, binascii.Error) as _:
             logger.warning("Refusing an invalid base64 picture for chat %s", chat_id)
             return None
         if not content:

@@ -87,7 +87,7 @@ class BedolagaWebhookEndpoint:
 
         try:
             payload = json.loads(body or b"{}")
-        except json.JSONDecodeError, UnicodeDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError) as _:
             if logger.isEnabledFor(TRACE):
                 logger.log(
                     TRACE,
@@ -127,7 +127,7 @@ class BedolagaWebhookEndpoint:
 
         try:
             numeric_ticket_id = int(ticket_id)
-        except TypeError, ValueError:
+        except (TypeError, ValueError) as _:
             if logger.isEnabledFor(TRACE):
                 logger.log(
                     TRACE,

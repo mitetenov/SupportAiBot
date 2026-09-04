@@ -400,7 +400,6 @@ class AbstractLlmClient(ABC, LlmClient):
 
             if logger.isEnabledFor(TRACE):
                 logger.log(TRACE, "Tool %s full result: %s", tc.name, tool_result)
-            logger.info("Tool %s result: %s", tc.name, self._truncate(tool_result))
             self.add_tool_result_to_conversation(conversation, tc, tool_result)
 
     @staticmethod

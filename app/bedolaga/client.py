@@ -238,7 +238,7 @@ class BedolagaClient:
                 if ticket_id is not None:
                     try:
                         ids.append(int(ticket_id))
-                    except TypeError, ValueError:
+                    except (TypeError, ValueError) as _:
                         logger.warning(
                             "Bedolaga: unparseable ticket id %r in %s list", ticket_id, status
                         )
@@ -311,7 +311,7 @@ class BedolagaClient:
         """Store bytes under Bedolaga's bot token and return its transferable file id."""
         try:
             content = base64.b64decode(base64_image, validate=True)
-        except ValueError, binascii.Error:
+        except (ValueError, binascii.Error) as _:
             logger.warning("Bedolaga: refusing invalid base64 photo upload")
             return None
         if not content or len(content) > MAX_MEDIA_BYTES:
@@ -689,7 +689,7 @@ class BedolagaClient:
 
         try:
             payload = response.json()
-        except ValueError, TypeError:
+        except (ValueError, TypeError) as _:
             return None
 
         if not isinstance(payload, dict):
@@ -730,7 +730,7 @@ class BedolagaClient:
                 if parsed_size < 0:
                     return None
                 file_size = parsed_size
-            except ValueError, TypeError:
+            except (ValueError, TypeError) as _:
                 return None
 
         return TicketMedia(

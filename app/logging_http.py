@@ -41,7 +41,7 @@ def _safe_read_request_body(request: httpx.Request) -> str | None:
         return None
     try:
         raw = request.content
-    except httpx.RequestNotRead, RuntimeError, AttributeError:
+    except (httpx.RequestNotRead, RuntimeError, AttributeError) as _:
         return "[streaming request body]"
     except Exception:
         return "[unavailable request body]"
