@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -13,7 +14,7 @@ from pydantic import ValidationError
 
 from app.config import LlmProviderTarget, Settings
 from app.llm import create_llm_client
-from app.llm.base import LlmProcessingException, LlmReply
+from app.llm.base import LlmProcessingException, LlmReply, LlmToolExecutionException
 from app.llm.fallback import LlmFallbackClient, LlmFallbackExhaustedError
 from app.llm.mcp_router import McpRouter
 from app.rag.service import FaqEmbeddingService
@@ -72,6 +73,12 @@ def _fallback_settings(**overrides: object) -> Settings:
         "deepseek_base_url": "https://primary.invalid/v1",
         "groq_api_key": "backup-test-key",
         "groq_base_url": "https://backup.invalid/openai/v1",
+        "openrouter_api_key": "openrouter-test-key",
+        "openrouter_model": "z-ai/glm-4.7",
+        "openrouter_base_url": "https://openrouter.invalid/v1",
+        "zai_api_key": "zai-test-key",
+        "zai_model": "glm-4.7",
+        "zai_base_url": "https://zai.invalid/api/paas/v4",
         "remnawave_mcp_url": "http://localhost:3100",
     }
     values.update(overrides)
@@ -90,6 +97,8 @@ def _concrete_dependencies() -> tuple[MagicMock, MagicMock, MagicMock, MagicMock
     chat_history_service.get_history = AsyncMock(
         return_value=[{"role": "user", "content": "earlier"}]
     )
+    chat_history_service.to_gemini_contents = AsyncMock(return_value=[])
+    chat_history_service.to_openai_messages = AsyncMock(return_value=[])
     chat_history_service.add_user_message = AsyncMock()
     chat_history_service.add_assistant_message = AsyncMock()
 
@@ -703,3 +712,816 @@ async def test_groq_413_falls_back_to_luna_without_retrying_oversized_request(
     else:
         router.call_tool.assert_not_awaited()
     faq.build_faq_context.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "primary_provider",
+        "primary_model",
+        "primary_url",
+        "primary_key",
+        "backup_provider",
+        "backup_model",
+        "backup_url",
+        "backup_key",
+        "expected_reply",
+    ),
+    [
+        (
+            "openrouter",
+            "z-ai/glm-4.7",
+            "https://openrouter.invalid/v1/chat/completions",
+            "openrouter-test-key",
+            "zai",
+            "glm-4.7",
+            "https://zai.invalid/api/paas/v4/chat/completions",
+            "zai-test-key",
+            "served by Z.AI",
+        ),
+        (
+            "zai",
+            "glm-4.7",
+            "https://zai.invalid/api/paas/v4/chat/completions",
+            "zai-test-key",
+            "openrouter",
+            "z-ai/glm-4.7",
+            "https://openrouter.invalid/v1/chat/completions",
+            "openrouter-test-key",
+            "served by OpenRouter",
+        ),
+        (
+            "deepseek",
+            "primary-model",
+            "https://primary.invalid/v1/chat/completions",
+            "primary-test-key",
+            "openrouter",
+            "z-ai/glm-4.7",
+            "https://openrouter.invalid/v1/chat/completions",
+            "openrouter-test-key",
+            "served by OpenRouter",
+        ),
+        (
+            "zai",
+            "glm-4.7",
+            "https://zai.invalid/api/paas/v4/chat/completions",
+            "zai-test-key",
+            "groq",
+            "backup-model",
+            "https://backup.invalid/openai/v1/chat/completions",
+            "backup-test-key",
+            "served by Groq",
+        ),
+    ],
+)
+async def test_real_client_fallback_matrix_transitions(
+    primary_provider: str,
+    primary_model: str,
+    primary_url: str,
+    primary_key: str,
+    backup_provider: str,
+    backup_model: str,
+    backup_url: str,
+    backup_key: str,
+    expected_reply: str,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if str(request.url) == primary_url:
+            return httpx.Response(401, json={"error": "primary secret must not escape"})
+        if str(request.url) == backup_url:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": expected_reply}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                },
+            )
+        raise AssertionError(f"unexpected network target: {request.url!s}")
+
+    settings = _fallback_settings(
+        llm_provider=primary_provider,
+        llm_fallback_chain=f"{backup_provider}:{backup_model}",
+        **{f"{primary_provider}_model": primary_model},
+        **{f"{backup_provider}_model": backup_model},
+    )
+    router, history, faq, db, _ = _concrete_dependencies()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = create_llm_client(settings, router, history, faq, db, http_client)
+        reply = await client.chat("Need help", 42)
+
+    assert reply.text == expected_reply
+    assert len(requests) == 2
+    assert str(requests[0].url) == primary_url
+    assert requests[0].headers.get("authorization") == f"Bearer {primary_key}"
+    assert json.loads(requests[0].content)["model"] == primary_model
+
+    assert str(requests[1].url) == backup_url
+    assert requests[1].headers.get("authorization") == f"Bearer {backup_key}"
+    assert json.loads(requests[1].content)["model"] == backup_model
+
+
+@pytest.mark.asyncio
+async def test_three_target_chain_with_two_openrouter_models() -> None:
+    requests: list[httpx.Request] = []
+    target2_turn = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        data = json.loads(request.content)
+        model = data["model"]
+
+        if model == "z-ai/glm-4.7":
+            assert str(request.url) == "https://openrouter.invalid/v1/chat/completions"
+            assert request.headers.get("authorization") == "Bearer openrouter-test-key"
+            assert data["reasoning"] == {"enabled": True}
+            return httpx.Response(401, json={"error": "target 1 auth failure"})
+
+        if model == "z-ai/glm-5.3":
+            nonlocal target2_turn
+            target2_turn += 1
+            assert str(request.url) == "https://openrouter.invalid/v1/chat/completions"
+            assert request.headers.get("authorization") == "Bearer openrouter-test-key"
+            assert data["reasoning"] == {"effort": "low"}
+            if target2_turn == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "tool_calls": [
+                                        {
+                                            "id": "or2-call-1",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "nodes_list",
+                                                "arguments": "{}",
+                                            },
+                                        }
+                                    ],
+                                    "reasoning": "target 2 reasoning text",
+                                    "reasoning_details": [
+                                        {"type": "thought", "text": "target 2 thought"}
+                                    ],
+                                }
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 12, "completion_tokens": 6, "total_tokens": 18},
+                    },
+                )
+            # Second turn for target 2: tool result passed, then target 2 fails with 500 (3 attempts)
+            return httpx.Response(500, json={"error": "target 2 server error"})
+
+        if model == "glm-4.7":
+            # Target 3 (Z.AI)
+            assert str(request.url) == "https://zai.invalid/api/paas/v4/chat/completions"
+            assert request.headers.get("authorization") == "Bearer zai-test-key"
+            # Verify no OpenRouter reasoning leaks to Z.AI
+            assert "reasoning" not in data
+            assert data["thinking"] == {"type": "enabled"}
+            request_str = request.content.decode("utf-8")
+            assert "target 2 reasoning text" not in request_str
+            assert "target 2 thought" not in request_str
+            assert "or2-call-1" not in request_str
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "served by Target 3",
+                            }
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30},
+                },
+            )
+
+        raise AssertionError(f"Unexpected request for model {model}")
+
+    settings = _fallback_settings(
+        llm_provider="openrouter",
+        openrouter_model="z-ai/glm-4.7",
+        llm_fallback_chain="openrouter:z-ai/glm-5.3, zai:glm-4.7",
+        reasoning_effort="low",
+    )
+    router, history, faq, db, token_session = _concrete_dependencies()
+    router.list_tools.return_value = [
+        SimpleNamespace(name="nodes_list", description="List nodes", input_schema={})
+    ]
+    router.call_tool.return_value = '{"nodes": ["node-1"]}'
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = create_llm_client(settings, router, history, faq, db, http_client)
+        reply = await client.chat("Need help", 42)
+
+    assert reply.text == "served by Target 3"
+    router.call_tool.assert_awaited_once_with("nodes_list", {}, 42)
+    history.add_user_message.assert_awaited_once_with(42, "Need help")
+    history.add_assistant_message.assert_awaited_once_with(42, "served by Target 3")
+    faq.build_faq_context.assert_awaited_once()
+
+    models_called = [json.loads(r.content)["model"] for r in requests]
+    assert models_called == [
+        "z-ai/glm-4.7",
+        "z-ai/glm-5.3",
+        "z-ai/glm-5.3",
+        "z-ai/glm-5.3",
+        "z-ai/glm-5.3",
+        "glm-4.7",
+    ]
+    assert token_session.add.call_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "primary_provider,backup_provider",
+    [("openrouter", "zai"), ("zai", "openrouter")],
+)
+@pytest.mark.parametrize(
+    "error_spec,expected_primary_attempts",
+    [
+        (401, 1),
+        (402, 1),
+        (403, 1),
+        (408, 3),
+        (413, 1),
+        (429, 3),
+        (500, 3),
+        (502, 3),
+        (503, 3),
+        (504, 3),
+        (httpx.ReadTimeout("read timeout"), 3),
+        (httpx.ConnectError("connection error"), 3),
+    ],
+    ids=[
+        "401",
+        "402",
+        "403",
+        "408",
+        "413",
+        "429",
+        "500",
+        "502",
+        "503",
+        "504",
+        "timeout",
+        "transport-error",
+    ],
+)
+async def test_fallback_eligible_errors_for_new_primaries(
+    primary_provider: str,
+    backup_provider: str,
+    error_spec: int | Exception,
+    expected_primary_attempts: int,
+) -> None:
+    primary_requests = 0
+    backup_requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal primary_requests, backup_requests
+        if primary_provider in request.url.host:
+            primary_requests += 1
+            if isinstance(error_spec, int):
+                return httpx.Response(error_spec, json={"error": "provider failure"})
+            raise error_spec
+        if backup_provider in request.url.host:
+            backup_requests += 1
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "served by backup"}}],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                },
+            )
+        raise AssertionError(f"Unexpected request URL: {request.url}")
+
+    backup_model = "z-ai/glm-4.7" if backup_provider == "openrouter" else "glm-4.7"
+    settings = _fallback_settings(
+        llm_provider=primary_provider,
+        llm_fallback_chain=f"{backup_provider}:{backup_model}",
+    )
+    router, history, faq, db, _ = _concrete_dependencies()
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = create_llm_client(settings, router, history, faq, db, http_client)
+        reply = await client.chat("Need help", 42)
+
+    assert reply.text == "served by backup"
+    assert primary_requests == expected_primary_attempts
+    assert backup_requests == 1
+    history.add_user_message.assert_awaited_once_with(42, "Need help")
+    history.add_assistant_message.assert_awaited_once_with(42, "served by backup")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("primary_provider", ["openrouter", "zai"])
+@pytest.mark.parametrize(
+    "case_type",
+    ["http_400", "http_404", "http_422", "malformed_json", "malformed_tool_args", "mcp_timeout"],
+)
+async def test_non_fallback_errors_do_not_call_next_provider_nor_save_history(
+    primary_provider: str, case_type: str
+) -> None:
+    backup_provider = "zai" if primary_provider == "openrouter" else "openrouter"
+    primary_calls = 0
+    backup_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal primary_calls, backup_calls
+        if primary_provider in request.url.host:
+            primary_calls += 1
+            if case_type == "http_400":
+                return httpx.Response(400, json={"error": "bad request"})
+            if case_type == "http_404":
+                return httpx.Response(404, json={"error": "not found"})
+            if case_type == "http_422":
+                return httpx.Response(422, json={"error": "unprocessable"})
+            if case_type == "malformed_json":
+                return httpx.Response(200, content=b"invalid json")
+            if case_type == "malformed_tool_args":
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "tool_calls": [
+                                        {
+                                            "id": "tc-1",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "nodes_list",
+                                                "arguments": "{not-valid-json",
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    },
+                )
+            if case_type == "mcp_timeout":
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "tool_calls": [
+                                        {
+                                            "id": "tc-1",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "hwid_device_delete",
+                                                "arguments": json.dumps({"hwid": "d1"}),
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ]
+                    },
+                )
+            raise AssertionError(f"Unhandled case_type: {case_type}")
+
+        if backup_provider in request.url.host:
+            backup_calls += 1
+            return httpx.Response(200, json={"choices": [{"message": {"content": "backup reply"}}]})
+
+        raise AssertionError(f"Unexpected request URL: {request.url}")
+
+    backup_model = "z-ai/glm-4.7" if backup_provider == "openrouter" else "glm-4.7"
+    settings = _fallback_settings(
+        llm_provider=primary_provider,
+        llm_fallback_chain=f"{backup_provider}:{backup_model}",
+    )
+    router, history, faq, db, _ = _concrete_dependencies()
+    if case_type == "mcp_timeout":
+        router.list_tools.return_value = [
+            SimpleNamespace(name="hwid_device_delete", description="Delete", input_schema={})
+        ]
+        router.call_tool.side_effect = httpx.ReadTimeout("MCP timeout with unknown outcome")
+        expected_exc: type[Exception] = LlmToolExecutionException
+    else:
+        expected_exc = LlmProcessingException
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = create_llm_client(settings, router, history, faq, db, http_client)
+        with pytest.raises(expected_exc):
+            await client.chat("Need help", 42)
+
+    assert primary_calls == 1
+    assert backup_calls == 0
+    history.add_user_message.assert_not_awaited()
+    history.add_assistant_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cached_modifying_mcp_tool_across_fallback_and_new_turn() -> None:
+    primary_calls = 0
+    backup_requests: list[dict[str, Any]] = []
+    turn2_primary_calls = 0
+
+    def tool_resp(call_id: str, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": name,
+                                    "arguments": json.dumps(args),
+                                },
+                            }
+                        ],
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal primary_calls, turn2_primary_calls
+        body = json.loads(request.content)
+        if "openrouter" in request.url.host:
+            is_turn_2 = any("Turn 2" in str(m.get("content", "")) for m in body["messages"])
+            if not is_turn_2:
+                primary_calls += 1
+                if primary_calls == 1:
+                    return httpx.Response(
+                        200,
+                        json=tool_resp(
+                            "primary-call-1",
+                            "hwid_device_delete",
+                            {"userId": "user-42", "hwid": "device-1"},
+                        ),
+                    )
+                return httpx.Response(401, json={"error": "primary failure"})
+            else:
+                turn2_primary_calls += 1
+                if turn2_primary_calls == 1:
+                    return httpx.Response(
+                        200,
+                        json=tool_resp(
+                            "primary-call-2",
+                            "hwid_device_delete",
+                            {"userId": "user-42", "hwid": "device-1"},
+                        ),
+                    )
+                return httpx.Response(
+                    200, json={"choices": [{"message": {"content": "Turn 2 done"}}]}
+                )
+
+        if "zai" in request.url.host:
+            backup_requests.append(body)
+            if len(backup_requests) == 1:
+                reversed_args = {"hwid": "device-1", "userId": "user-42"}
+                return httpx.Response(
+                    200, json=tool_resp("backup-call-1", "hwid_device_delete", reversed_args)
+                )
+            if len(backup_requests) == 2:
+                new_args = {"userId": "user-42", "hwid": "device-2"}
+                return httpx.Response(
+                    200, json=tool_resp("backup-call-2", "hwid_device_delete", new_args)
+                )
+            return httpx.Response(200, json={"choices": [{"message": {"content": "Turn 1 done"}}]})
+
+        raise AssertionError(f"Unexpected request URL: {request.url}")
+
+    router, history, faq, db, _ = _concrete_dependencies()
+    router.list_tools.return_value = [
+        SimpleNamespace(name="hwid_device_delete", description="Delete", input_schema={})
+    ]
+    router.call_tool = AsyncMock(side_effect=lambda name, args, uid: f"deleted {args.get('hwid')}")
+
+    settings = _fallback_settings(
+        llm_provider="openrouter",
+        llm_fallback_chain="zai:glm-4.7",
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = create_llm_client(settings, router, history, faq, db, http_client)
+
+        # Turn 1
+        reply1 = await client.chat("Turn 1: Delete device", 42)
+        assert reply1.text == "Turn 1 done"
+
+        assert router.call_tool.await_count == 2
+        assert router.call_tool.await_args_list[0].args == (
+            "hwid_device_delete",
+            {"userId": "user-42", "hwid": "device-1"},
+            42,
+        )
+        assert router.call_tool.await_args_list[1].args == (
+            "hwid_device_delete",
+            {"userId": "user-42", "hwid": "device-2"},
+            42,
+        )
+
+        second_backup_turn_msgs = backup_requests[1]["messages"]
+        tool_result_msg = second_backup_turn_msgs[-1]
+        assert tool_result_msg == {
+            "role": "tool",
+            "tool_call_id": "backup-call-1",
+            "content": "deleted device-1",
+        }
+
+        # Turn 2
+        reply2 = await client.chat("Turn 2: Delete device again", 42)
+        assert reply2.text == "Turn 2 done"
+
+        assert router.call_tool.await_count == 3
+        assert router.call_tool.await_args_list[2].args == (
+            "hwid_device_delete",
+            {"userId": "user-42", "hwid": "device-1"},
+            42,
+        )
+
+
+@pytest.mark.asyncio
+async def test_state_persistence_rag_and_token_usage_accounting() -> None:
+    primary_calls = 0
+    backup_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal primary_calls, backup_calls
+        if "openrouter" in request.url.host:
+            primary_calls += 1
+            if primary_calls == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "tool_calls": [
+                                        {
+                                            "id": "call-1",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "nodes_list",
+                                                "arguments": "{}",
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                    },
+                )
+            return httpx.Response(401, json={"error": "provider failure"})
+
+        if "zai" in request.url.host:
+            backup_calls += 1
+            if backup_calls == 1:
+                return httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "tool_calls": [
+                                        {
+                                            "id": "call-2",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "nodes_get",
+                                                "arguments": "{}",
+                                            },
+                                        }
+                                    ],
+                                }
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 20, "completion_tokens": 8, "total_tokens": 28},
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"role": "assistant", "content": "final answer"}}],
+                    "usage": {"prompt_tokens": 30, "completion_tokens": 12, "total_tokens": 42},
+                },
+            )
+
+        raise AssertionError(f"Unexpected request URL: {request.url}")
+
+    router, history, faq, db, token_session = _concrete_dependencies()
+    router.list_tools.return_value = [
+        SimpleNamespace(name="nodes_list", description="List", input_schema={}),
+        SimpleNamespace(name="nodes_get", description="Get", input_schema={}),
+    ]
+    router.call_tool.return_value = "tool result"
+
+    settings = _fallback_settings(
+        llm_provider="openrouter",
+        llm_fallback_chain="zai:glm-4.7",
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = create_llm_client(settings, router, history, faq, db, http_client)
+        reply = await client.chat("Need help", 42)
+
+    assert reply.text == "final answer"
+
+    faq.build_faq_context.assert_awaited_once()
+    history.clear_rejected_faqs_if_new_topic.assert_called_once_with(42, "Need help")
+    history.add_user_message.assert_awaited_once_with(42, "Need help")
+    history.add_assistant_message.assert_awaited_once_with(42, "final answer")
+
+    assert token_session.add.call_count == 3
+    usages = [call.args[0] for call in token_session.add.call_args_list]
+    assert (usages[0].prompt_tokens, usages[0].completion_tokens, usages[0].total_tokens) == (
+        10,
+        5,
+        15,
+    )
+    assert (usages[1].prompt_tokens, usages[1].completion_tokens, usages[1].total_tokens) == (
+        20,
+        8,
+        28,
+    )
+    assert (usages[2].prompt_tokens, usages[2].completion_tokens, usages[2].total_tokens) == (
+        30,
+        12,
+        42,
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_history_saved_on_complete_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "fail"})
+
+    router, history, faq, db, token_session = _concrete_dependencies()
+    settings = _fallback_settings(
+        llm_provider="openrouter",
+        llm_fallback_chain="zai:glm-4.7",
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = create_llm_client(settings, router, history, faq, db, http_client)
+        with pytest.raises(LlmFallbackExhaustedError):
+            await client.chat("Need help", 42)
+
+    history.add_user_message.assert_not_awaited()
+    history.add_assistant_message.assert_not_awaited()
+    token_session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_image_chain_with_only_openrouter_and_zai_rejects_before_http() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "should not be called"}}]}
+        )
+
+    router, history, faq, db, _ = _concrete_dependencies()
+    settings = _fallback_settings(
+        llm_provider="openrouter",
+        llm_fallback_chain="zai:glm-4.7",
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = create_llm_client(settings, router, history, faq, db, http_client)
+        assert client.supports_images() is False
+
+        with pytest.raises(LlmProcessingException) as exc_info:
+            await client.chat_with_image(
+                user_message="Check image",
+                telegram_user_id=42,
+                base64_image="AQIDBA==",
+                mime_type="image/png",
+            )
+
+    assert (
+        exc_info.value.user_friendly_message
+        == "Настроенные модели не поддерживают обработку изображений. Опишите проблему текстом."
+    )
+    assert len(requests) == 0
+    history.add_user_message.assert_not_awaited()
+    history.add_assistant_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_image_mixed_chain_openrouter_openai_bypasses_openrouter_and_delivers_to_openai() -> (
+    None
+):
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.host == "openai.invalid"
+        return httpx.Response(
+            200,
+            json={
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [{"type": "output_text", "text": "OpenAI saw the screenshot"}],
+                    }
+                ]
+            },
+        )
+
+    router, history, faq, db, _ = _concrete_dependencies()
+    settings = _fallback_settings(
+        llm_provider="openrouter",
+        llm_fallback_chain="openai:gpt-5.6-luna",
+        openai_api_key="sk-test",
+        openai_base_url="https://openai.invalid/v1",
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = create_llm_client(settings, router, history, faq, db, http_client)
+        assert client.supports_images() is True
+
+        reply = await client.chat_with_image(
+            user_message="Explain screenshot",
+            telegram_user_id=42,
+            base64_image="AQIDBA==",
+            mime_type="image/png",
+        )
+
+    assert reply.text == "OpenAI saw the screenshot"
+    assert len(requests) == 1
+    assert requests[0].url.host == "openai.invalid"
+    openai_body = json.loads(requests[0].content)
+    assert openai_body["model"] == "gpt-5.6-luna"
+    last_user_msg = openai_body["input"][-1]
+    assert last_user_msg["role"] == "user"
+    assert any(
+        part.get("type") == "input_image"
+        and part.get("image_url") == "data:image/png;base64,AQIDBA=="
+        for part in last_user_msg["content"]
+    )
+    assert any(
+        part.get("type") == "input_text" and part.get("text") == "Explain screenshot"
+        for part in last_user_msg["content"]
+    )
+    history.add_user_message.assert_awaited_once_with(42, "Explain screenshot")
+    history.add_assistant_message.assert_awaited_once_with(42, "OpenAI saw the screenshot")
+
+
+@pytest.mark.asyncio
+async def test_image_mixed_chain_zai_gemini_bypasses_zai_and_delivers_to_gemini() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.host == "gemini.invalid"
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "Gemini saw the image"}]}}]},
+        )
+
+    router, history, faq, db, _ = _concrete_dependencies()
+    settings = _fallback_settings(
+        llm_provider="zai",
+        llm_fallback_chain="gemini:gemini-2.5-flash",
+        gemini_api_key="gem-test",
+        gemini_base_url="https://gemini.invalid",
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = create_llm_client(settings, router, history, faq, db, http_client)
+        assert client.supports_images() is True
+
+        reply = await client.chat_with_image(
+            user_message="",
+            telegram_user_id=42,
+            base64_image="AQIDBA==",
+            mime_type="image/jpeg",
+        )
+
+    assert reply.text == "Gemini saw the image"
+    assert len(requests) == 1
+    assert requests[0].url.host == "gemini.invalid"
+    gemini_body = json.loads(requests[0].content)
+    last_content = gemini_body["contents"][-1]
+    assert any(
+        part.get("inline_data") == {"mime_type": "image/jpeg", "data": "AQIDBA=="}
+        for part in last_content["parts"]
+    )
+    history.add_user_message.assert_awaited_once_with(42, "[Скриншот]")
+    history.add_assistant_message.assert_awaited_once_with(42, "Gemini saw the image")
