@@ -25,8 +25,10 @@ from app.llm.mcp_client import (
 )
 from app.llm.mcp_router import McpRouter
 from app.llm.openai_client import OpenAiClient
+from app.llm.openrouter import OpenRouterClient
 from app.llm.prompt import SupportPrompt
 from app.llm.rejection import RejectionDetector, is_rejection
+from app.llm.zai import ZaiClient
 
 if TYPE_CHECKING:
     from app.rag.service import FaqEmbeddingService
@@ -70,6 +72,16 @@ def _create_provider_client(
 ) -> AbstractLlmClient:
     """Create exactly one concrete provider client from one validated target."""
     provider = (settings.llm_provider or "").strip().lower()
+    if provider in {"openrouter", "zai"}:
+        client_class = OpenRouterClient if provider == "openrouter" else ZaiClient
+        return client_class(
+            settings=settings,
+            mcp_router=mcp_router,
+            chat_history_service=chat_history_service,
+            faq_embedding_service=faq_service,
+            db_manager=db_manager,
+            http_client=http_client,
+        )
     if provider == "gemini":
         return GeminiClient(
             settings=settings,
@@ -126,9 +138,11 @@ __all__ = [
     "McpRouter",
     "McpTool",
     "OpenAiClient",
+    "OpenRouterClient",
     "RejectionDetector",
     "SupportPrompt",
     "ToolCall",
+    "ZaiClient",
     "create_llm_client",
     "is_rejection",
     "sanitize_schema_params",

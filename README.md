@@ -198,7 +198,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
-| `LLM_PROVIDER` | `openai` | `openai`, `gemini`, `deepseek` или `groq` |
+| `LLM_PROVIDER` | `openai` | `openai`, `gemini`, `deepseek`, `groq`, `openrouter` или `zai` |
 | `LLM_FALLBACK_CHAIN` | — | Необязательные резервные цели в порядке `provider:model` через запятую |
 | `REASONING_EFFORT` | `none` | Профиль reasoning: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `auto` не поддерживается |
 | `OPENAI_API_KEY` | — | Нужен при `LLM_PROVIDER=openai`, `EMBEDDING_PROVIDER=openai` или резервной цели `openai:...` |
@@ -210,6 +210,14 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `GROQ_API_KEY` | — | Нужен при `LLM_PROVIDER=groq` или резервной цели `groq:...` |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Основная модель Groq; резервная цель задаёт модель в `LLM_FALLBACK_CHAIN` |
 | `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | OpenAI-совместимый endpoint Groq |
+| `OPENROUTER_API_KEY` | — | Нужен при основной или резервной цели OpenRouter |
+| `OPENROUTER_MODEL` | — | Обязателен для основной цели; например `z-ai/glm-4.7` |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | API root без `/chat/completions`, credentials, query и fragment |
+| `OPENROUTER_TIMEOUT_SECONDS` | `120` | Положительный конечный timeout каждого HTTP-запроса |
+| `ZAI_API_KEY` | — | Нужен при основной или резервной цели Z.AI |
+| `ZAI_MODEL` | — | Обязателен для основной цели; например `glm-4.7` |
+| `ZAI_BASE_URL` | `https://api.z.ai/api/paas/v4` | API root без `/chat/completions`, credentials, query и fragment |
+| `ZAI_TIMEOUT_SECONDS` | `120` | Положительный конечный timeout каждого HTTP-запроса |
 | `EMBEDDING_PROVIDER` | `gemini` | Провайдер поиска по базе знаний: `gemini` или `openai` |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Модель поиска при `EMBEDDING_PROVIDER=openai` |
 
@@ -219,7 +227,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 переменной `*_MODEL`. `LLM_FALLBACK_CHAIN` добавляет только резервные цели в
 указанном порядке; каждая имеет формат `provider:model`. Модель в цели цепочки
 переопределяет `*_MODEL` только для этой попытки. Допустимые провайдеры:
-`openai`, `gemini`, `deepseek`, `groq`.
+`openai`, `gemini`, `deepseek`, `groq`, `openrouter`, `zai`.
 
 Минимальная конфигурация с основной и резервной моделью:
 
@@ -250,6 +258,27 @@ LLM_FALLBACK_CHAIN=groq:llama-3.3-70b-versatile,gemini:gemini-3.5-flash-lite
 используется один клиент из `LLM_PROVIDER`.
 
 После изменения `.env` перезапустите бота; пересобирать образ не нужно.
+
+Пример с основной моделью OpenRouter и резервной Z.AI (ключи фиктивны):
+
+```env
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=openrouter_example_key_not_a_real_secret
+OPENROUTER_MODEL=z-ai/glm-4.7
+ZAI_API_KEY=zai_example_key_not_a_real_secret
+LLM_FALLBACK_CHAIN=zai:glm-4.7
+REASONING_EFFORT=low
+EMBEDDING_PROVIDER=gemini
+GEMINI_API_KEY=gemini_example_key_not_a_real_secret
+```
+
+Для основной Z.AI укажите `LLM_PROVIDER=zai`, `ZAI_MODEL=glm-4.7` и,
+если нужен резерв, `LLM_FALLBACK_CHAIN=openrouter:z-ai/glm-4.7`.
+Идентификатор модели OpenRouter передаётся целиком: `/` и суффикс `:free`
+сохраняются, разделителем `provider:model` служит только первое двоеточие.
+Названия OpenRouter `z-ai/...` и нативные Z.AI `glm-...` не взаимозаменяемы.
+Timeout этих клиентов применяется и при общем HTTP-клиенте; повторы и несколько
+итераций tools могут увеличить общее время ответа сверх одного timeout.
 
 #### Когда выполняется fallback
 
@@ -312,6 +341,22 @@ Groq использует [нативные параметры reasoning](https:
 `include_reasoning=false`, Qwen — `reasoning_format=hidden`, в том числе когда
 инструментов MCP нет. Пользователю и в историю диалога передаётся только ответ;
 блоки `<think>` из нестандартных ответов дополнительно удаляются парсером.
+
+OpenRouter и Z.AI используют следующие правила reasoning:
+
+| Модели | Преобразование `REASONING_EFFORT` |
+|---|---|
+| OpenRouter `z-ai/glm-4.7`, Z.AI `glm-4.7` | `none` отключает reasoning, остальные значения включают |
+| OpenRouter `z-ai/glm-5.3`, Z.AI `glm-5.3` | `none` отклоняется до HTTP; `minimal`/`low` → `low`, `medium`/`high` → `high`, `xhigh`/`max` → `max` |
+| Другие модели | Дополнительные параметры reasoning не отправляются; в логе `unsupported/ignored` |
+
+OpenRouter получает объект `reasoning`, Z.AI — `thinking` и, для GLM-5.3,
+`reasoning_effort`. Reasoning сохраняется внутри текущего цикла tools; в
+пользовательскую историю записывается только итоговый ответ. Незавершённый
+ответ (`length`, `content_filter` и другие неуспешные причины) не принимается
+как готовый ответ и не запускает tools. Ошибки OpenRouter проверяются также
+внутри HTTP 200, включая `choices[0].error`. Коды `400`, `404`, `422` сами по
+себе не включают fallback; Z.AI `1113` и `network_error` при HTTP 200 разрешают переход.
 
 ### База данных и образы
 
@@ -418,7 +463,7 @@ pytest -q tests/test_agent_behavior_eval.py tests/test_agent_behavior_contract.p
 модель через production LLM-клиент и `McpRouter`, подставляя синтетические MCP-данные.
 
 Почему требуется явный opt-in (`--confirm-external-api`):
-Eval отправляет system prompt и синтетические пользовательские запросы внешнему API выбранного провайдера (OpenAI, Gemini, DeepSeek). Это приводит к реальным сетевым запросам, расходу платных токенов и передаче контекста во внешний API. Запуск без явного флага блокируется.
+Eval отправляет system prompt и синтетические пользовательские запросы внешнему API выбранного провайдера (OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Z.AI). Это приводит к реальным сетевым запросам, расходу платных токенов и передаче контекста во внешний API. Запуск без явного флага блокируется.
 
 ```bash
 python -m benchmarks.agent_behavior_eval --runs 3 --threshold 0.8 --confirm-external-api
@@ -565,6 +610,14 @@ curl -X POST "$PANEL_URL/webhooks" \
 | Gemini | `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` | да | да |
 | DeepSeek | `deepseek-v4-flash`, `deepseek-v4-pro` | нет | нет |
 | Groq | `llama-3.3-70b-versatile` и другие модели Groq | нет | нет |
+| OpenRouter | `z-ai/glm-4.7`, `z-ai/glm-5.3` и другие совместимые chat-модели | нет | нет |
+| Z.AI | `glm-4.7`, `glm-5.3` и другие совместимые chat-модели | нет | нет |
+
+Клиенты OpenRouter и Z.AI обрабатывают текст и tools. Прямой запрос с изображением
+отклоняется до HTTP. В Bedolaga фото по-прежнему пересылается оператору, а модель
+получает текст тикета без загрузки изображения; при отсутствии текста тикет
+передаётся оператору без запроса к модели. Для embeddings продолжайте использовать
+Gemini или OpenAI.
 
 ## Логирование
 

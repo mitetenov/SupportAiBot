@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_core import InitErrorDetails
@@ -12,7 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logger = logging.getLogger(__name__)
 
 VALID_LOG_LEVELS: tuple[str, ...] = ("TRACE", "INFO", "ERROR")
-VALID_LLM_PROVIDERS: list[str] = ["deepseek", "gemini", "openai", "groq"]
+VALID_LLM_PROVIDERS: list[str] = ["deepseek", "gemini", "openai", "groq", "openrouter", "zai"]
 VALID_EMBEDDING_PROVIDERS: list[str] = ["gemini", "openai"]
 VALID_REASONING_EFFORTS: list[str] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
@@ -161,6 +162,17 @@ class Settings(BaseSettings):
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_model: str | None = "llama-3.3-70b-versatile"
 
+    # OpenRouter and Z.AI use separate credentials and API roots.
+    openrouter_api_key: SecretStr | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str | None = None
+    openrouter_timeout_seconds: float = Field(default=120, gt=0, allow_inf_nan=False)
+
+    zai_api_key: SecretStr | None = None
+    zai_base_url: str = "https://api.z.ai/api/paas/v4"
+    zai_model: str | None = None
+    zai_timeout_seconds: float = Field(default=120, gt=0, allow_inf_nan=False)
+
     # Remnawave MCP
     remnawave_mcp_url: str = "http://localhost:3100"
     remnawave_base_url: str = ""
@@ -267,6 +279,34 @@ class Settings(BaseSettings):
     def _validate_llm_target(self, provider: str, model: str | None = None) -> None:
         """Validate credentials and a model for one primary or fallback target."""
         configured_model = model or self._configured_model(provider)
+        if provider in {"openrouter", "zai"}:
+            prefix = provider.upper()
+            _require_text(getattr(self, f"{provider}_api_key"), f"{prefix}_API_KEY не задан")
+            _require_text(configured_model, f"{prefix}_MODEL не задан")
+            base_url = getattr(self, f"{provider}_base_url")
+            try:
+                parsed = urlsplit(base_url)
+                valid = (
+                    parsed.scheme in {"http", "https"}
+                    and bool(parsed.hostname)
+                    and parsed.username is None
+                    and parsed.password is None
+                    and not parsed.query
+                    and not parsed.fragment
+                    and "?" not in base_url
+                    and "#" not in base_url
+                    and not any(char.isspace() for char in base_url)
+                    and not parsed.path.rstrip("/").endswith("/chat/completions")
+                )
+                _ = parsed.port  # Reject invalid ports without exposing the URL.
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ValueError(
+                    f"{prefix}_BASE_URL должен быть HTTP(S) API root без credentials, "
+                    "query, fragment и /chat/completions"
+                )
+            return
         if provider == "deepseek":
             _require_text(
                 self.deepseek_api_key,
