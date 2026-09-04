@@ -47,14 +47,21 @@ _URL_QUERY_SENSITIVE_PATTERN = re.compile(
 _TELEGRAM_BOT_TOKEN_PATTERN = re.compile(r"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b")
 _OPENAI_API_KEY_PATTERN = re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b")
 _GROQ_API_KEY_PATTERN = re.compile(r"\bgsk_[A-Za-z0-9_-]{20,}\b")
-_AUTHORIZATION_HEADER_PATTERN = re.compile(r"(?i)(Authorization:\s*(?:Bearer|Basic)\s+)[^\r\n,;]+")
-_COOKIE_HEADER_PATTERN = re.compile(r"(?i)(Cookie:\s*)[^\r\n]+")
+_AUTHORIZATION_HEADER_PATTERN = re.compile(
+    r"""(?i)(["']?Authorization["']?\s*:\s*["']?(?:Bearer|Basic)\s+)[^\r\n,;'"\}\]]+"""
+)
+_COOKIE_HEADER_PATTERN = re.compile(r"""(?i)(["']?Cookie["']?\s*:\s*["']?)[^\r\n'"\}\]]+""")
 _PASSWORD_ASSIGNMENT_PATTERN = re.compile(
-    r"(?i)\b(password|passwd|secret|api_key|token)\s*([:=])\s*(['\"][^'\"]*['\"]|[^'\"\s,&;]+)"
+    r"""(?i)(["']?(?:password|passwd|secret|api_key|apikey|token|access_token|refresh_token|bot_token|webhook_secret)["']?)\s*([:=])\s*(['"][^'"]*['"]|[^'\"\s,&;\}]+)"""
 )
 
 # Dynamic set of registered known secret strings (e.g. from Settings)
 _REGISTERED_SECRETS: set[str] = set()
+
+
+def clear_registered_secrets() -> None:
+    """Clear all registered secrets."""
+    _REGISTERED_SECRETS.clear()
 
 
 def register_secret(secret: str | SecretStr | None) -> None:
@@ -118,8 +125,8 @@ def redact_credentials_in_text(text: str) -> str:
 
     result = _PASSWORD_ASSIGNMENT_PATTERN.sub(_redact_assignment, result)
 
-    # Redact registered custom secrets
-    for secret in _REGISTERED_SECRETS:
+    # Redact registered custom secrets (longest first to avoid partial collisions)
+    for secret in sorted(_REGISTERED_SECRETS, key=len, reverse=True):
         if secret in result:
             result = result.replace(secret, "[REDACTED]")
 

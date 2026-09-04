@@ -74,6 +74,18 @@ def test_request_context_lifecycle() -> None:
     assert get_attempt_id() is None
 
 
+def test_nested_request_context_without_attempt_clears_attempt() -> None:
+    clear_context()
+    with request_context("req-outer", attempt=5):
+        assert get_request_id() == "req-outer"
+        assert get_attempt_id() == 5
+        with request_context("req-inner"):
+            assert get_request_id() == "req-inner"
+            assert get_attempt_id() is None
+        assert get_request_id() == "req-outer"
+        assert get_attempt_id() == 5
+
+
 def test_context_cleanup_on_exception() -> None:
     clear_context()
     with pytest.raises(ValueError, match="boom"):

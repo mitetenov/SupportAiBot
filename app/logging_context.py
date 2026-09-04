@@ -88,10 +88,9 @@ def request_context(request_id: str | None = None, attempt: int | None = None) -
     """Scoped context manager for a single request / attempt."""
     rid = request_id if request_id is not None else generate_request_id()
     r_token = _request_id_var.set(rid)
-    a_token = _attempt_id_var.set(attempt) if attempt is not None else None
+    a_token = _attempt_id_var.set(attempt)
     try:
         yield rid
     finally:
         _request_id_var.reset(r_token)
-        if a_token is not None:
-            _attempt_id_var.reset(a_token)
+        _attempt_id_var.reset(a_token)

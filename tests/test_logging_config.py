@@ -120,6 +120,70 @@ class TestSafeConsoleFormatter:
             formatted = formatter.format(record)
             assert expected_label in formatted
 
+    def test_format_exception_on_error_level_emits_safe_metadata_without_raw_traceback(
+        self,
+    ) -> None:
+        formatter = SafeConsoleFormatter()
+        try:
+            raise ValueError("sensitive_db_query_param_or_user_data")
+        except Exception:
+            exc_info = sys.exc_info()
+
+        record = logging.LogRecord(
+            name="app.test",
+            level=logging.ERROR,
+            pathname="test.py",
+            lineno=20,
+            msg="Operation failed",
+            args=(),
+            exc_info=exc_info,
+        )
+        formatted = formatter.format(record)
+        assert "[ERROR]" in formatted
+        assert "error_class=ValueError" in formatted
+        assert "location=" in formatted
+        # Must not contain raw traceback header or python source code lines
+        assert "Traceback (most recent call last)" not in formatted
+        assert "raise ValueError" not in formatted
+
+    def test_format_exception_on_trace_level_emits_full_traceback(self) -> None:
+        formatter = SafeConsoleFormatter()
+        try:
+            raise ValueError("detailed_trace_reason")
+        except Exception:
+            exc_info = sys.exc_info()
+
+        record = logging.LogRecord(
+            name="app.test",
+            level=TRACE_LEVEL_NUM,
+            pathname="test.py",
+            lineno=20,
+            msg="Detailed trace operation",
+            args=(),
+            exc_info=exc_info,
+        )
+        formatted = formatter.format(record)
+        assert "[TRACE]" in formatted
+        assert "exc=" in formatted
+        assert "ValueError" in formatted
+
+    def test_format_includes_arbitrary_extra_fields(self) -> None:
+        formatter = SafeConsoleFormatter()
+        record = logging.LogRecord(
+            name="app.test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=10,
+            msg="Action processed",
+            args=(),
+            exc_info=None,
+        )
+        record.user_action = "export_report"  # type: ignore[attr-defined]
+        record.duration_ms = 350  # type: ignore[attr-defined]
+        formatted = formatter.format(record)
+        assert "user_action=export_report" in formatted
+        assert "duration_ms=350" in formatted
+
 
 class TestCumulativeThresholds:
     """Verify cumulative thresholds for TRACE, INFO, ERROR."""
@@ -199,6 +263,18 @@ class TestSetupIdempotenceAndDynamicReconfiguration:
         logger.info("Should appear in info mode")
         assert "Should appear in info mode" in stream.getvalue()
 
+    def test_setup_logging_resets_stream_to_stdout_when_stream_is_none(self) -> None:
+        custom_stream = io.StringIO()
+        setup_logging(level="INFO", stream=custom_stream)
+
+        root = logging.getLogger()
+        handler = next(h for h in root.handlers if isinstance(h, SafeConsoleHandler))
+        assert handler.stream is custom_stream
+
+        # Call setup_logging with stream=None
+        setup_logging(level="INFO", stream=None)
+        assert handler.stream is sys.stdout
+
 
 class TestDependencyNormalization:
     """Verify third-party loggers are normalized: DEBUG/INFO/WARNING -> TRACE, ERROR/CRIT -> ERROR."""
@@ -225,17 +301,50 @@ class TestDependencyNormalization:
         assert "HTTP Request: GET http://example.com/trace" in output
         assert "[TRACE]" in output
 
-    def test_third_party_error_produces_safe_summary_on_error_level(self) -> None:
+    def test_third_party_error_produces_safe_summary_and_hides_raw_sql(self) -> None:
         stream = io.StringIO()
         setup_logging(level="ERROR", stream=stream)
 
         sql_logger = logging.getLogger("sqlalchemy.engine")
-        sql_logger.error("SELECT * FROM users WHERE password='super_secret_db_pass_123'")
+        sql_logger.error(
+            "SELECT secret_column FROM users WHERE password='super_secret_db_pass_123'"
+        )
 
         output = stream.getvalue()
         assert "[ERROR]" in output
-        # Password credentials must not leak
+        # Must emit safe summary and NOT leak the raw SQL statement
+        assert "Database error in sqlalchemy.engine" in output
+        assert "SELECT secret_column FROM users" not in output
         assert "super_secret_db_pass_123" not in output
+
+    def test_third_party_error_in_trace_mode_provides_detailed_trace_record(self) -> None:
+        stream = io.StringIO()
+        setup_logging(level="TRACE", stream=stream)
+
+        sql_logger = logging.getLogger("sqlalchemy.engine")
+        sql_logger.error("SELECT * FROM sensitive_table WHERE id=99")
+
+        output = stream.getvalue()
+        assert "[ERROR]" in output
+        assert "Database error in sqlalchemy.engine" in output
+        assert "[TRACE]" in output
+        assert "SELECT * FROM sensitive_table" in output
+
+    def test_third_party_categories_safe_summaries(self) -> None:
+        stream = io.StringIO()
+        setup_logging(level="ERROR", stream=stream)
+
+        for logger_name, expected_summary in [
+            ("httpx", "HTTP communication error in httpx"),
+            ("aiogram.dispatcher", "Telegram error in aiogram.dispatcher"),
+            ("mcp.client", "MCP error in mcp.client"),
+            ("custom_lib.core", "External library error in custom_lib.core"),
+        ]:
+            log = logging.getLogger(logger_name)
+            log.error("Internal sensitive error payload: secret=12345")
+            output = stream.getvalue()
+            assert expected_summary in output
+            assert "secret=12345" not in output
 
 
 class TestFormattingAndSerializationErrorSafety:
@@ -266,3 +375,22 @@ class TestFormattingAndSerializationErrorSafety:
             or "[LOGGING_ERROR]" in err_out
             or "Test with broken object" in stream_out
         )
+
+    def test_safe_console_handler_handle_error_writes_to_stderr(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stderr_capture = io.StringIO()
+        monkeypatch.setattr(sys, "stderr", stderr_capture)
+
+        handler = SafeConsoleHandler()
+        dummy_record = logging.LogRecord(
+            name="app.test",
+            level=logging.ERROR,
+            pathname="test.py",
+            lineno=1,
+            msg="boom",
+            args=(),
+            exc_info=None,
+        )
+        handler.handleError(dummy_record)
+        assert "[LOGGING_ERROR] Failed to emit log record\n" in stderr_capture.getvalue()

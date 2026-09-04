@@ -1,14 +1,22 @@
-"""Tests for logging credential redaction, immutability, and safe error metadata."""
-
 import copy
 
+import pytest
+
 from app.logging_redaction import (
+    clear_registered_secrets,
     get_safe_error_metadata,
     redact_credentials_in_text,
     redact_data,
     register_secret,
     safe_serialize,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_secrets() -> None:
+    clear_registered_secrets()
+    yield
+    clear_registered_secrets()
 
 
 class TestCredentialRedactionInText:
@@ -58,6 +66,49 @@ class TestCredentialRedactionInText:
         assert "xyz789" not in redacted
         assert "secret_abc" not in redacted
         assert "Content-Type: application/json" in redacted
+
+    def test_should_redact_quoted_json_and_dict_credentials(self) -> None:
+        payload_json = (
+            '{"authorization": "Bearer secret_jwt_in_json", '
+            '"password": "secret_password_in_json", '
+            '"cookie": "session_id=secret_cookie_in_json", '
+            '"token": "secret_token_in_json", '
+            '"safe_key": "safe_val"}'
+        )
+        redacted = redact_credentials_in_text(payload_json)
+        assert "secret_jwt_in_json" not in redacted
+        assert "secret_password_in_json" not in redacted
+        assert "secret_cookie_in_json" not in redacted
+        assert "secret_token_in_json" not in redacted
+        assert "safe_val" in redacted
+
+    def test_should_redact_quoted_python_dict_credentials(self) -> None:
+        payload_dict = (
+            "{'Authorization': 'Bearer secret_dict_jwt', "
+            "'password': 'secret_dict_pass', "
+            "'cookie': 'secret_dict_cookie', "
+            "'user': 'alice'}"
+        )
+        redacted = redact_credentials_in_text(payload_dict)
+        assert "secret_dict_jwt" not in redacted
+        assert "secret_dict_pass" not in redacted
+        assert "secret_dict_cookie" not in redacted
+        assert "alice" in redacted
+
+    def test_registered_secrets_sorted_by_length_descending(self) -> None:
+        register_secret("secret")
+        register_secret("secret_longer_token")
+        text = "Value is secret_longer_token here"
+        redacted = redact_credentials_in_text(text)
+        assert "secret_longer_token" not in redacted
+        assert "[REDACTED]_longer_token" not in redacted
+        assert "[REDACTED]" in redacted
+
+    def test_clear_registered_secrets(self) -> None:
+        register_secret("temp_isolated_secret")
+        assert "[REDACTED]" in redact_credentials_in_text("temp_isolated_secret")
+        clear_registered_secrets()
+        assert "temp_isolated_secret" in redact_credentials_in_text("temp_isolated_secret")
 
     def test_should_redact_registered_custom_secrets(self) -> None:
         register_secret("my_super_custom_secret_phrase")

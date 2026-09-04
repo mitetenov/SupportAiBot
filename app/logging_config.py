@@ -6,11 +6,40 @@ import sys
 from typing import Any, TextIO
 
 from app.logging_context import get_logging_context
-from app.logging_redaction import redact_credentials_in_text
+from app.logging_redaction import get_safe_error_metadata, redact_credentials_in_text
 
 TRACE_LEVEL_NUM: int = 5
 TRACE_LEVEL_NAME: str = "TRACE"
 TRACE: int = TRACE_LEVEL_NUM
+
+_STANDARD_LOG_RECORD_ATTRS: frozenset[str] = frozenset(
+    {
+        "args",
+        "asctime",
+        "created",
+        "exc_info",
+        "exc_text",
+        "filename",
+        "funcName",
+        "levelname",
+        "levelno",
+        "lineno",
+        "message",
+        "module",
+        "msecs",
+        "msg",
+        "name",
+        "pathname",
+        "process",
+        "processName",
+        "relativeCreated",
+        "stack_info",
+        "taskName",
+        "thread",
+        "threadName",
+        "event",
+    }
+)
 
 # Register TRACE level in standard logging
 logging.addLevelName(TRACE_LEVEL_NUM, TRACE_LEVEL_NAME)
@@ -90,19 +119,42 @@ class SafeConsoleFormatter(logging.Formatter):
                 if k in ctx:
                     ctx_parts.append(f"{k}={ctx[k]}")
 
+            # Extra structured fields passed via extra={...}
+            for k, v in record.__dict__.items():
+                if k not in _STANDARD_LOG_RECORD_ATTRS and not k.startswith("_"):
+                    safe_k = escape_control_chars(str(k))
+                    safe_v = escape_control_chars(redact_credentials_in_text(str(v)))
+                    ctx_parts.append(f"{safe_k}={safe_v}")
+
             ctx_str = f" [{' '.join(ctx_parts)}]" if ctx_parts else ""
 
             line = f"{timestamp} [{canonical_label}] {component}: {escaped_msg}{ctx_str}"
 
-            # 6. Format exceptions if present (e.g. detailed TRACE or ERROR)
-            if record.exc_info:
-                try:
-                    exc_text = self.formatException(record.exc_info)
-                    sanitized_exc = redact_credentials_in_text(exc_text)
-                    escaped_exc = escape_control_chars(sanitized_exc)
-                    line = f"{line} | exc={escaped_exc}"
-                except Exception:
-                    line = f"{line} | exc=[EXC_FORMAT_ERROR]"
+            # 6. Format exceptions if present
+            if record.exc_info and record.exc_info[1]:
+                exc = record.exc_info[1]
+                if canonical_label == "TRACE":
+                    try:
+                        exc_text = self.formatException(record.exc_info)
+                        sanitized_exc = redact_credentials_in_text(exc_text)
+                        escaped_exc = escape_control_chars(sanitized_exc)
+                        line = f"{line} | exc={escaped_exc}"
+                    except Exception:
+                        line = f"{line} | exc=[EXC_FORMAT_ERROR]"
+                else:
+                    # ERROR and INFO: safe error metadata without locals or source code lines
+                    try:
+                        meta = get_safe_error_metadata(exc, component=record.name)
+                        safe_parts = [
+                            f"error_class={meta['exception_class']}",
+                            f"location={escape_control_chars(meta['location'])}",
+                            f"reason={escape_control_chars(meta['safe_reason'])}",
+                        ]
+                        if "error_code" in meta:
+                            safe_parts.append(f"code={meta['error_code']}")
+                        line = f"{line} | {' '.join(safe_parts)}"
+                    except Exception:
+                        line = f"{line} | error=[SAFE_ERROR_FORMAT_ERROR]"
 
             return line
         except Exception:
@@ -148,6 +200,15 @@ class NormalizingFilter(logging.Filter):
         self.bot_log_level = level_str
 
     def filter(self, record: logging.LogRecord) -> bool:
+        # Early exit if record level is below minimum threshold before expensive operations
+        if record.levelno < self.min_levelno:
+            return False
+
+        # Check if already normalized to avoid duplicate processing
+        if getattr(record, "_normalized", False):
+            return record.levelno >= self.min_levelno
+        record._normalized = True
+
         # Check and safely format args if any arg has a broken repr/str
         if record.args:
             try:
@@ -171,12 +232,59 @@ class NormalizingFilter(logging.Filter):
                 record.levelno = TRACE_LEVEL_NUM
                 record.levelname = TRACE_LEVEL_NAME
             else:
-                # Route third-party ERROR, CRITICAL to ERROR
+                # Route third-party ERROR, CRITICAL to ERROR with safe summary and companion TRACE
+                original_msg = ""
+                try:
+                    original_msg = record.getMessage()
+                except Exception:
+                    original_msg = str(record.msg)
+
+                name = record.name
+                if (
+                    name.startswith("sqlalchemy")
+                    or name == "asyncpg"
+                    or name.startswith("asyncpg.")
+                ):
+                    safe_summary = f"Database error in {name}"
+                elif name.startswith(("httpx", "httpcore", "aiohttp", "urllib3")):
+                    safe_summary = f"HTTP communication error in {name}"
+                elif name.startswith("mcp"):
+                    safe_summary = f"MCP error in {name}"
+                elif name.startswith("aiogram"):
+                    safe_summary = f"Telegram error in {name}"
+                else:
+                    safe_summary = f"External library error in {name}"
+
+                handler = _CURRENT_HANDLER
+                if handler is None:
+                    for h in logging.getLogger().handlers:
+                        if isinstance(h, SafeConsoleHandler):
+                            handler = h
+                            break
+
+                if self.bot_log_level == "TRACE" and handler is not None:
+                    trace_record = logging.LogRecord(
+                        name=record.name,
+                        level=TRACE_LEVEL_NUM,
+                        pathname=record.pathname,
+                        lineno=record.lineno,
+                        msg=redact_credentials_in_text(original_msg),
+                        args=(),
+                        exc_info=record.exc_info,
+                        func=record.funcName,
+                        sinfo=record.stack_info,
+                    )
+                    trace_record._normalized = True
+                    for k, v in record.__dict__.items():
+                        if k not in _STANDARD_LOG_RECORD_ATTRS and not k.startswith("_"):
+                            setattr(trace_record, k, v)
+                    handler.handle(trace_record)
+
                 record.levelno = logging.ERROR
                 record.levelname = "ERROR"
-                # Redact raw messages
-                if isinstance(record.msg, str):
-                    record.msg = redact_credentials_in_text(record.msg)
+                record.msg = safe_summary
+                record.args = ()
+                record.exc_info = None
 
         # Cumulative threshold check
         return record.levelno >= self.min_levelno
@@ -219,20 +327,22 @@ def setup_logging(level: str = "INFO", stream: TextIO | None = None) -> None:
     # Ensure root allows TRACE records through to the handler
     root.setLevel(TRACE_LEVEL_NUM)
 
+    target_stream = stream if stream is not None else sys.stdout
+
     # Find or create SafeConsoleHandler
     handler: SafeConsoleHandler | None = None
     for h in list(root.handlers):
         if isinstance(h, SafeConsoleHandler):
             handler = h
-            if stream is not None and h.stream != stream:
-                h.setStream(stream)
+            if h.stream != target_stream:
+                h.setStream(target_stream)
             break
 
     if handler is None:
         # Remove any default handlers (e.g. from basicConfig)
         for h in list(root.handlers):
             root.removeHandler(h)
-        handler = SafeConsoleHandler(stream=stream)
+        handler = SafeConsoleHandler(stream=target_stream)
         root.addHandler(handler)
 
     _CURRENT_HANDLER = handler
@@ -246,6 +356,8 @@ def setup_logging(level: str = "INFO", stream: TextIO | None = None) -> None:
         _CURRENT_FILTER.set_level(normalized_level)
         if _CURRENT_FILTER not in root.filters:
             root.addFilter(_CURRENT_FILTER)
+        if _CURRENT_FILTER not in handler.filters:
+            handler.addFilter(_CURRENT_FILTER)
 
     # Configure third-party loggers: clear unmanaged handlers and ensure propagation
     all_logger_names = set(THIRD_PARTY_LOGGERS)
