@@ -71,7 +71,7 @@ class ZaiClient(ChatCompletionsClient):
         normalized_model = self.model.strip().lower()
         effort = self.settings.reasoning_effort
 
-        if normalized_model == "glm-4.7":
+        if normalized_model in ("glm-4.7", "glm-5.3-flash"):
             if effort == "none":
                 return "none"
             return "enabled"
@@ -93,7 +93,7 @@ class ZaiClient(ChatCompletionsClient):
         normalized_model = self.model.strip().lower()
         effort = self.settings.reasoning_effort
 
-        if normalized_model == "glm-4.7":
+        if normalized_model in ("glm-4.7", "glm-5.3-flash"):
             if effort == "none":
                 body["thinking"] = {"type": "disabled"}
             else:

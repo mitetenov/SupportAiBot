@@ -211,11 +211,11 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Основная модель Groq; резервная цель задаёт модель в `LLM_FALLBACK_CHAIN` |
 | `GROQ_BASE_URL` | `https://api.groq.com/openai/v1` | OpenAI-совместимый endpoint Groq |
 | `OPENROUTER_API_KEY` | — | Нужен при `LLM_PROVIDER=openrouter` или резервной цели `openrouter:...` |
-| `OPENROUTER_MODEL` | — | Основная модель OpenRouter (например `z-ai/glm-4.7`); резервная цель задаёт модель в `LLM_FALLBACK_CHAIN` |
+| `OPENROUTER_MODEL` | — | Основная модель OpenRouter (например `z-ai/glm-5.3-flash`); резервная цель задаёт модель в `LLM_FALLBACK_CHAIN` |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-совместимый endpoint OpenRouter |
 | `OPENROUTER_TIMEOUT_SECONDS` | `120.0` | Таймаут HTTP-запросов к OpenRouter в секундах |
 | `ZAI_API_KEY` | — | Нужен при `LLM_PROVIDER=zai` или резервной цели `zai:...` |
-| `ZAI_MODEL` | — | Основная модель Z.AI (например `glm-4.7`); резервная цель задаёт модель в `LLM_FALLBACK_CHAIN` |
+| `ZAI_MODEL` | — | Основная модель Z.AI (например `glm-5.3-flash`); резервная цель задаёт модель в `LLM_FALLBACK_CHAIN` |
 | `ZAI_BASE_URL` | `https://api.z.ai/api/paas/v4` | OpenAI-совместимый endpoint Z.AI (General API) |
 | `ZAI_TIMEOUT_SECONDS` | `120.0` | Таймаут HTTP-запросов к Z.AI в секундах |
 | `EMBEDDING_PROVIDER` | `gemini` | Провайдер поиска по базе знаний: `gemini` или `openai`. OpenRouter и Z.AI предоставляют только Chat Completions; для базы знаний всегда настраиваются отдельные credentials |
@@ -231,8 +231,8 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 
 Идентификатор провайдера Z.AI — строго `zai` (`z.ai` является названием компании,
 а не идентификатором цели). Z.AI использует нативный формат имён моделей
-(например, `glm-4.7`, `glm-5.3`), в отличие от OpenRouter, где требуется namespace
-вендора (например, `z-ai/glm-4.7`, `z-ai/glm-5.3`).
+(например, `glm-5.3-flash`, `glm-5.3`), в отличие от OpenRouter, где требуется namespace
+вендора (например, `z-ai/glm-5.3-flash`, `z-ai/glm-5.3`).
 
 Базовый endpoint `ZAI_BASE_URL` по умолчанию настроен на General API
 (`https://api.z.ai/api/paas/v4`). Обратите внимание: API-ключи тарифа Coding Plan
@@ -241,7 +241,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 
 Если `openrouter` или `zai` используется только в `LLM_FALLBACK_CHAIN`, переменные
 `OPENROUTER_MODEL` / `ZAI_MODEL` не требуются — модель берётся из элемента цепочки
-(например, `openrouter:z-ai/glm-4.7` или `zai:glm-4.7`).
+(например, `openrouter:z-ai/glm-5.3-flash` или `zai:glm-5.3-flash`).
 
 > [!NOTE]
 > Адаптеры OpenRouter и Z.AI в текущей версии поддерживают только текст и вызовы инструментов (MCP),
@@ -254,34 +254,34 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 
 Во всех примерах ниже ключи заведомо фиктивны; для базы знаний обязательно задаются отдельные embedding credentials:
 
-**Пример 1: OpenRouter как основной провайдер с моделью `z-ai/glm-4.7`**
+**Пример 1: OpenRouter как основной провайдер с моделью `z-ai/glm-5.3-flash`**
 ```env
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=openrouter_example_key_not_a_real_secret
-OPENROUTER_MODEL=z-ai/glm-4.7
+OPENROUTER_MODEL=z-ai/glm-5.3-flash
 REASONING_EFFORT=none
 EMBEDDING_PROVIDER=openai
 OPENAI_API_KEY=sk-example-not-a-real-secret
 ```
 
-**Пример 2: Z.AI как основной провайдер с моделью `glm-4.7`**
+**Пример 2: Z.AI как основной провайдер с моделью `glm-5.3-flash`**
 ```env
 LLM_PROVIDER=zai
 ZAI_API_KEY=zai_example_key_not_a_real_secret
-ZAI_MODEL=glm-4.7
+ZAI_MODEL=glm-5.3-flash
 REASONING_EFFORT=low
 EMBEDDING_PROVIDER=gemini
 GEMINI_API_KEY=gemini_example_key_not_a_real_secret
 ```
 
-**Пример 3: OpenAI как основной провайдер с цепочкой fallback `openrouter:z-ai/glm-4.7,zai:glm-4.7`**
+**Пример 3: OpenAI как основной провайдер с цепочкой fallback `openrouter:z-ai/glm-5.3-flash,zai:glm-5.3-flash`**
 ```env
 LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-example-not-a-real-secret
 OPENAI_MODEL=gpt-4.1
 OPENROUTER_API_KEY=openrouter_example_key_not_a_real_secret
 ZAI_API_KEY=zai_example_key_not_a_real_secret
-LLM_FALLBACK_CHAIN=openrouter:z-ai/glm-4.7,zai:glm-4.7
+LLM_FALLBACK_CHAIN=openrouter:z-ai/glm-5.3-flash,zai:glm-5.3-flash
 REASONING_EFFORT=low
 EMBEDDING_PROVIDER=openai
 ```
@@ -364,7 +364,7 @@ OpenRouter преобразует `REASONING_EFFORT` по нативным пр�
 
 | Модели OpenRouter | Преобразование `REASONING_EFFORT` |
 |---|---|
-| `z-ai/glm-4.7` | `none` → `reasoning: {"enabled": false}`; остальные профили (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) → `reasoning: {"enabled": true}` |
+| `z-ai/glm-5.3-flash`, `z-ai/glm-4.7` | `none` → `reasoning: {"enabled": false}`; остальные профили (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) → `reasoning: {"enabled": true}` |
 | `z-ai/glm-5.3` | `none` запрещён (ошибка валидации при старте); `minimal`/`low` → `low`, `medium`/`high`/`xhigh` → `high`, `max` → `max` (`reasoning: {"effort": <effective>}`) |
 | Неизвестные модели | Параметр `reasoning` не передаётся в теле запроса; в логе INFO фиксируется сообщение о пропуске неиспользуемого профиля |
 
@@ -372,7 +372,7 @@ Z.AI использует нативные параметры `thinking` и `rea
 
 | Модели Z.AI | Преобразование `REASONING_EFFORT` |
 |---|---|
-| `glm-4.7` | `none` → `thinking: {"type": "disabled"}`; остальные профили → `thinking: {"type": "enabled"}` (без поля `reasoning_effort`) |
+| `glm-5.3-flash`, `glm-4.7` | `none` → `thinking: {"type": "disabled"}`; остальные профили → `thinking: {"type": "enabled"}` (без поля `reasoning_effort`) |
 | `glm-5.3` | `none` запрещён (ошибка валидации при старте); `minimal`/`low` → `low`, `medium`/`high`/`xhigh` → `high`, `max` → `max` (`thinking: {"type": "enabled"}`, `reasoning_effort: <effective>`) |
 | Неизвестные модели | Параметры `thinking` и `reasoning_effort` не передаются в теле запроса; в логе INFO фиксируется сообщение о пропуске неиспользуемого профиля |
 
