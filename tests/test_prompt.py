@@ -28,6 +28,12 @@ class TestSupportPrompt:
     def test_system_should_still_allow_troubleshooting_for_already_connected_users(self) -> None:
         assert "Правило не отменяет диагностику" in SupportPrompt.SYSTEM
 
+    def test_system_should_require_a_fresh_account_scoped_hwid_snapshot(self) -> None:
+        prompt = SupportPrompt.SYSTEM
+        assert "этот support-инструмент сам получает все аккаунты" in prompt
+        assert "Не используй старые userId/hwid из истории" in prompt
+        assert "status=already_absent" in prompt
+
     def test_bedolaga_tariff_fields_should_not_be_treated_as_panel_state(self) -> None:
         assert "tariff_id" in SupportPrompt.SYSTEM
         assert "tariff_name" in SupportPrompt.SYSTEM
