@@ -11,7 +11,6 @@ from app.constants import SupportPrompt
 from app.llm.base import (
     AbstractLlmClient,
     LlmProcessingException,
-    LlmReply,
     LlmResponse,
     TokenUsage,
     ToolCall,
@@ -33,19 +32,28 @@ from app.logging_config import log_failure
 logger = logging.getLogger(__name__)
 
 DEEPSEEK_REASONING_EFFORT_MAP: dict[str, str] = {
-    "minimal": "high",
-    "low": "high",
+    "minimal": "low",
+    "low": "low",
     "medium": "high",
     "high": "high",
-    "xhigh": "max",
+    "xhigh": "high",
     "max": "max",
 }
+
+DEEPSEEK_VISION_MODELS: frozenset[str] = frozenset(
+    {
+        "deepseek-flash",
+        "deepseek-v4-flash",
+        "deepseek-v4-flash-vision-exp",
+    }
+)
 
 
 def supports_reasoning(model: str) -> bool:
     """Return whether the official DeepSeek model supports dual thinking mode."""
     normalized = model.strip().lower()
     return normalized.startswith("deepseek-v4-") or normalized in {
+        "deepseek-flash",
         "deepseek-chat",
         "deepseek-reasoner",
     }
@@ -134,7 +142,7 @@ class DeepSeekClient(AbstractLlmClient):
             await self._http_client.aclose()
 
     def supports_images(self) -> bool:
-        return False
+        return self.model.strip().lower() in DEEPSEEK_VISION_MODELS
 
     def get_provider_name(self) -> str:
         return "DeepSeek"
@@ -192,20 +200,16 @@ class DeepSeekClient(AbstractLlmClient):
         if history:
             messages.extend(history)
 
-        messages.append({"role": "user", "content": user_message})
+        if base64_image and base64_image.strip() and self.supports_images():
+            parts: list[dict[str, Any]] = []
+            if user_message and user_message.strip():
+                parts.append({"type": "text", "text": user_message})
+            data_uri = f"data:{mime_type or 'image/jpeg'};base64,{base64_image}"
+            parts.append({"type": "image_url", "image_url": {"url": data_uri}})
+            messages.append({"role": "user", "content": parts})
+        else:
+            messages.append({"role": "user", "content": user_message})
         return messages
-
-    async def chat_with_image(
-        self,
-        user_message: str,
-        telegram_user_id: int,
-        base64_image: str,
-        mime_type: str | None = None,
-    ) -> LlmReply:
-        raise LlmProcessingException(
-            "Image not supported",
-            "DeepSeek не поддерживает обработку изображений. Переключите провайдера на Gemini (LLM_PROVIDER=gemini) или опишите проблему текстом.",
-        )
 
     async def call_api(
         self,

@@ -247,7 +247,7 @@ docker compose exec support-bot python3 -c "import urllib.request; urllib.reques
 > Адаптеры OpenRouter и Z.AI в текущей версии поддерживают только текст и вызовы инструментов (MCP),
 > но не поддерживают изображения (`supports_images() == False`). При наличии изображения
 > цепочка fallback пропускает их и направляет запрос провайдеру с поддержкой
-> изображений (OpenAI или Gemini). Если цепочка состоит только из текстовых моделей,
+> изображений (OpenAI, Gemini или DeepSeek Flash). Если цепочка состоит только из текстовых моделей,
 > бот сразу возвращает понятное сообщение с просьбой описать проблему текстом.
 
 #### Согласованные примеры конфигурации
@@ -342,8 +342,13 @@ LLM-провайдера. Резервная модель получает со�
 `REASONING_EFFORT` — общий профиль, который каждый клиент преобразует в
 нативную настройку выбранной модели. Известные несовместимые пары модель/профиль
 отклоняются при старте. OpenAI GPT-5.6 принимает `none`, `low`, `medium`,
-`high`, `xhigh`, `max`; Gemini преобразует `xhigh`/`max` в `high`, а DeepSeek
-преобразует `minimal`–`high` в `high` и `xhigh`/`max` в `max`.
+`high`, `xhigh`, `max`; Gemini преобразует `xhigh`/`max` в `high`.
+
+DeepSeek использует [нативные параметры thinking](https://api-docs.deepseek.com/guides/thinking_mode/):
+`none` отключает reasoning, `minimal`/`low` преобразуются в `low`,
+`medium`/`high`/`xhigh` — в `high`, `max` — в `max`. Модели Flash принимают
+скриншоты в OpenAI-совместимом формате `image_url` согласно
+[официальному Vision API](https://api-docs.deepseek.com/guides/vision/).
 
 Groq использует [нативные параметры reasoning](https://console.groq.com/docs/reasoning):
 
@@ -637,7 +642,7 @@ curl -X POST "$PANEL_URL/webhooks" \
 |---|---|---|---|
 | OpenAI | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | да | да |
 | Gemini | `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` | да | да |
-| DeepSeek | `deepseek-v4-flash`, `deepseek-v4-pro` | нет | нет |
+| DeepSeek | `deepseek-flash` (актуальный Flash), `deepseek-v4-flash` (совместимый алиас), `deepseek-v4-pro` | да, только Flash | нет |
 | Groq | `llama-3.3-70b-versatile` и другие модели Groq | нет | нет |
 
 ## Логирование

@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.llm.base import LlmProcessingException, ToolCall
+from app.llm.base import ToolCall
 from app.llm.deepseek import DeepSeekClient
 from app.llm.mcp_router import McpRouter
 from app.logging_config import setup_logging
@@ -54,6 +54,36 @@ class TestDeepSeekClient:
     def test_supports_images_is_false(self, deepseek_client: DeepSeekClient):
         assert deepseek_client.supports_images() is False
 
+    @pytest.mark.parametrize(
+        "model",
+        ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"],
+    )
+    def test_flash_models_support_images(
+        self, settings: Settings, deepseek_client: DeepSeekClient, model: str
+    ) -> None:
+        settings.deepseek_model = model
+        client = DeepSeekClient(
+            settings=settings,
+            mcp_router=deepseek_client.mcp_router,
+            chat_history_service=deepseek_client.chat_history_service,
+            faq_embedding_service=deepseek_client.faq_embedding_service,
+        )
+
+        assert client.supports_images() is True
+
+    def test_v4_pro_does_not_support_images(
+        self, settings: Settings, deepseek_client: DeepSeekClient
+    ) -> None:
+        settings.deepseek_model = "deepseek-v4-pro"
+        client = DeepSeekClient(
+            settings=settings,
+            mcp_router=deepseek_client.mcp_router,
+            chat_history_service=deepseek_client.chat_history_service,
+            faq_embedding_service=deepseek_client.faq_embedding_service,
+        )
+
+        assert client.supports_images() is False
+
     def test_reasoning_with_tools_uses_native_effort_and_omits_tool_choice(
         self, deepseek_client: DeepSeekClient
     ):
@@ -71,7 +101,7 @@ class TestDeepSeekClient:
         body = deepseek_client.build_request_body([{"role": "user", "content": "hello"}])
 
         assert body["thinking"] == {"type": "enabled"}
-        assert body["reasoning_effort"] == "high"
+        assert body["reasoning_effort"] == "low"
         assert "tool_choice" not in body
         assert "temperature" not in body
 
@@ -108,13 +138,117 @@ class TestDeepSeekClient:
         assert "reasoning_effort" not in body
         assert "ignored" in caplog.text
 
-    @pytest.mark.asyncio
-    async def test_chat_with_image_raises_friendly_exception(self, deepseek_client: DeepSeekClient):
-        with pytest.raises(LlmProcessingException) as exc_info:
-            await deepseek_client.chat_with_image("text", 123, "base64", "image/png")
-        assert (
-            "DeepSeek не поддерживает обработку изображений" in exc_info.value.user_friendly_message
+    def test_flash_builds_openai_compatible_image_content(
+        self, settings: Settings, deepseek_client: DeepSeekClient
+    ) -> None:
+        settings.deepseek_model = "deepseek-v4-flash"
+        client = DeepSeekClient(
+            settings=settings,
+            mcp_router=deepseek_client.mcp_router,
+            chat_history_service=deepseek_client.chat_history_service,
+            faq_embedding_service=deepseek_client.faq_embedding_service,
         )
+
+        conversation = client.build_initial_conversation(
+            "Что на скриншоте?",
+            123,
+            base64_image="aGVsbG8=",
+            mime_type="image/png",
+        )
+
+        assert conversation[-1] == {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Что на скриншоте?"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,aGVsbG8="},
+                },
+            ],
+        }
+
+    def test_flash_image_without_caption_omits_empty_text_block(
+        self, settings: Settings, deepseek_client: DeepSeekClient
+    ) -> None:
+        settings.deepseek_model = "deepseek-flash"
+        client = DeepSeekClient(
+            settings=settings,
+            mcp_router=deepseek_client.mcp_router,
+            chat_history_service=deepseek_client.chat_history_service,
+            faq_embedding_service=deepseek_client.faq_embedding_service,
+        )
+
+        conversation = client.build_initial_conversation(
+            "",
+            123,
+            base64_image="aGVsbG8=",
+            mime_type=None,
+        )
+
+        assert conversation[-1] == {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/jpeg;base64,aGVsbG8="},
+                }
+            ],
+        }
+
+    @pytest.mark.asyncio
+    async def test_flash_chat_with_image_uses_multimodal_turn(
+        self, settings: Settings, deepseek_client: DeepSeekClient
+    ) -> None:
+        settings.deepseek_model = "deepseek-v4-flash"
+        client = DeepSeekClient(
+            settings=settings,
+            mcp_router=deepseek_client.mcp_router,
+            chat_history_service=deepseek_client.chat_history_service,
+            faq_embedding_service=deepseek_client.faq_embedding_service,
+        )
+        client._respond = AsyncMock(return_value=MagicMock())
+
+        await client.chat_with_image("Что сломалось?", 123, "aGVsbG8=", "image/png")
+
+        client._respond.assert_awaited_once_with(
+            "Что сломалось?",
+            123,
+            "aGVsbG8=",
+            "image/png",
+            "Что сломалось?",
+        )
+
+    @pytest.mark.parametrize(
+        ("configured", "effective"),
+        [
+            ("minimal", "low"),
+            ("low", "low"),
+            ("medium", "high"),
+            ("high", "high"),
+            ("xhigh", "high"),
+            ("max", "max"),
+        ],
+    )
+    def test_flash_maps_reasoning_effort_per_provider_contract(
+        self,
+        settings: Settings,
+        deepseek_client: DeepSeekClient,
+        configured: str,
+        effective: str,
+    ) -> None:
+        settings.deepseek_model = "deepseek-flash"
+        settings.reasoning_effort = configured
+        client = DeepSeekClient(
+            settings=settings,
+            mcp_router=deepseek_client.mcp_router,
+            chat_history_service=deepseek_client.chat_history_service,
+            faq_embedding_service=deepseek_client.faq_embedding_service,
+        )
+
+        body = client.build_request_body([])
+
+        assert body["thinking"] == {"type": "enabled"}
+        assert body["reasoning_effort"] == effective
 
     def test_build_initial_conversation_with_system_and_dynamic_context(
         self, deepseek_client: DeepSeekClient
