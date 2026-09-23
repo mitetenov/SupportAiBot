@@ -46,6 +46,8 @@ logger = logging.getLogger(__name__)
 #: Telegram buffer drain has to fit in there too, so this is a courtesy for the
 #: turn that is nearly done — not a promise to finish one that just started.
 TICKET_DRAIN_TIMEOUT_SECONDS: float = 3.0
+MCP_RETRY_INITIAL_SECONDS: float = 5.0
+MCP_RETRY_MAX_SECONDS: float = 60.0
 
 __all__ = [
     "create_health_app",
@@ -103,6 +105,27 @@ async def register_bot_commands(bot: Bot) -> None:
     logger.info("Bot commands menu registered successfully")
 
 
+async def retry_mcp_connection(client: HttpMcpClient, router: McpRouter) -> None:
+    """Restore a failed MCP client without restarting the bot or flooding admins."""
+    delay = MCP_RETRY_INITIAL_SECONDS
+    while True:
+        await asyncio.sleep(delay)
+        if client.initialized:
+            delay = MCP_RETRY_INITIAL_SECONDS
+            continue
+        try:
+            connected = await client.init(notify_on_failure=False)
+        except Exception as error:
+            connected = False
+            log_failure(logger, "MCP background reconnect failed", error, server=client.server_name)
+        if connected:
+            router.list_tools()  # Refresh routes before the next LLM turn.
+            logger.info("MCP[%s] reconnected; tools available again", client.server_name)
+            delay = MCP_RETRY_INITIAL_SECONDS
+        else:
+            delay = min(delay * 2, MCP_RETRY_MAX_SECONDS)
+
+
 async def main() -> None:
     """Application async entrypoint and composition root."""
     settings = get_settings()
@@ -125,6 +148,7 @@ async def main() -> None:
 
     health_runner: web.AppRunner | None = None
     mcp_clients_by_server: dict[str, HttpMcpClient] = {}
+    mcp_retry_tasks: list[asyncio.Task[None]] = []
     message_buffer: UserMessageBuffer | None = None
     pipeline: UserMessagePipeline | None = None
     typing_indicator: TypingIndicator | None = None
@@ -172,8 +196,7 @@ async def main() -> None:
                 admin_notifier=admin_notifier,
             )
 
-        # Initialize independently and report each failure on its own. Only the
-        # clients that actually negotiated a session reach the router.
+        # Initialize independently and report each failure on its own.
         initialized_clients: list[McpClientInterface] = []
         for server_name, mcp_client in mcp_clients_by_server.items():
             if not await mcp_client.init():
@@ -197,10 +220,21 @@ async def main() -> None:
             initialized_clients.append(mcp_client)
 
         mcp_router = McpRouter(
-            clients=initialized_clients,
+            clients=list(mcp_clients_by_server.values()),
             readonly=settings.remnawave_mcp_readonly,
             settings=settings,
         )
+
+        # Keep failed clients in the router: its routes refresh when a later
+        # connection supplies tools. A failed recovery after a tool call also
+        # becomes eligible for these bounded background retries.
+        mcp_retry_tasks = [
+            asyncio.create_task(
+                retry_mcp_connection(mcp_client, mcp_router),
+                name=f"mcp-retry-{server_name}",
+            )
+            for server_name, mcp_client in mcp_clients_by_server.items()
+        ]
 
         # A tool name declared by more than one MCP server is hidden from the
         # model and reported here — the router never picks "the first" server.
@@ -408,6 +442,10 @@ async def main() -> None:
                 )
         if typing_indicator is not None:
             typing_indicator.shutdown()
+        for task in mcp_retry_tasks:
+            task.cancel()
+        if mcp_retry_tasks:
+            await asyncio.gather(*mcp_retry_tasks, return_exceptions=True)
         for mcp_client in mcp_clients_by_server.values():
             try:
                 await mcp_client.close()
