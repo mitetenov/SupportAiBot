@@ -129,6 +129,13 @@ def _is_recoverable_error(e: Exception) -> bool:
     Programmatic errors (TypeError, ValueError, etc.) and application/logic errors
     must never trigger session reconnect.
     """
+    if isinstance(e, ExceptionGroup):
+        # AnyIO wraps transport failures in a TaskGroup. Only reconnect when
+        # every leaf is a transport/session failure; mixed groups fail closed.
+        return bool(e.exceptions) and all(
+            isinstance(inner, Exception) and _is_recoverable_error(inner) for inner in e.exceptions
+        )
+
     # Programmatic errors must never trigger reconnection
     if isinstance(
         e,
@@ -284,7 +291,9 @@ class HttpMcpClient(McpClientInterface):
                         break
 
                     if cmd.action == "init":
-                        success = await self._init_internal()
+                        success = await self._init_internal(
+                            notify_on_failure=bool(cmd.payload.get("notify_on_failure", True))
+                        )
                     elif cmd.action == "recover":
                         success = await self._recover_session_internal(
                             int(cmd.payload["generation"])
@@ -315,7 +324,7 @@ class HttpMcpClient(McpClientInterface):
         await queue.put(_McpCommand(action=action, future=future, payload=payload))
         return await future
 
-    async def _init_internal(self) -> bool:
+    async def _init_internal(self, notify_on_failure: bool = True) -> bool:
         await self._close_stack_internal()
         stack = AsyncExitStack()
         try:
@@ -419,7 +428,8 @@ class HttpMcpClient(McpClientInterface):
                 details={"url": self.base_url},
             )
             await self._close_stack_internal()
-            await self._notify_admins(f"{self._label} init failed for {self.base_url}", e)
+            if notify_on_failure:
+                await self._notify_admins(f"{self._label} init failed for {self.base_url}", e)
             return False
 
     async def _notify_admins(self, context: str, error: Exception) -> None:
@@ -588,14 +598,16 @@ class HttpMcpClient(McpClientInterface):
                     details={"url": self.base_url},
                 )
 
-    async def init(self) -> bool:
+    async def init(self, *, notify_on_failure: bool = True) -> bool:
         """Connect to MCP server, negotiate protocol, and load tool definitions."""
         async with self._close_lock:
             await self._no_active_calls.wait()
             async with self._call_state_lock:
                 self._closing = False
             self._ensure_worker()
-            return bool(await self._submit_owner_command("init"))
+            return bool(
+                await self._submit_owner_command("init", notify_on_failure=notify_on_failure)
+            )
 
     async def _start_tool_call(self) -> tuple[bool, int, Any]:
         async with self._call_state_lock:

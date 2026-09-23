@@ -62,6 +62,25 @@ class TestMcpRouter:
     def test_should_return_empty_tools_with_none_client_list(self) -> None:
         assert create_router(None).list_tools() == []
 
+    @pytest.mark.asyncio
+    async def test_tools_become_routable_after_client_reconnect(self) -> None:
+        bedolaga = StubMcpClient(server_name="bedolaga", tools=[])
+        router = create_router([bedolaga])
+        assert router.list_tools() == []
+
+        bedolaga.tools = [McpTool(name="bedolaga_user_get")]
+        bedolaga.tool_results["bedolaga_user_get"] = '{"ok": true}'
+        assert [tool.name for tool in router.list_tools()] == ["bedolaga_user_get"]
+        assert json.loads(
+            await router.call_tool("bedolaga_user_get", {}, telegram_user_id=CALLER)
+        ) == {"ok": True}
+
+        bedolaga.tools = []
+        assert router.list_tools() == []
+        assert "Tool not allowed" in await router.call_tool(
+            "bedolaga_user_get", {}, telegram_user_id=CALLER
+        )
+
     def test_should_aggregate_tools_from_all_clients(self) -> None:
         client1 = StubMcpClient(
             tools=[McpTool(name="users_get_by_telegram_id", description="desc1")],

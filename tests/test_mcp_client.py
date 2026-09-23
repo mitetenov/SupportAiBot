@@ -256,6 +256,23 @@ class TestHttpMcpClient:
         admin_notifier.notify_error.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_background_init_failure_does_not_repeat_admin_alert(
+        self, admin_notifier: MagicMock
+    ) -> None:
+        client = HttpMcpClient(
+            server_name="bedolaga",
+            base_url="http://test-mcp:3100",
+            admin_notifier=admin_notifier,
+            client_factory=lambda _url: MockSdkClient(
+                raise_on_enter=ConnectionRefusedError("Connection refused")
+            ),
+        )
+
+        assert await client.init(notify_on_failure=False) is False
+        admin_notifier.notify_error.assert_not_called()
+        await client.close()
+
+    @pytest.mark.asyncio
     async def test_init_failure_during_list_tools_cleans_up(
         self, admin_notifier: MagicMock
     ) -> None:
@@ -478,6 +495,62 @@ class TestSessionRecovery:
         assert "not recovered" in data["error"]
 
     @pytest.mark.asyncio
+    async def test_failed_reconnect_retries_in_background_and_restores_router(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import app.main as main_module
+        from app.llm.mcp_router import McpRouter
+
+        monkeypatch.setattr(main_module, "MCP_RETRY_INITIAL_SECONDS", 0.001)
+        tools = [Tool(name="bedolaga_user_get", description="", input_schema={})]
+        clients_created: list[MockSdkClient] = []
+
+        def client_factory(_url: str) -> MockSdkClient:
+            index = len(clients_created)
+            if index == 0:
+                sdk = MockSdkClient(
+                    tools=tools,
+                    raise_on_call=ExceptionGroup(
+                        "unhandled errors in a TaskGroup",
+                        [ConnectionResetError("connection reset")],
+                    ),
+                )
+            elif index == 1:
+                sdk = MockSdkClient(raise_on_enter=ConnectionRefusedError("server down"))
+            else:
+                sdk = MockSdkClient(tools=tools)
+            clients_created.append(sdk)
+            return sdk
+
+        client = HttpMcpClient(
+            server_name="bedolaga",
+            base_url="http://test-mcp:3100",
+            client_factory=client_factory,
+        )
+        assert await client.init()
+        router = McpRouter(clients=[client])
+        assert [tool.name for tool in router.list_tools()] == ["bedolaga_user_get"]
+
+        result = await client.call_tool("bedolaga_user_get", {})
+        assert "not recovered" in json.loads(result)["error"]
+        assert router.list_tools() == []
+
+        retry_task = asyncio.create_task(main_module.retry_mcp_connection(client, router))
+        try:
+            async with asyncio.timeout(1):
+                while not client.initialized:
+                    await asyncio.sleep(0.001)
+            assert len(clients_created) == 3
+            assert [tool.name for tool in router.list_tools()] == ["bedolaga_user_get"]
+            assert json.loads(
+                await router.call_tool("bedolaga_user_get", {}, telegram_user_id=123)
+            ) == {"ok": True}
+        finally:
+            retry_task.cancel()
+            await asyncio.gather(retry_task, return_exceptions=True)
+            await client.close()
+
+    @pytest.mark.asyncio
     async def test_non_recoverable_error_does_not_trigger_reconnect(self) -> None:
         clients_created: list[MockSdkClient] = []
 
@@ -580,6 +653,19 @@ class TestErrorRecoveryFilter:
             _is_recoverable_error(MCPError(-32000, "Bad Request: Server not initialized")) is True
         )
         assert _is_recoverable_error(RuntimeError("Connection closed unexpectedly")) is True
+
+    def test_task_group_wrapped_transport_error_is_recoverable(self) -> None:
+        from app.llm.mcp_client import _is_recoverable_error
+
+        assert _is_recoverable_error(
+            ExceptionGroup("unhandled errors in a TaskGroup", [ConnectionRefusedError("down")])
+        )
+        assert not _is_recoverable_error(
+            ExceptionGroup(
+                "unhandled errors in a TaskGroup",
+                [ConnectionRefusedError("down"), ValueError("bad arguments")],
+            )
+        )
 
 
 class TestMcpLoggingLevel:

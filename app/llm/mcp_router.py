@@ -145,15 +145,9 @@ class McpRouter:
         self._route_by_tool_name: dict[str, _Route] = {}
         #: owner -> tool names the model may call, post-profile, post-collision.
         self.allowed_tools_by_server: dict[str, set[str]] = {name: set() for name in self._profiles}
-        self._build_routes()
-
-        # Flat union of everything the model sees, kept for the composition
-        # root's per-server checks (which use allowed_tools_by_server).
-        self.allowed_tools: set[str] = (
-            set().union(*self.allowed_tools_by_server.values())
-            if self.allowed_tools_by_server
-            else set()
-        )
+        self.allowed_tools: set[str] = set()
+        self._tool_snapshot: tuple[tuple[McpTool, ...], ...] | None = None
+        self._refresh_routes()
 
         if self.readonly:
             logger.info(
@@ -166,7 +160,20 @@ class McpRouter:
             len(self.allowed_tools),
         )
 
-    def _build_routes(self) -> None:
+    def _refresh_routes(self) -> None:
+        """Rebuild routes when a client gains or loses tools after reconnect."""
+        snapshot = tuple(tuple(client.list_tools()) for client in self.clients)
+        if snapshot == self._tool_snapshot:
+            return
+        self._tool_snapshot = snapshot
+        self.collisions.clear()
+        self._routes.clear()
+        self._route_by_tool_name.clear()
+        self.allowed_tools_by_server = {name: set() for name in self._profiles}
+        self._build_routes(snapshot)
+        self.allowed_tools = set().union(*self.allowed_tools_by_server.values())
+
+    def _build_routes(self, snapshot: tuple[tuple[McpTool, ...], ...]) -> None:
         """Bind every allowed, non-colliding (owner, tool) to exactly one client.
 
         Fail-closed in both directions: a tool whose owner has no profile is
@@ -174,13 +181,13 @@ class McpRouter:
         though the server declared it.
         """
         declared: dict[str, dict[str, tuple[McpTool, McpClientInterface]]] = {}
-        for client in self.clients:
+        for client, tools in zip(self.clients, snapshot, strict=True):
             server_name = getattr(client, "server_name", None)
             if not isinstance(server_name, str) or not server_name:
                 logger.error("MCP client without a stable server_name is ignored by the router")
                 continue
             server_tools = declared.setdefault(server_name, {})
-            for tool in client.list_tools():
+            for tool in tools:
                 server_tools[tool.name] = (tool, client)
 
         # A name declared by more than one server is hidden outright — never the
@@ -305,13 +312,14 @@ class McpRouter:
         menu is stable. Hidden collision names and tools outside their owner's
         profile are excluded.
         """
+        self._refresh_routes()
         tools: list[McpTool] = []
-        for client in self.clients:
+        for client, client_tools in zip(self.clients, self._tool_snapshot or (), strict=True):
             server_name = getattr(client, "server_name", None)
             if not isinstance(server_name, str):
                 continue
             allowed = self.allowed_tools_by_server.get(server_name, set())
-            for tool in client.list_tools():
+            for tool in client_tools:
                 if tool.name in allowed:
                     tools.append(tool)
         return tools
@@ -332,6 +340,7 @@ class McpRouter:
         identity and no provable panel userId — return ``identity_unavailable``.
         A positive key is a real Telegram sender and is pinned as today.
         """
+        self._refresh_routes()
         if telegram_user_id == 0:
             if logger.isEnabledFor(TRACE):
                 logger.log(

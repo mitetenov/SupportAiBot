@@ -1,5 +1,6 @@
 """Tests for main entrypoint, healthcheck server, and dependency injection."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -366,6 +367,43 @@ async def test_main_lifecycle(mock_settings: Settings) -> None:
         mock_mcp.close.assert_called_once()
         mock_bot.session.close.assert_called_once()
         mock_db.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_retry_mcp_connection_restores_tools_without_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import main as main_module
+
+    monkeypatch.setattr(main_module, "MCP_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(main_module, "MCP_RETRY_MAX_SECONDS", 0.002)
+    client = MagicMock()
+    client.server_name = "bedolaga"
+    client.initialized = False
+    restored = asyncio.Event()
+    attempts = 0
+
+    async def reconnect(*, notify_on_failure: bool) -> bool:
+        nonlocal attempts
+        assert notify_on_failure is False
+        attempts += 1
+        if attempts == 2:
+            client.initialized = True
+            restored.set()
+            return True
+        return False
+
+    client.init = AsyncMock(side_effect=reconnect)
+    router = MagicMock()
+    task = asyncio.create_task(main_module.retry_mcp_connection(client, router))
+    try:
+        await asyncio.wait_for(restored.wait(), timeout=1)
+        await asyncio.sleep(0)
+        assert attempts == 2
+        router.list_tools.assert_called_once()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio
