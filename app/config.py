@@ -289,7 +289,7 @@ class Settings(BaseSettings):
             )
             _require_text(
                 configured_model,
-                "DEEPSEEK_MODEL не задан. Укажите модель, например: DEEPSEEK_MODEL=deepseek-v4-flash",
+                "DEEPSEEK_MODEL не задан. Укажите модель, например: DEEPSEEK_MODEL=deepseek-flash",
             )
         elif provider == "gemini":
             _require_text(
