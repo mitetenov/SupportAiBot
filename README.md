@@ -342,13 +342,19 @@ LLM-провайдера. Резервная модель получает со�
 `REASONING_EFFORT` — общий профиль, который каждый клиент преобразует в
 нативную настройку выбранной модели. Известные несовместимые пары модель/профиль
 отклоняются при старте. OpenAI GPT-5.6 принимает `none`, `low`, `medium`,
-`high`, `xhigh`, `max`; Gemini преобразует `xhigh`/`max` в `high`.
+`high`, `xhigh`, `max`. GPT-6 Sol и Luna принимают те же уровни; GPT-6 Astra
+принимает `low`, `medium`, `high`, `xhigh`, `max` и отклоняет `none`. Все три
+модели работают через Responses API с MCP-инструментами. Gemini преобразует
+`xhigh`/`max` в `high`.
 
 DeepSeek использует [нативные параметры thinking](https://api-docs.deepseek.com/guides/thinking_mode/):
 `none` отключает reasoning, `minimal`/`low` преобразуются в `low`,
 `medium`/`high`/`xhigh` — в `high`, `max` — в `max`. Модели Flash принимают
 скриншоты в OpenAI-совместимом формате `image_url` согласно
 [официальному Vision API](https://api-docs.deepseek.com/guides/vision/).
+Для V4.1 Flash укажите `DEEPSEEK_MODEL=deepseek-flash`. Старый
+`deepseek-v4-flash` временно маршрутизируется к V4.1 Flash, поэтому это
+совместимый алиас, а не отдельная версия модели.
 
 Groq использует [нативные параметры reasoning](https://console.groq.com/docs/reasoning):
 
@@ -640,9 +646,9 @@ curl -X POST "$PANEL_URL/webhooks" \
 
 | Провайдер | Поддерживаемые модели | Скриншоты | Можно использовать для индекса FAQ |
 |---|---|---|---|
-| OpenAI | `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | да | да |
+| OpenAI | `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` | да | да |
 | Gemini | `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` | да | да |
-| DeepSeek | `deepseek-flash` (актуальный Flash), `deepseek-v4-flash` (совместимый алиас), `deepseek-v4-pro` | да, только Flash | нет |
+| DeepSeek | `deepseek-flash` (V4.1 Flash), `deepseek-v4-flash` (временный алиас), `deepseek-v4-pro` | да, только Flash | нет |
 | Groq | `llama-3.3-70b-versatile` и другие модели Groq | нет | нет |
 
 ## Логирование

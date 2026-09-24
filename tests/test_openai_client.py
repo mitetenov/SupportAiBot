@@ -173,6 +173,65 @@ class TestOpenAiClient:
                 faq_embedding_service=openai_client.faq_embedding_service,
             )
 
+    @pytest.mark.parametrize("model", ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"])
+    def test_gpt_6_uses_responses_reasoning_and_tools(
+        self, settings: Settings, openai_client: OpenAiClient, model: str
+    ):
+        settings.openai_model = model
+        settings.reasoning_effort = "max"
+        settings.openai_temperature = 1
+        openai_client.mcp_router.list_tools.return_value = [
+            McpTool("nodes_list", "List all nodes", {"type": "object", "properties": {}})
+        ]
+        client = OpenAiClient(
+            settings=settings,
+            mcp_router=openai_client.mcp_router,
+            chat_history_service=openai_client.chat_history_service,
+            faq_embedding_service=openai_client.faq_embedding_service,
+        )
+
+        body = client.build_request_body([{"role": "user", "content": "hello"}])
+        assert body["model"] == model
+        assert body["reasoning"] == {"effort": "max"}
+        assert body["tools"][0]["name"] == "nodes_list"
+        assert "temperature" not in body
+
+    @pytest.mark.parametrize(
+        ("model", "effort"),
+        [
+            ("gpt-6-astra", "none"),
+            ("gpt-6-astra", "minimal"),
+            ("gpt-6-sol", "minimal"),
+            ("gpt-6-luna", "minimal"),
+        ],
+    )
+    def test_gpt_6_rejects_unsupported_effort(
+        self, settings: Settings, openai_client: OpenAiClient, model: str, effort: str
+    ):
+        settings.openai_model = model
+        settings.reasoning_effort = effort
+        with pytest.raises(ValueError, match="не поддерживает"):
+            OpenAiClient(
+                settings=settings,
+                mcp_router=openai_client.mcp_router,
+                chat_history_service=openai_client.chat_history_service,
+                faq_embedding_service=openai_client.faq_embedding_service,
+            )
+
+    @pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna"])
+    def test_gpt_6_sol_luna_allow_no_reasoning(
+        self, settings: Settings, openai_client: OpenAiClient, model: str
+    ):
+        settings.openai_model = model
+        settings.reasoning_effort = "none"
+        client = OpenAiClient(
+            settings=settings,
+            mcp_router=openai_client.mcp_router,
+            chat_history_service=openai_client.chat_history_service,
+            faq_embedding_service=openai_client.faq_embedding_service,
+        )
+        assert client.build_request_body([])["reasoning"] == {"effort": "none"}
+
     def test_parse_text_response(self, openai_client: OpenAiClient):
         raw = """
         {

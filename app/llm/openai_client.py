@@ -32,6 +32,10 @@ from app.logging_config import log_failure
 logger = logging.getLogger(__name__)
 
 OPENAI_GPT_56_EFFORTS: frozenset[str] = frozenset({"none", "low", "medium", "high", "xhigh", "max"})
+OPENAI_GPT_6_ASTRA_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high", "xhigh", "max"})
+OPENAI_GPT_6_SOL_LUNA_EFFORTS: frozenset[str] = frozenset(
+    {"none", "low", "medium", "high", "xhigh", "max"}
+)
 OPENAI_GPT_55_EFFORTS: frozenset[str] = frozenset({"none", "low", "medium", "high", "xhigh"})
 OPENAI_GPT_55_PRO_EFFORTS: frozenset[str] = frozenset({"medium", "high", "xhigh"})
 OPENAI_GPT_5_EFFORTS: frozenset[str] = frozenset({"minimal", "low", "medium", "high"})
@@ -42,6 +46,10 @@ OPENAI_COMMON_REASONING_EFFORTS: frozenset[str] = frozenset({"low", "medium", "h
 def supported_reasoning_efforts(model: str) -> frozenset[str] | None:
     """Return the documented effort set for a known OpenAI model family."""
     normalized = model.strip().lower()
+    if normalized == "gpt-6-astra":
+        return OPENAI_GPT_6_ASTRA_EFFORTS
+    if normalized in {"gpt-6-sol", "gpt-6-luna"}:
+        return OPENAI_GPT_6_SOL_LUNA_EFFORTS
     if normalized.startswith("gpt-5.6"):
         return OPENAI_GPT_56_EFFORTS
     if normalized.startswith("gpt-5.5-pro"):
