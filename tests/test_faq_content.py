@@ -79,15 +79,19 @@ class TestAutoRenewal:
 
 
 class TestSubscriptionLink:
-    """Operators keep explaining the three-dots menu by hand."""
+    """The FAQ directs users to supported ways to get their link."""
 
-    def test_an_entry_explains_how_to_copy_the_link(self, entries: list[dict[str, Any]]) -> None:
+    def test_an_entry_explains_where_to_find_the_link(self, entries: list[dict[str, Any]]) -> None:
         answer = find(entries, "ссылк", "копировать")["answer"].lower()
         assert "отправит" in answer
         assert "вручную" in answer
         assert "@peipivosalesbot" in answer
         assert "lk.peipivo.top" in answer
-        assert "три точки" in answer
+
+    def test_faq_does_not_instruct_users_to_copy_via_three_dots(
+        self, entries: list[dict[str, Any]]
+    ) -> None:
+        assert all("три точки" not in e["answer"].lower() for e in entries)
 
     def test_the_prompt_no_longer_denies_that_menu_exists(self) -> None:
         assert "Только главный экран" not in SupportPrompt.SYSTEM
