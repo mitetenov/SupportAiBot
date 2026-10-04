@@ -102,6 +102,105 @@ async def test_build_topic_name_variants(mock_db):
     assert manager._build_topic_name(2, None) == "User 2"
     assert manager._build_topic_name(3, "   ") == "User 3"
     assert manager._build_topic_name(4, "") == "User 4"
+    assert manager._build_topic_name(-55, "Jane Doe") == "Jane Doe (ID: 55)"
+    assert manager._build_topic_name(-55, None) == "User 55"
+    assert (
+        manager._build_topic_name(-55, "Jane Doe", "jane@example.com")
+        == "Jane Doe (ID: jane@example.com)"
+    )
+    assert (
+        manager._build_topic_name(-55, "@jane", "jane@example.com")
+        == "@jane (ID: jane@example.com)"
+    )
+    assert manager._build_topic_name(55, "@jane", "jane@example.com") == "@jane (ID: 55)"
+    long_name = manager._build_topic_name(-55, "J" * 200, "jane@example.com")
+    assert len(long_name) == 128
+    assert long_name.endswith(" (ID: jane@example.com)")
+
+
+@pytest.mark.asyncio
+async def test_renames_an_existing_cabinet_topic_without_changing_its_mapping(mock_db):
+    mapping = TopicMapping(user_id=-55, topic_id=42, user_name="Кабинет #55", active_ticket_id=17)
+    mock_db.topic_mappings[-55] = mapping
+    bot = MagicMock()
+    bot.edit_forum_topic = AsyncMock(return_value=True)
+    bot.create_forum_topic = AsyncMock()
+    manager = TopicManager(mock_db, bot, support_group_chat_id=-100123)
+
+    assert await manager.resolve_topic_id(-55, "Jane Doe", display_id="jane@example.com") == 42
+    assert await manager.resolve_topic_id(-55, "Jane Doe", display_id="jane@example.com") == 42
+
+    bot.edit_forum_topic.assert_awaited_once_with(
+        chat_id=-100123, message_thread_id=42, name="Jane Doe (ID: jane@example.com)"
+    )
+    bot.create_forum_topic.assert_not_awaited()
+    assert mapping.user_name == "Jane Doe (ID: jane@example.com)"
+    assert mapping.user_id == -55
+    assert mapping.active_ticket_id == 17
+
+
+@pytest.mark.asyncio
+async def test_a_failed_rename_keeps_the_topic_and_retries_on_the_next_turn(mock_db):
+    mapping = TopicMapping(user_id=-55, topic_id=42, user_name="Кабинет #55")
+    mock_db.topic_mappings[-55] = mapping
+    bot = MagicMock()
+    bot.edit_forum_topic = AsyncMock(side_effect=[RuntimeError("Telegram unavailable"), True])
+    manager = TopicManager(mock_db, bot, support_group_chat_id=-100123)
+
+    assert await manager.resolve_topic_id(-55, "Jane Doe") == 42
+    assert mapping.user_name == "Кабинет #55"
+    assert await manager.resolve_topic_id(-55, "Jane Doe") == 42
+    assert mapping.user_name == "Jane Doe (ID: 55)"
+    assert bot.edit_forum_topic.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_ticket_profile_does_not_rename_an_existing_telegram_topic(mock_db):
+    mapping = TopicMapping(user_id=55, topic_id=42, user_name="@jane")
+    mock_db.topic_mappings[55] = mapping
+    bot = MagicMock()
+    bot.edit_forum_topic = AsyncMock()
+    manager = TopicManager(mock_db, bot, support_group_chat_id=-100123)
+
+    assert await manager.resolve_topic_id(55, "Jane Doe") == 42
+    bot.edit_forum_topic.assert_not_awaited()
+    assert mapping.user_name == "@jane"
+
+
+@pytest.mark.asyncio
+async def test_an_email_change_renames_the_same_topic_even_when_the_name_is_unchanged(mock_db):
+    mapping = TopicMapping(
+        user_id=-55, topic_id=42, user_name="Jane Doe (ID: old@example.com)", active_ticket_id=17
+    )
+    mock_db.topic_mappings[-55] = mapping
+    bot = MagicMock()
+    bot.edit_forum_topic = AsyncMock(return_value=True)
+    manager = TopicManager(mock_db, bot, support_group_chat_id=-100123)
+
+    assert await manager.resolve_topic_id(-55, "Jane Doe", display_id="new@example.com") == 42
+    bot.edit_forum_topic.assert_awaited_once_with(
+        chat_id=-100123, message_thread_id=42, name="Jane Doe (ID: new@example.com)"
+    )
+    assert mapping.user_id == -55
+    assert mapping.active_ticket_id == 17
+    assert mapping.user_name == "Jane Doe (ID: new@example.com)"
+
+
+@pytest.mark.asyncio
+async def test_creates_a_cabinet_topic_with_email_without_changing_the_storage_key(mock_db):
+    bot = MagicMock()
+    bot.create_forum_topic = AsyncMock(return_value=DummyForumTopic(42))
+    bot.edit_forum_topic = AsyncMock()
+    manager = TopicManager(mock_db, bot, support_group_chat_id=-100123)
+
+    assert await manager.resolve_topic_id(-55, "@jane", display_id="jane@example.com") == 42
+    assert await manager.resolve_topic_id(-55, "@jane", display_id="jane@example.com") == 42
+    bot.create_forum_topic.assert_awaited_once_with(
+        chat_id=-100123, name="@jane (ID: jane@example.com)"
+    )
+    bot.edit_forum_topic.assert_not_awaited()
+    assert mock_db.topic_mappings[-55].user_name == "@jane (ID: jane@example.com)"
+    assert 55 not in mock_db.topic_mappings
 
 
 @pytest.mark.asyncio

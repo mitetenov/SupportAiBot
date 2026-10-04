@@ -52,14 +52,15 @@ class _ReplyBackoff:
 class TicketUser:
     """A stand-in for an aiogram user, for the code that forwards to a topic.
 
-    SupportGroupForwarder only ever reads `id`, `username`, `first_name` and
-    `last_name` off the sender, and a ticket has no aiogram update behind it.
+    Carries the conversation key and profile for topic titles and message headers;
+    a ticket has no aiogram update behind it.
     """
 
     id: int
     username: str | None = None
     first_name: str | None = None
     last_name: str | None = None
+    email: str | None = None
 
 
 class TicketAnswerer:
@@ -198,8 +199,8 @@ class TicketAnswerer:
             # fails again, and one alert per half hour is the point.
             return
 
-        user_key = await self.user_key(ticket)
-        if user_key is None:
+        user = await self.resolve_user(ticket)
+        if user is None:
             # The panel would not say who this is. Guessing means filing the
             # turn under a synthetic cabinet key, and that key outlives the
             # blip: a forum topic, a chat history and every future Remnawave
@@ -213,7 +214,8 @@ class TicketAnswerer:
             )
             return
 
-        media_map = await self.mirror_pending_media(ticket, user_key, progress)
+        user_key = user.id
+        media_map = await self.mirror_pending_media(ticket, user, progress)
 
         if last is None:
             self._reply_backoff.pop(ticket_id, None)
@@ -233,7 +235,7 @@ class TicketAnswerer:
                 self._suppressed[ticket.id] = last.id
                 await self.mirror(
                     ticket,
-                    user_key,
+                    user,
                     get_message("bedolaga.suppressed", ticket.id, ticket.title, question),
                     escalate=True,
                     source_message=last,
@@ -250,7 +252,7 @@ class TicketAnswerer:
         await self.answer_now(
             ticket,
             last,
-            user_key,
+            user,
             question,
             media=media_map.get(last.id),
             media_was_resolved=media_was_resolved,
@@ -260,7 +262,7 @@ class TicketAnswerer:
         self,
         ticket: Ticket,
         last: TicketMessage,
-        user_key: int,
+        user: TicketUser,
         question: str,
         media: TicketMedia | None = None,
         media_was_resolved: bool = False,
@@ -270,6 +272,7 @@ class TicketAnswerer:
         Re-reads the ticket immediately before posting reply to prevent stale
         writes when user sends a new message or operator intervenes during LLM generation.
         """
+        user_key = user.id
         if not media_was_resolved and last.has_media:
             media = await self.media_for(ticket, last)
         attachment = await self.image_attachment_for(media)
@@ -281,7 +284,7 @@ class TicketAnswerer:
             # it to the user as support's answer. The fixed hand-over line is
             # recorded against this empty turn; a later message has a larger
             # id and is still the bot's to take.
-            await self.hand_over(ticket, last, user_key)
+            await self.hand_over(ticket, last, user)
             return
 
         reply = await self.ask_model(question, user_key, attachment)
@@ -369,7 +372,7 @@ class TicketAnswerer:
 
         await self.mirror(
             ticket,
-            user_key,
+            user,
             get_message("bedolaga.mirror", ticket.id, ticket.title, question, truncated_answer),
             escalate=escalate,
             source_message=last,
@@ -523,7 +526,7 @@ class TicketAnswerer:
     async def mirror_pending_media(
         self,
         ticket: Ticket,
-        user_key: int,
+        user: TicketUser,
         progress: TicketProgress,
     ) -> dict[int, TicketMedia | None]:
         """Ensure all un-mirrored user attachments in this ticket reach the operator topic."""
@@ -547,8 +550,8 @@ class TicketAnswerer:
                 media_by_msg[msg.id] = media
                 media_fetch_failed = media is None
                 topic_id = await self.forwarder.forward_ticket_media(
-                    user_chat_id=user_key,
-                    user=self.stand_in(ticket, user_key),
+                    user_chat_id=user.id,
+                    user=user,
                     ticket_id=ticket.id,
                     ticket_media=media,
                     media_fetch_failed=media_fetch_failed,
@@ -572,7 +575,7 @@ class TicketAnswerer:
         self,
         ticket: Ticket,
         last: TicketMessage,
-        user_key: int,
+        user: TicketUser,
     ) -> None:
         """Answer a ticket with nothing in it by asking for words, and call a human.
 
@@ -587,7 +590,7 @@ class TicketAnswerer:
         if posted_reply is None:
             # Cheaper to fail than the path above — no model call — but it
             # loops the same way, so it waits out the same backoff.
-            await self.reply_failed(ticket.id, user_key)
+            await self.reply_failed(ticket.id, user.id)
             return
 
         self._reply_backoff.pop(ticket.id, None)
@@ -601,7 +604,7 @@ class TicketAnswerer:
 
         await self.mirror(
             ticket,
-            user_key,
+            user,
             get_message("bedolaga.nothing.mirror", ticket.id, ticket.title),
             escalate=True,
             source_message=last,
@@ -610,7 +613,7 @@ class TicketAnswerer:
     async def mirror(
         self,
         ticket: Ticket,
-        user_key: int,
+        user: TicketUser,
         text: str,
         escalate: bool,
         source_message: TicketMessage | None = None,
@@ -623,9 +626,9 @@ class TicketAnswerer:
         """
         try:
             await self.forwarder.forward_to_support(
-                user_chat_id=user_key,
+                user_chat_id=user.id,
                 user_message_ids=None,
-                user=self.stand_in(ticket, user_key),
+                user=user,
                 bot_response=text,
                 needs_escalation=escalate,
                 ticket_id=ticket.id,
@@ -642,20 +645,8 @@ class TicketAnswerer:
                     exc_info=True,
                 )
 
-    @staticmethod
-    def stand_in(ticket: Ticket, user_key: int) -> TicketUser:
-        """The sender the forwarder needs to find or name a topic.
-
-        A Telegram user already has a topic under their own id. A cabinet-only
-        account does not, so its topic is named after the panel account rather
-        than the synthetic negative id nobody would recognise.
-        """
-        if user_key > 0:
-            return TicketUser(id=user_key)
-        return TicketUser(id=user_key, first_name=f"Кабинет #{ticket.user_id}")
-
-    async def user_key(self, ticket: Ticket) -> int | None:
-        """The id this ticket's conversation is kept under, or None to try later.
+    async def resolve_user(self, ticket: Ticket) -> TicketUser | None:
+        """Resolve the conversation key and the author's profile in one request.
 
         A Telegram id is what the rest of the bot keys on — chat history, FAQ
         follow-ups and every Remnawave lookup. A cabinet account registered by
@@ -672,4 +663,10 @@ class TicketAnswerer:
         lookup = await self.client.resolve_telegram_id(ticket.user_id)
         if not lookup.known:
             return None
-        return lookup.telegram_id or -ticket.user_id
+        return TicketUser(
+            id=lookup.telegram_id or -ticket.user_id,
+            username=lookup.username,
+            first_name=lookup.first_name,
+            last_name=lookup.last_name,
+            email=lookup.email,
+        )

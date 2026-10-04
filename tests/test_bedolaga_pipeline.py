@@ -291,12 +291,36 @@ class TestMirroring:
         assert "Проверьте подписку" in kwargs["bot_response"]
         assert str(TICKET_ID) in kwargs["bot_response"]
 
-    async def test_names_a_cabinet_only_user_in_the_topic_title(self) -> None:
-        answerer, parts = _answerer(telegram_id=None)
+    async def test_passes_the_cabinet_authors_profile_to_the_forwarder(self) -> None:
+        answerer, parts = _answerer(
+            lookup=TelegramIdLookup(
+                known=True, first_name="Jane", last_name="Doe", email="jane@example.com"
+            )
+        )
         await answerer.handle(TICKET_ID)
         user = parts["forwarder"].forward_to_support.await_args.kwargs["user"]
         assert user.id == -PANEL_USER_ID
-        assert str(PANEL_USER_ID) in (user.first_name or "")
+        assert user.first_name == "Jane"
+        assert user.last_name == "Doe"
+        assert user.email == "jane@example.com"
+        parts["client"].resolve_telegram_id.assert_awaited_once_with(PANEL_USER_ID)
+
+    async def test_uses_the_same_profile_for_media_and_answer_headers(self) -> None:
+        answerer, parts = _answerer(
+            ticket=_ticket(
+                TicketMessage(id=100, text="Помогите", is_from_admin=False, has_media=True)
+            ),
+            lookup=TelegramIdLookup(
+                known=True, username="jane", first_name="Jane", email="jane@example.com"
+            ),
+        )
+        await answerer.handle(TICKET_ID)
+        media_user = parts["forwarder"].forward_ticket_media.await_args.kwargs["user"]
+        answer_user = parts["forwarder"].forward_to_support.await_args.kwargs["user"]
+        assert media_user == answer_user
+        assert answer_user.username == "jane"
+        assert answer_user.id == -PANEL_USER_ID
+        assert answer_user.email == "jane@example.com"
 
     async def test_a_failing_mirror_does_not_lose_the_answer(self) -> None:
         answerer, parts = _answerer()
