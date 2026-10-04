@@ -43,6 +43,10 @@ class TelegramIdLookup:
 
     known: bool
     telegram_id: int | None = None
+    username: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
 
 
 #: The panel could not be asked, or did not answer — ask again later.

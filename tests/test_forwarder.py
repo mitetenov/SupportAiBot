@@ -18,11 +18,13 @@ class DummyUser:
         username: str | None = None,
         first_name: str | None = None,
         last_name: str | None = None,
+        email: str | None = None,
     ):
         self.id = user_id
         self.username = username
         self.first_name = first_name
         self.last_name = last_name
+        self.email = email
 
 
 class DummyCopyMessageResult:
@@ -191,6 +193,41 @@ async def test_resolve_user_name_variants(mock_db):
     )
     assert forwarder.resolve_user_name(DummyUser(3, first_name="John")) == "John"
     assert forwarder.resolve_user_name(DummyUser(4)) == "User 4"
+    assert forwarder.resolve_user_name(DummyUser(-55)) == "User 55"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user_id", "username", "expected_name", "expected_options"),
+    [
+        (-55, None, "Jane Doe", {"display_id": "jane@example.com"}),
+        (-55, "jane", "@jane", {"display_id": "jane@example.com"}),
+        (42, "jane", "@jane", {}),
+    ],
+)
+async def test_email_is_used_for_cabinet_topic_titles_but_not_message_headers(
+    mock_db, user_id, username, expected_name, expected_options
+):
+    topic_manager = MagicMock()
+    topic_manager.resolve_topic_id = AsyncMock(return_value=42)
+    sender = MagicMock()
+    sender.send_to_topic = AsyncMock()
+    forwarder = SupportGroupForwarder(sender, topic_manager, mock_db, -100123)
+    user = DummyUser(
+        user_id, username=username, first_name="Jane", last_name="Doe", email="jane@example.com"
+    )
+
+    await forwarder.forward_to_support(user_id, None, user, "Ответ", False, ticket_id=17)
+    topic_manager.resolve_topic_id.assert_awaited_once_with(
+        user_id, expected_name, **expected_options
+    )
+    header = sender.send_to_topic.await_args.args[2].split("\n\n", 1)[0]
+    assert header == f"Ответ бота для {expected_name}:"
+    assert "jane@example.com" not in header
+
+    await forwarder.forward_ticket_media(user_id, user, 17)
+    assert topic_manager.resolve_topic_id.await_args.args == (user_id, expected_name)
+    assert topic_manager.resolve_topic_id.await_args.kwargs == expected_options
 
 
 @pytest.mark.asyncio

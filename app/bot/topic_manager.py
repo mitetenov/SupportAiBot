@@ -27,24 +27,45 @@ class TopicManager:
         self.support_group_chat_id = support_group_chat_id
         self._user_locks = KeyedLock()
 
-    async def resolve_topic_id(self, user_id: int, user_name: str | None) -> int | None:
+    async def resolve_topic_id(
+        self, user_id: int, user_name: str | None, *, display_id: str | None = None
+    ) -> int | None:
         """Find existing forum topic ID for user or create a new one."""
         async with self._user_locks.hold(user_id):
+            topic_name = self._build_topic_name(user_id, user_name, display_id)
             async with self.db_manager.session() as session:
                 result = await session.execute(
                     select(TopicMapping).where(TopicMapping.user_id == user_id)
                 )
                 mapping = result.scalar_one_or_none()
                 if mapping is not None:
+                    # Store the cabinet's full label so an email change also
+                    # refreshes the topic, including after a bot restart.
+                    if user_id < 0 and topic_name != mapping.user_name:
+                        try:
+                            await self.bot.edit_forum_topic(
+                                chat_id=self.support_group_chat_id,
+                                message_thread_id=mapping.topic_id,
+                                name=topic_name,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Updating cabinet topic title failed (error_class=%s)",
+                                type(e).__name__,
+                            )
+                        else:
+                            mapping.user_name = topic_name
                     return mapping.topic_id
 
-            return await self._create_topic(user_id, user_name)
+            return await self._create_topic(user_id, user_name, display_id)
 
     async def recreate_stale_topic(
         self,
         user_id: int,
         user_name: str | None,
         stale_topic_id: int | None,
+        *,
+        display_id: str | None = None,
     ) -> int | None:
         """Delete stale topic mapping if it matches stale_topic_id and create a new topic."""
         async with self._user_locks.hold(user_id):
@@ -61,11 +82,13 @@ class TopicManager:
                         TRACE, "Deleted stale topic mapping %s for user %d", stale_topic_id, user_id
                     )
 
-            return await self._create_topic(user_id, user_name)
+            return await self._create_topic(user_id, user_name, display_id)
 
-    async def _create_topic(self, user_id: int, user_name: str | None) -> int | None:
+    async def _create_topic(
+        self, user_id: int, user_name: str | None, display_id: str | None = None
+    ) -> int | None:
         """Invoke Telegram API to create a new forum topic and record mapping in DB."""
-        topic_name = self._build_topic_name(user_id, user_name)
+        topic_name = self._build_topic_name(user_id, user_name, display_id)
         logger.log(TRACE, "Creating forum topic for user %d: %s", user_id, topic_name)
 
         try:
@@ -82,7 +105,7 @@ class TopicManager:
                     mapping = TopicMapping(
                         user_id=user_id,
                         topic_id=topic_id,
-                        user_name=user_name,
+                        user_name=topic_name if user_id < 0 else user_name,
                     )
                     session.add(mapping)
                 logger.log(TRACE, "Created topic %d for user %d", topic_id, user_id)
@@ -95,8 +118,18 @@ class TopicManager:
             logger.log(TRACE, "Creating forum topic for user %d failed: %s", user_id, e)
             return None
 
-    def _build_topic_name(self, user_id: int, user_name: str | None) -> str:
+    def _build_topic_name(
+        self, user_id: int, user_name: str | None, display_id: str | None = None
+    ) -> str:
         """Format topic title with username/name or fallback to User ID."""
+        identifier = (display_id or "").strip() if user_id < 0 else ""
+        identifier = identifier or str(abs(user_id))
+        # Telegram forum topic names are limited to 128 characters. Preserve
+        # the identifier when shortening a long display name.
+        if len(identifier) > 118:
+            identifier = identifier[:117] + "…"
         if user_name is not None and str(user_name).strip():
-            return f"{str(user_name).strip()} (ID: {user_id})"
-        return f"User {user_id}"
+            suffix = f" (ID: {identifier})"
+            name = str(user_name).strip()[: 128 - len(suffix)]
+            return f"{name}{suffix}"
+        return f"User {identifier}"[:128]

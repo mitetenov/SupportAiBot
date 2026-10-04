@@ -98,7 +98,7 @@ class BedolagaClient:
         self.http_client = http_client
         # A panel user id never changes its Telegram id, and a busy ticket asks
         # for the same one on every turn.
-        self._telegram_ids: dict[int, int] = {}
+        self._telegram_ids: dict[int, TelegramIdLookup] = {}
 
     @property
     def headers(self) -> dict[str, str]:
@@ -536,9 +536,9 @@ class BedolagaClient:
                     TRACE,
                     "Bedolaga API resolve_telegram_id: cache hit for user_id=%d -> telegram_id=%d",
                     user_id,
-                    cached,
+                    cached.telegram_id,
                 )
-            return TelegramIdLookup(known=True, telegram_id=cached)
+            return cached
 
         url = f"{self.base_url}/users/{user_id}"
         headers = self.headers
@@ -588,13 +588,24 @@ class BedolagaClient:
             )
             return TELEGRAM_ID_UNKNOWN
 
-        telegram_id = (response.json() or {}).get("telegram_id")
-        if telegram_id is None:
-            return TelegramIdLookup(known=True, telegram_id=None)
+        profile = response.json() or {}
+        telegram_id = profile.get("telegram_id")
 
-        resolved = int(telegram_id)
-        self._telegram_ids[user_id] = resolved
-        return TelegramIdLookup(known=True, telegram_id=resolved)
+        def name_field(key: str) -> str | None:
+            value = profile.get(key)
+            return value.strip() or None if isinstance(value, str) else None
+
+        resolved = TelegramIdLookup(
+            known=True,
+            telegram_id=int(telegram_id) if telegram_id is not None else None,
+            username=name_field("username"),
+            first_name=name_field("first_name"),
+            last_name=name_field("last_name"),
+            email=name_field("email"),
+        )
+        if resolved.telegram_id:
+            self._telegram_ids[user_id] = resolved
+        return resolved
 
     def resolve_media_url(self, media_url: str) -> str | None:
         """Turn the panel's `media_url` into an absolute URL we may send the key to.

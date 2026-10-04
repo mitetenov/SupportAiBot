@@ -55,7 +55,8 @@ class SupportGroupForwarder:
         """
         user_id = getattr(user, "id", user_chat_id)
         user_name = self.resolve_user_name(user)
-        topic_id = await self.topic_manager.resolve_topic_id(user_id, user_name)
+        topic_options = self._topic_options(user_id, user)
+        topic_id = await self.topic_manager.resolve_topic_id(user_id, user_name, **topic_options)
 
         if topic_id is None:
             log_failure(logger, "Support forwarding failed: no topic", details={"user_id": user_id})
@@ -76,7 +77,9 @@ class SupportGroupForwarder:
         ok = await self._forward_user_message(user_chat_id, user_message_ids[0], topic_id)
         if not ok:
             logger.info("Support forwarding failed; recreating topic")
-            topic_id = await self.topic_manager.recreate_stale_topic(user_id, user_name, topic_id)
+            topic_id = await self.topic_manager.recreate_stale_topic(
+                user_id, user_name, topic_id, **topic_options
+            )
             if topic_id is None:
                 log_failure(logger, "Support topic recreation failed", details={"user_id": user_id})
                 return None
@@ -111,7 +114,9 @@ class SupportGroupForwarder:
         """
         user_id = getattr(user, "id", user_chat_id)
         user_name = self.resolve_user_name(user)
-        topic_id = await self.topic_manager.resolve_topic_id(user_id, user_name)
+        topic_id = await self.topic_manager.resolve_topic_id(
+            user_id, user_name, **self._topic_options(user_id, user)
+        )
 
         if topic_id is None:
             log_failure(
@@ -267,7 +272,9 @@ class SupportGroupForwarder:
             return
 
         user_name = self.resolve_user_name(user)
-        topic_id = await self.topic_manager.resolve_topic_id(int(user_id), user_name)
+        topic_id = await self.topic_manager.resolve_topic_id(
+            int(user_id), user_name, **self._topic_options(int(user_id), user)
+        )
         if topic_id is None:
             log_failure(logger, "Error forwarding failed: no topic", details={"user_id": user_id})
             return
@@ -296,6 +303,13 @@ class SupportGroupForwarder:
         msg2 = f"{admin_tag}{get_message('admin.error.details')}\n\n{trunc_err}"
         await self.sender.send_to_topic(self.support_group_chat_id, topic_id, msg2)
 
+    @staticmethod
+    def _topic_options(user_id: int, user: Any) -> dict[str, str]:
+        email = getattr(user, "email", None)
+        if user_id < 0 and isinstance(email, str) and email.strip():
+            return {"display_id": email.strip()}
+        return {}
+
     def resolve_user_name(self, user: Any) -> str:
         """Format user display handle: @username, First Last, First, or User <id>."""
         if user is None:
@@ -312,4 +326,6 @@ class SupportGroupForwarder:
             return name
 
         user_id = getattr(user, "id", "Unknown")
+        if isinstance(user_id, int):
+            user_id = abs(user_id)
         return f"User {user_id}"

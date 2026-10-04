@@ -335,6 +335,45 @@ class TestResolveTelegramId:
         assert lookup.known is True
         assert lookup.telegram_id is None
 
+    async def test_preserves_the_authors_profile_in_cached_lookups(self) -> None:
+        client, http_client = _client(
+            get=AsyncMock(
+                return_value=_response(
+                    200,
+                    {
+                        "telegram_id": 42,
+                        "username": " jane ",
+                        "first_name": " Jane ",
+                        "last_name": " Doe ",
+                        "email": " jane@example.com ",
+                    },
+                )
+            )
+        )
+        expected = TelegramIdLookup(
+            known=True,
+            telegram_id=42,
+            username="jane",
+            first_name="Jane",
+            last_name="Doe",
+            email="jane@example.com",
+        )
+        assert await client.resolve_telegram_id(55) == expected
+        assert await client.resolve_telegram_id(55) == expected
+        assert http_client.get.await_count == 1
+
+    async def test_refreshes_the_profile_of_a_cabinet_only_user(self) -> None:
+        client, _ = _client(
+            get=AsyncMock(
+                side_effect=[
+                    _response(200, {"telegram_id": None, "first_name": "Jane"}),
+                    _response(200, {"telegram_id": None, "first_name": "Janet"}),
+                ]
+            )
+        )
+        assert (await client.resolve_telegram_id(55)).first_name == "Jane"
+        assert (await client.resolve_telegram_id(55)).first_name == "Janet"
+
     async def test_an_error_status_is_not_the_same_as_no_telegram_id(self) -> None:
         """A one-second 502 must not read as "this account has no Telegram".
 

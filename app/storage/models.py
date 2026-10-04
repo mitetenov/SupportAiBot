@@ -36,6 +36,8 @@ class TopicMapping(Base):
 
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     topic_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Sender name for Telegram users; complete displayed topic title for
+    #: cabinet users, allowing name/email refresh without changing the key.
     user_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     #: The Bedolaga ticket currently mirrored into this topic. A direct
     #: Telegram turn clears it, so an operator reply cannot accidentally land
