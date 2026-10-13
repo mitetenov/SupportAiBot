@@ -3,7 +3,7 @@
 import base64
 import io
 import logging
-from collections.abc import Sequence
+from collections.abc import Buffer, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +14,31 @@ from app.logging_config import TRACE, log_failure
 logger = logging.getLogger(__name__)
 
 DEFAULT_MIME_TYPE = "image/jpeg"
+MAX_PDF_BYTES = 20_000_000
+
+
+@dataclass(frozen=True)
+class PdfDownloadResult:
+    """Validated PDF bytes, encoded for a native file input."""
+
+    base64_pdf: str | None = None
+    error_message_key: str | None = None
+
+    def is_success(self) -> bool:
+        return self.base64_pdf is not None
+
+
+class _PdfSizeExceeded(ValueError):
+    pass
+
+
+class _PdfBuffer(io.BytesIO):
+    """Enforce the limit while downloading, including missing/forged sizes."""
+
+    def write(self, data: Buffer, /) -> int:
+        if self.tell() + memoryview(data).nbytes > MAX_PDF_BYTES:
+            raise _PdfSizeExceeded
+        return super().write(data)
 
 
 @dataclass(frozen=True)
@@ -61,6 +86,39 @@ class PhotoDownloader:
         if lower.endswith(".gif"):
             return "image/gif"
         return DEFAULT_MIME_TYPE
+
+    async def download_pdf(self, document: Any) -> PdfDownloadResult:
+        """Download a Telegram PDF without exposing its credential-bearing URL."""
+        filename = getattr(document, "file_name", None) or ""
+        if getattr(
+            document, "mime_type", None
+        ) != "application/pdf" and not filename.lower().endswith(".pdf"):
+            return PdfDownloadResult(error_message_key="bot.pdf.invalid")
+        file_id = getattr(document, "file_id", None)
+        if not file_id:
+            return PdfDownloadResult(error_message_key="bot.pdf.error")
+        if (getattr(document, "file_size", None) or 0) > MAX_PDF_BYTES:
+            return PdfDownloadResult(error_message_key="bot.pdf.too_large")
+        try:
+            file_info = await self.bot.get_file(file_id)
+            file_path = getattr(file_info, "file_path", None)
+            if not file_path:
+                return PdfDownloadResult(error_message_key="bot.pdf.error")
+            if (getattr(file_info, "file_size", None) or 0) > MAX_PDF_BYTES:
+                return PdfDownloadResult(error_message_key="bot.pdf.too_large")
+            with _PdfBuffer() as buffer:
+                await self.bot.download_file(file_path, destination=buffer)
+                content = buffer.getvalue()
+            if not content:
+                return PdfDownloadResult(error_message_key="bot.pdf.error")
+            if not content.startswith(b"%PDF-"):
+                return PdfDownloadResult(error_message_key="bot.pdf.invalid")
+            return PdfDownloadResult(base64_pdf=base64.b64encode(content).decode("ascii"))
+        except _PdfSizeExceeded:
+            return PdfDownloadResult(error_message_key="bot.pdf.too_large")
+        except Exception as e:
+            log_failure(logger, "Telegram PDF download failed", e)
+            return PdfDownloadResult(error_message_key="bot.pdf.error")
 
     async def download(self, photos: Sequence[Any] | None) -> PhotoDownloadResult:
         """Download the highest-resolution photo from the provided photo sizes."""

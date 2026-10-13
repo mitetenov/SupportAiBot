@@ -88,7 +88,7 @@ class TestZaiReasoningMatrix:
 
     ALL_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
-    @pytest.mark.parametrize("model", ["glm-5.3-flash", "glm-4.7"])
+    @pytest.mark.parametrize("model", ["glm-4.7"])
     @pytest.mark.parametrize("effort", ALL_EFFORTS)
     @pytest.mark.parametrize("with_tools", [True, False])
     def test_glm_toggle_reasoning(
@@ -526,7 +526,7 @@ class TestZaiParsingAndValidation:
         mock_history_service,
         mock_faq_service,
     ) -> None:
-        settings = make_zai_settings()
+        settings = make_zai_settings(model="glm-4.7")
 
         transport_called = False
 

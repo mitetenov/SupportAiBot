@@ -34,6 +34,47 @@ def make_msg(message_id: int, user_id: int = 100) -> DummyMessage:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "first_kind,second_kind",
+    [
+        ("pdf", "photo"),
+        ("photo", "pdf"),
+        ("pdf", "pdf"),
+        ("photo", "photo"),
+    ],
+)
+async def test_consecutive_attachments_are_not_silently_dropped(first_kind, second_kind):
+    buffer = UserMessageBuffer(window_ms=2500)
+    delivered = []
+    for number, kind in enumerate((first_kind, second_kind), 1):
+        attachment = (
+            {"base64_pdf": f"PDF{number}"} if kind == "pdf" else {"base64_image": f"IMG{number}"}
+        )
+        buffer.submit(
+            100,
+            BufferedMessage(
+                message=make_msg(number),
+                text=f"caption{number}",
+                user_text=f"caption{number}",
+                **attachment,
+            ),
+            delivered.append,
+        )
+    buffer.submit(100, BufferedMessage.from_text(make_msg(3), "мой вопрос"), delivered.append)
+    await buffer.drain(delivered.append)
+    assert len(delivered) == 2
+    assert delivered[0].message_ids == [1]
+    assert delivered[1].message_ids == [2, 3]
+    assert delivered[0].text == "caption1"
+    assert delivered[1].text == "caption2\nмой вопрос"
+    for number, (batch, kind) in enumerate(
+        zip(delivered, (first_kind, second_kind), strict=True), 1
+    ):
+        assert batch.base64_pdf == (f"PDF{number}" if kind == "pdf" else None)
+        assert batch.base64_image == (f"IMG{number}" if kind == "photo" else None)
+
+
+@pytest.mark.asyncio
 async def test_should_merge_messages_sent_in_quick_succession():
     delivered: list[MessageBatch] = []
     buffer = UserMessageBuffer(window_ms=100, max_messages=5)
