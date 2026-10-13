@@ -134,6 +134,16 @@ class LlmClient(Protocol):
         """Return whether this provider supports visual image inputs."""
         ...
 
+    def supports_pdf(self) -> bool:
+        """Return whether this provider accepts PDF file inputs."""
+        ...
+
+    async def chat_with_pdf(
+        self, user_message: str, telegram_user_id: int, base64_pdf: str
+    ) -> LlmReply:
+        """Execute a conversational turn with a PDF and optional text."""
+        ...
+
 
 class AbstractLlmClient(ABC, LlmClient):
     """Template method coordinator for multi-turn conversations and tool calling."""
@@ -184,6 +194,24 @@ class AbstractLlmClient(ABC, LlmClient):
     def supports_images(self) -> bool:
         """Default image support is False unless overridden by provider."""
         return False
+
+    def supports_pdf(self) -> bool:
+        """PDF support must be explicitly implemented by the provider."""
+        return False
+
+    async def chat_with_pdf(
+        self, user_message: str, telegram_user_id: int, base64_pdf: str
+    ) -> LlmReply:
+        """Use the template's attachment slot with an explicit PDF MIME type."""
+        if not self.supports_pdf():
+            raise LlmProcessingException(
+                "PDF not supported",
+                f"{self.get_provider_name()} не поддерживает PDF. Опишите проблему текстом.",
+            )
+        history_message = user_message if user_message.strip() else "[PDF]"
+        return await self._respond(
+            user_message, telegram_user_id, base64_pdf, "application/pdf", history_message
+        )
 
     async def chat(self, user_message: str, telegram_user_id: int) -> LlmReply:
         """Execute text conversation."""

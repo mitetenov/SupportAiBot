@@ -388,7 +388,39 @@ def setup_router(
             message_buffer.submit(user_id, buffered, pipeline.handle)
             return
 
-        # Unsupported media (voice notes, videos, stickers, files, documents)
+        # PDF documents use native file inputs, independently of image support.
+        document = message.document
+        if document and (
+            document.mime_type == "application/pdf"
+            or (document.file_name or "").lower().endswith(".pdf")
+        ):
+            if not llm_client.supports_pdf():
+                await sender.send(chat_id, get_message("bot.pdf.notsupported"))
+                await forwarder.forward_to_support(
+                    chat_id,
+                    [message.message_id],
+                    user,
+                    get_message("support.media.received"),
+                    False,
+                )
+                return
+            pdf_result = await photo_downloader.download_pdf(document)
+            if not pdf_result.is_success():
+                await sender.send(
+                    chat_id, get_message(pdf_result.error_message_key or "bot.pdf.error")
+                )
+                return
+            caption = (message.caption or "").strip()
+            buffered = BufferedMessage(
+                message=message,
+                text=caption or get_message("bot.pdf.default.prompt"),
+                base64_pdf=pdf_result.base64_pdf,
+                user_text=caption or None,
+            )
+            message_buffer.submit(user_id, buffered, pipeline.handle)
+            return
+
+        # Unsupported media (voice notes, videos, stickers, other documents)
         await sender.send(chat_id, get_message("bot.media.unsupported"))
         await forwarder.forward_to_support(
             chat_id,

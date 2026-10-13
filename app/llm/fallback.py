@@ -83,6 +83,29 @@ class LlmFallbackClient:
             user_message, telegram_user_id, None, None, user_message, self._clients
         )
 
+    def supports_pdf(self) -> bool:
+        """Only PDF-capable clients may receive file data."""
+        return any(client.supports_pdf() for client in self._clients)
+
+    async def chat_with_pdf(
+        self, user_message: str, telegram_user_id: int, base64_pdf: str
+    ) -> LlmReply:
+        pdf_clients = tuple(client for client in self._clients if client.supports_pdf())
+        if not pdf_clients:
+            raise LlmProcessingException(
+                "No configured fallback provider supports PDF",
+                "Настроенные модели не поддерживают PDF. Опишите проблему текстом.",
+            )
+        history_message = user_message if user_message.strip() else "[PDF]"
+        return await self._respond(
+            user_message,
+            telegram_user_id,
+            base64_pdf,
+            "application/pdf",
+            history_message,
+            pdf_clients,
+        )
+
     async def chat_with_image(
         self,
         user_message: str,

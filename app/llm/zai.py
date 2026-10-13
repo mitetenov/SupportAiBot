@@ -66,18 +66,58 @@ class ZaiClient(ChatCompletionsClient):
     def get_provider_name(self) -> str:
         return "Z.AI"
 
+    def supports_images(self) -> bool:
+        return self.model.strip().lower() in {"glm-5.3-flash", "glm-5.3-flashx"}
+
+    def supports_pdf(self) -> bool:
+        return self.supports_images()
+
+    def build_initial_conversation(
+        self,
+        user_message: str,
+        telegram_user_id: int,
+        faq_context: str | None = None,
+        base64_image: str | None = None,
+        mime_type: str | None = None,
+        history: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
+        messages = super().build_initial_conversation(
+            user_message, telegram_user_id, faq_context, history=history
+        )
+        if base64_image is None:
+            return messages
+        if not self.supports_images():
+            raise LlmProcessingException(
+                "Attachments not supported", "Эта модель Z.AI не поддерживает вложения."
+            )
+        mime = mime_type or "image/jpeg"
+        data_uri = f"data:{mime};base64,{base64_image}"
+        parts: list[dict[str, Any]] = []
+        if user_message.strip():
+            parts.append({"type": "text", "text": user_message})
+        if mime == "application/pdf":
+            parts.append({"type": "file", "file": {"file_data": data_uri}})
+        elif mime in {"image/jpeg", "image/png", "image/webp", "image/gif"}:
+            parts.append({"type": "image_url", "image_url": {"url": data_uri}})
+        else:
+            raise LlmProcessingException(
+                "Unsupported attachment MIME type", "Этот формат вложения не поддерживается."
+            )
+        messages[-1]["content"] = parts
+        return messages
+
     def get_effective_reasoning_effort(self) -> str:
         """Return the effective reasoning effort mode for the configured model."""
         normalized_model = self.model.strip().lower()
         effort = self.settings.reasoning_effort
 
-        if normalized_model in ("glm-4.7", "glm-5.3-flash"):
+        if normalized_model == "glm-4.7":
             if effort == "none":
                 return "none"
             return "enabled"
 
-        if normalized_model == "glm-5.3":
-            if effort in ("minimal", "low"):
+        if normalized_model in ("glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"):
+            if effort in ("none", "minimal", "low"):
                 return "low"
             if effort in ("medium", "high"):
                 return "high"
@@ -93,15 +133,18 @@ class ZaiClient(ChatCompletionsClient):
         normalized_model = self.model.strip().lower()
         effort = self.settings.reasoning_effort
 
-        if normalized_model in ("glm-4.7", "glm-5.3-flash"):
+        if normalized_model == "glm-4.7":
             if effort == "none":
                 body["thinking"] = {"type": "disabled"}
             else:
                 body["thinking"] = {"type": "enabled"}
-        elif normalized_model == "glm-5.3":
+        elif normalized_model in ("glm-5.3", "glm-5.3-flash", "glm-5.3-flashx"):
             effective = self.get_effective_reasoning_effort()
             body["thinking"] = {"type": "enabled"}
             body["reasoning_effort"] = effective
+            if self.supports_images():
+                # Keep the model's reasoning across native MCP tool-call turns.
+                body["thinking"]["clear_thinking"] = False
         else:
             logger.info(
                 "Reasoning unsupported/ignored for provider=%s model=%s (configured effort=%s)",

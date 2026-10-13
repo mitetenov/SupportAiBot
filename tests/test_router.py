@@ -7,6 +7,7 @@ import pytest
 from aiogram import Dispatcher
 from aiogram.types import (
     Chat,
+    Document,
     Message,
     MessageReactionUpdated,
     PhotoSize,
@@ -17,7 +18,7 @@ from aiogram.types import (
 
 from app.bot.command_handler import SupportCommandHandler
 from app.bot.conversation_state import ConversationState
-from app.bot.photo_downloader import PhotoDownloadResult
+from app.bot.photo_downloader import PdfDownloadResult, PhotoDownloadResult
 from app.bot.router import setup_router
 from app.bot.sender import TelegramMessageSender
 from app.constants import get_message
@@ -109,6 +110,60 @@ class MockDatabaseSessionManager:
 @pytest.fixture
 def mock_db():
     return MockDatabaseSessionManager()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "supported,error",
+    [
+        (False, None),
+        (True, "bot.pdf.invalid"),
+        (True, "bot.pdf.too_large"),
+        (True, "bot.pdf.error"),
+    ],
+)
+async def test_pdf_rejection_is_user_visible_and_never_reaches_pipeline(mock_db, supported, error):
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    downloader = MagicMock()
+    downloader.download_pdf = AsyncMock(return_value=PdfDownloadResult(error_message_key=error))
+    llm = MagicMock(supports_pdf=MagicMock(return_value=supported))
+    forwarder = MagicMock(forward_to_support=AsyncMock())
+    buffer = MagicMock()
+    router = setup_router(
+        TelegramMessageSender(bot),
+        llm,
+        forwarder,
+        mock_db,
+        ChatHistoryService(),
+        MagicMock(),
+        MagicMock(),
+        downloader,
+        buffer,
+        MagicMock(),
+        ConversationState(),
+        MagicMock(),
+        -100123,
+    )
+    dp = Dispatcher()
+    dp.include_router(router)
+    message = Message(
+        message_id=100,
+        date=123456,
+        chat=Chat(id=100, type="private"),
+        from_user=User(id=100, is_bot=False, first_name="Test"),
+        document=Document(file_id="pdf", file_unique_id="pdf-u", file_name="receipt.pdf"),
+    )
+    await dp.feed_update(bot, Update(update_id=1, message=message))
+    assert bot.send_message.await_args.kwargs["text"] == get_message(
+        error or "bot.pdf.notsupported"
+    )
+    buffer.submit.assert_not_called()
+    if supported:
+        downloader.download_pdf.assert_awaited_once()
+    else:
+        downloader.download_pdf.assert_not_awaited()
+        forwarder.forward_to_support.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -387,7 +442,7 @@ async def test_router_unsupported_media_handling(mock_db):
     await dp.feed_update(bot, update)
 
     bot.send_message.assert_called_once()
-    assert "Пока я работаю только с текстом" in bot.send_message.call_args[1]["text"]
+    assert bot.send_message.call_args[1]["text"] == get_message("bot.media.unsupported")
     forwarder.forward_to_support.assert_called_once()
 
 

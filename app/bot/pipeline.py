@@ -105,7 +105,9 @@ class UserMessagePipeline:
         session = self.typing_indicator.start(chat_id)
 
         try:
-            if batch.base64_image is not None:
+            if batch.base64_pdf is not None:
+                reply = await self.llm_client.chat_with_pdf(text, user_id, batch.base64_pdf)
+            elif batch.base64_image is not None:
                 reply = await self.llm_client.chat_with_image(
                     text,
                     user_id,

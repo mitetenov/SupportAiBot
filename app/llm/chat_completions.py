@@ -12,7 +12,6 @@ from app.constants import SupportPrompt
 from app.llm.base import (
     AbstractLlmClient,
     LlmProcessingException,
-    LlmReply,
     LlmResponse,
     TokenUsage,
     ToolCall,
@@ -81,18 +80,6 @@ class ChatCompletionsClient(AbstractLlmClient):
 
     def supports_images(self) -> bool:
         return False
-
-    async def chat_with_image(
-        self,
-        user_message: str,
-        telegram_user_id: int,
-        base64_image: str,
-        mime_type: str | None = None,
-    ) -> LlmReply:
-        raise LlmProcessingException(
-            "Image not supported",
-            f"{self.get_provider_name()} не поддерживает обработку изображений. Опишите проблему текстом.",
-        )
 
     def _build_tool_definitions(self) -> list[dict[str, Any]]:
         tools = self.mcp_router.list_tools()
