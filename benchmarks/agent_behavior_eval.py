@@ -14,6 +14,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,7 @@ from app.llm import (
     create_llm_client,
     is_rejection,
 )
+from app.rag.catalog import FaqCatalog
 from app.rag.service import FaqEmbeddingService
 from app.rag.types import FaqContext, FaqResult
 
@@ -101,7 +103,7 @@ class BehaviorCase:
     must_contain_any: list[str] = field(default_factory=list)
     must_contain_all: list[str] = field(default_factory=list)
     must_not_contain: list[str] = field(default_factory=list)
-    expect_escalation: bool = False
+    expect_escalation: bool | None = False
     history: list[dict[str, Any]] = field(default_factory=list)
     tool_results: dict[str, dict[str, Any]] = field(default_factory=dict)
     faq_candidates: list[str] = field(default_factory=list)
@@ -259,6 +261,7 @@ class EvaluationFaqService(FaqEmbeddingService):
         super().__init__(db_manager=None, embedding_provider=None)  # type: ignore[arg-type]
         self._path = faq_path or FAQ_PATH
         self._entries: list[dict[str, Any]] = self._load_entries()
+        self.catalog = FaqCatalog(self._entries)
         self._current_candidates: list[str] = []
         self.ready = True
 
@@ -649,6 +652,24 @@ def build_synthetic_router(
                 remnawave_results[tool_name] = res
 
     shared_trace = trace if trace is not None else []
+    # Additional node tools are exposed only by node-diagnosis fixtures, so the
+    # original comparison suite retains the same tool schemas as its baseline.
+    if custom_results and "nodes_list" in custom_results:
+        remnawave_tools.append(
+            McpTool("nodes_list", "List all Remnawave nodes", {"type": "object", "properties": {}})
+        )
+    if custom_results and "nodes_get" in custom_results:
+        remnawave_tools.append(
+            McpTool(
+                "nodes_get",
+                "Get a specific node by UUID",
+                {
+                    "type": "object",
+                    "properties": {"uuid": {"type": "string"}},
+                    "required": ["uuid"],
+                },
+            )
+        )
     bedolaga = SyntheticMcpClient("bedolaga", bedolaga_tools, bedolaga_results, trace=shared_trace)
     remnawave = SyntheticMcpClient(
         "remnawave", remnawave_tools, remnawave_results, trace=shared_trace
@@ -658,9 +679,23 @@ def build_synthetic_router(
     return McpRouter(clients=router_clients, readonly=True), clients
 
 
+def resolve_fixture_dates(value: Any) -> Any:
+    """Keep synthetic paid periods current without changing their duration."""
+    if isinstance(value, dict):
+        return {key: resolve_fixture_dates(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [resolve_fixture_dates(item) for item in value]
+    if isinstance(value, str):
+        match = re.fullmatch(r"\{\{today([+-]\d+)\}\}(T.*)", value)
+        if match:
+            date = datetime.now(UTC).date() + timedelta(days=int(match[1]))
+            return f"{date.isoformat()}{match[2]}"
+    return value
+
+
 def load_cases(path: Path | None = None) -> list[BehaviorCase]:
     cases_file = path or CASES_PATH
-    payload = json.loads(cases_file.read_text(encoding="utf-8"))
+    payload = resolve_fixture_dates(json.loads(cases_file.read_text(encoding="utf-8")))
     cases: list[BehaviorCase] = []
     for item in payload["cases"]:
         data = dict(item)
@@ -680,7 +715,7 @@ def _find_affirmative_auto_renew_claims(lowered: str, claims: Sequence[str]) -> 
     negated_patterns = [
         r"\b(?:не\s+(?:означает|является|влечет|вед[её]т|гарантирует|включает|дает))\b[^.!?;\n]{0,80}\b(?:автоматическ\w*\s+продлен\w*|автопродлен\w*|автоматическ\w*\s+активац\w*|(?:подписк\w*\s+)?продлится\s+автоматически|автоматически\s+(?:подписк\w*\s+)?продлится|активируется\s+автоматически|автоматически\s+активируется)",
         r"\b(?:нет|без|отсутствует)\b[^.!?;\n]{0,40}\b(?:автоматическ\w*\s+продлен\w*|автопродлен\w*)",
-        r"\b(?:автоматическ\w*\s+продлен\w*|автопродлен\w*)\b[^.!?;\n]{0,40}\b(?:нет|не\s+(?:произойд[её]т|будет|включен\w*|сработает|предусмотрен\w*|работает)|отключен\w*)",
+        r"\b(?:автоматическ\w*\s+продлен\w*|автопродлен\w*)\b[^.!?;\n]{0,40}\b(?:нет|не\s+(?:произойд[её]т|будет|включен\w*|сработает|срабатывает|предусмотрен\w*|работает)|отключен\w*)",
         r"\bне\s+(?:автоматически\s+)?(?:продл\w+|активир\w+)(?:\s+автоматически)?\b",
         r"\bавтоматически\s+не\s+(?:продл\w+|активир\w+)\b",
     ]
@@ -695,6 +730,18 @@ def _find_affirmative_auto_renew_claims(lowered: str, claims: Sequence[str]) -> 
         if not sentence_claims:
             continue
         if any(re.search(pat, sentence) for pat in negated_patterns):
+            continue
+        # The owner confirmed optional renewal for active paid subscriptions.
+        # Explaining that restricted rule is not a promise that a top-up will
+        # reactivate the expired subscription in the purchase scenario.
+        if (
+            re.search(
+                r"только\s+(?:для\s+)?(?:действующ|активн)\w*\s+(?:оплачен|платн)\w*\s+подписк",
+                sentence,
+            )
+            and "баланс" in sentence
+            and re.search(r"не\s+(?:возобнов|продл)\w*[^.!?;]{0,40}ист[её]к", sentence)
+        ):
             continue
         affirmative_claims.extend(sentence_claims)
 
@@ -744,6 +791,26 @@ def _has_affirmative_purchase_step(lowered: str) -> bool:
     return False
 
 
+def _is_disclaimed(text: str, start: int) -> bool:
+    """Recognize a direct denial of a conclusion, not a distant negation."""
+    return bool(
+        re.search(
+            r"(?:не\s+(?:означает|значит|доказывает)|нельзя\s+утверждать|не\s+могу\s+утверждать)"
+            r"\s*,?\s*что\s*$",
+            text[max(0, start - 70) : start],
+        )
+    )
+
+
+def _absence_claims(text: str, patterns: Sequence[str]) -> list[str]:
+    return [
+        match.group(0)
+        for pattern in patterns
+        for match in re.finditer(pattern, text)
+        if not _is_disclaimed(text, match.start())
+    ]
+
+
 def score_case(
     case: BehaviorCase,
     response: str,
@@ -782,11 +849,18 @@ def score_case(
     missing_text = [text for text in case.must_contain_all if text not in response]
     if missing_text:
         violations.append(f"response lacks required exact text: {', '.join(missing_text)}")
-    present_forbidden = [text for text in case.must_not_contain if text.lower() in lowered]
+    present_forbidden = [
+        text
+        for text in case.must_not_contain
+        if any(
+            not (case.reject_absent_payment_on_error and _is_disclaimed(lowered, match.start()))
+            for match in re.finditer(re.escape(text.lower()), lowered)
+        )
+    ]
     if present_forbidden:
         violations.append(f"forbidden response text: {', '.join(present_forbidden)}")
     escalated = EscalationPolicy.model_requested_escalation(response)
-    if escalated != case.expect_escalation:
+    if case.expect_escalation is not None and escalated != case.expect_escalation:
         violations.append(f"escalation={escalated}, expected={case.expect_escalation}")
 
     for tool_name, arguments in calls:
@@ -827,6 +901,7 @@ def score_case(
         clarification_topics = [
             "где",
             "каком шаге",
+            "каком именно шаге",
             "каком этапе",
             "какая ошибка",
             "текст ошибки",
@@ -851,7 +926,7 @@ def score_case(
             r"\bв\s+боте\s+или\s+(?:в\s+)?(?:лк|личн\w*\s+кабинет\w*|сайт\w*|приложен\w*)[^.!?;\n]*\?",
             r"\bкак(?:ая|ую)\s+ошибк\w*[^.!?;\n]*\?",
             r"\bчто\s+пишет\s+банк[^.!?;\n]*\?",
-            r"\bошибк\w*[^.!?;\n]*\?",
+            r"\bошибк\w*\s+(?:как(?:ая|ую)|какого|с\s+каким)[^.!?;\n]*\?",
             # Question words inherently indicating inquiries about known facts
             r"\bкакой\s+(?:способ|метод)\b",
             r"\bкаким\s+способом\b",
@@ -860,7 +935,8 @@ def score_case(
             r"\bкак(?:ая|ую)\s+ошибк\w*",
             r"\bчто\s+пишет\s+банк\b",
             # Imperative clarification requests asking user about already provided facts
-            r"\b(?:уточните|подскажите|напишите|сообщите|укажите|пришлите|расскажите)\b[^.!?;\n]{0,60}\b(?:способ\w*|метод\w*|сбп|где\s+оплачива\w*|ошибк\w*|код\w*\s+ошибки|текст\w*\s+ошибки)",
+            r"\b(?:уточните|подскажите|напишите|сообщите|укажите|пришлите|расскажите)\b[^.!?;\n]{0,60}\b(?:способ\w*|метод\w*|сбп|где\s+оплачива\w*|код\w*\s+ошибки|текст\w*\s+ошибки)",
+            r"\b(?:уточните|опишите|пришлите|сообщите)\s*,?\s*(?:пожалуйста\s*,?\s*)?ошибк\w*",
             r"\bоплачива\w*\s+ли\s+(?:вы\s+)?через\s+сбп\b",
         ]
         for pattern in known_fact_question_patterns:
@@ -930,9 +1006,7 @@ def score_case(
             violations.append(
                 f"unsupported causal diagnosis provided for vague complaint: {', '.join(found_diagnoses)}"
             )
-        found_unconfirmed = [
-            m.group(0) for p in UNCONFIRMED_ABSENCE_PATTERNS if (m := re.search(p, lowered))
-        ]
+        found_unconfirmed = _absence_claims(lowered, UNCONFIRMED_ABSENCE_PATTERNS)
         if found_unconfirmed:
             violations.append(
                 f"unverified user, account, or payment absence claim provided for vague complaint: {', '.join(found_unconfirmed)}"
@@ -1036,10 +1110,8 @@ def score_case(
             "не удалось найти пользователя",
             "вы не зарегистрированы",
         ]
-        found_absent = [a for a in absent_payment_claims if a in lowered]
-        found_unconfirmed = [
-            m.group(0) for p in UNCONFIRMED_ABSENCE_PATTERNS if (m := re.search(p, lowered))
-        ]
+        found_absent = _absence_claims(lowered, [re.escape(a) for a in absent_payment_claims])
+        found_unconfirmed = _absence_claims(lowered, UNCONFIRMED_ABSENCE_PATTERNS)
         all_found_absent = list(dict.fromkeys(found_absent + found_unconfirmed))
         if all_found_absent:
             violations.append(

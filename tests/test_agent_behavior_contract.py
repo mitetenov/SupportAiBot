@@ -44,7 +44,8 @@ def _faq_entries() -> list[dict[str, Any]]:
 
 def test_prompt_is_compact_and_contains_the_current_bedolaga_contract() -> None:
     assert len(SupportPrompt.SYSTEM) < 10_000
-    assert all(tool in SupportPrompt.SYSTEM for tool in EXPECTED_BEDOLAGA_TOOLS)
+    assert "функции, параметры и назначения перечислены в их схемах" in SupportPrompt.SYSTEM
+    assert "bedolaga_billing_get" in SupportPrompt.SYSTEM
     for old_name in ("bedolaga_balance", "bedolaga_transactions", "bedolaga_subscription"):
         assert re.search(rf"(?<![a-z0-9_]){old_name}(?![a-z0-9_])", SupportPrompt.SYSTEM) is None
 
@@ -106,9 +107,10 @@ def test_subscription_link_request_returns_the_url_and_manual_locations() -> Non
     assert "users_get_subscription_url_by_telegram_id" in prompt
     assert "верни саму ссылку" in prompt
     assert "не возвращай ни одну ссылку" in prompt
-    assert "вручную" in prompt
+    assert "ручные пути" in prompt
     assert "@PeipivoSalesBot" in prompt
-    assert "три точки" in prompt
+    assert "три точки" not in prompt
+    assert "домен, путь, параметры и токен" in prompt
 
 
 def test_bedolaga_effective_status_is_not_treated_as_panel_state() -> None:
@@ -123,32 +125,32 @@ def test_prompt_and_faq_layer_do_not_require_mandatory_full_quote() -> None:
     assert "кратко излагать" in prompt
     assert "точные названия" in prompt
     assert "уточняющий вопрос" in prompt
-    assert "не выдумывай шаги" in prompt
+    assert "не выдумывай шаги" in prompt.lower()
 
 
 def test_prompt_payment_triage_distinguishes_three_categories() -> None:
     prompt = SupportPrompt.SYSTEM
-    assert "три категории обращений" in prompt
     assert "Общий вопрос об оплате" in prompt
-    assert "без вызова персональных инструментов" in prompt
-    assert "Неопределённая жалоба на оплату" in prompt
-    assert "не более одного-двух точечных" in prompt
-    assert "не заявлять об отсутствии аккаунта" in prompt
-    assert "Не направляй платёжные UI-жалобы на общую диагностику VPN" in prompt
-    assert "не переспрашивай эти факты повторно" in prompt
-    assert "Персональная проверка оплаты" in prompt
+    assert "без персональных инструментов" in prompt
+    assert "Неясная жалоба на кнопку/оплату без факта платежа" in prompt
+    assert "не более двух вопросов" in prompt
+    assert "Не перечисляй догадки о банке, VPN или отсутствии аккаунта" in prompt
+    assert "не переспрашивай их" in prompt
+    assert "Сообщение о списании, незачисленном балансе, купленной подписке" in prompt
     assert "bedolaga_billing_get" in prompt
 
 
 def test_prompt_billing_states_and_error_semantics() -> None:
     prompt = SupportPrompt.SYSTEM
-    assert "Завершённый deposit без завершённой покупки периода" in prompt
-    assert "требуй подтверждённого завершения пополнения" in prompt
-    assert "не является поводом для эскалации" in prompt
-    assert "проверки состояния панели Remnawave после billing" in prompt
+    assert "Завершённый deposit подтверждает пополнение, не покупку" in prompt
+    assert "подтверждённого поступления средств и отсутствия завершённой покупки" in prompt
+    assert "пополнение без покупки не повод для эскалации" in prompt
+    assert "первый и единственный начальный вызов — bedolaga_billing_get" in prompt
+    assert "после billing обязательно проверь фактическое состояние VPN" in prompt
     assert "расхождение источников эскалируй" in prompt
-    assert "Внешнее списание без записи Bedolaga эскалируй" in prompt
+    assert "Внешнее списание без найденной записи тоже эскалируй" in prompt
     assert "временную невозможность проверить соответствующие данные" in prompt
     assert "user_not_found" in prompt
     assert "не являются причиной неисправности кнопки" in prompt
-    assert "приоритет перед обычным уточнением" in prompt
+    assert "ИЛИ явная просьба проверить свой платёж" in prompt
+    assert "раньше billing или одновременно с ним" in prompt

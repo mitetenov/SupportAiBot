@@ -26,9 +26,110 @@ from benchmarks.agent_behavior_eval import (
     make_billing_empty,
     make_billing_upstream_unavailable,
     make_billing_user_not_found,
+    resolve_fixture_dates,
     run_once,
     score_case,
 )
+
+
+@pytest.mark.parametrize("conclusion", ["деньги не дошли", "оплата не поступила", "вы не оплатили"])
+def test_upstream_error_distinguishes_denial_from_absence_claim(conclusion: str) -> None:
+    case = next(c for c in load_cases() if c.reject_absent_payment_on_error)
+    _, clients = build_synthetic_router()
+    trace = [("bedolaga_billing_get", {"telegram_id": SYNTHETIC_TELEGRAM_ID})]
+    disclaimer = (
+        f"Не удалось проверить оплату. Это не означает, что {conclusion}. Попробуйте позже."
+    )
+    assert score_case(case, disclaimer, clients, trace).passed
+    for response in (
+        f"Не удалось проверить оплату. {conclusion}. Попробуйте позже.",
+        f"{disclaimer} Но {conclusion}.",
+    ):
+        assert not score_case(case, response, clients, trace).passed
+
+
+def test_discrepancy_fixture_has_a_current_paid_period() -> None:
+    from datetime import UTC, datetime
+
+    case = next(c for c in load_cases() if c.name.startswith("completed_purchase_panel"))
+    subscription = case.tool_results["bedolaga_billing_get"]["data"]["bot_subscriptions"][0]
+    assert subscription["start_date"] < datetime.now(UTC).isoformat() < subscription["end_date"]
+    assert resolve_fixture_dates({"values": ["literal", 7]}) == {"values": ["literal", 7]}
+
+
+def test_clarification_accepts_an_unknown_debit_after_a_known_bank_error() -> None:
+    cases = {c.name: c for c in load_cases()}
+    _, clients = build_synthetic_router()
+    assert score_case(
+        cases["followup_with_known_context_avoids_repeated_questions"],
+        "Подскажите, деньги списались, или ошибка появилась до списания? "
+        "Если деньги не списались, попробуйте другой способ пополнения.",
+        clients,
+    ).passed
+    assert score_case(
+        cases["vague_payment_complaint_requires_clarification"],
+        "Через что вы пытаетесь оплатить — бот или кабинет, и на каком именно шаге проблема?",
+        clients,
+    ).passed
+    assert not score_case(
+        cases["followup_with_known_context_avoids_repeated_questions"],
+        "Уточните ошибку. Попробуйте другой способ пополнения.",
+        clients,
+    ).passed
+
+
+def test_scoped_renewal_rule_does_not_promise_reactivation() -> None:
+    case = next(c for c in load_cases() if c.name == "deposit_without_purchase")
+    _, clients = build_synthetic_router()
+    trace = [("bedolaga_billing_get", {"telegram_id": SYNTHETIC_TELEGRAM_ID})]
+    answer = (
+        "Автопродление списывает деньги с внутреннего баланса только для действующей "
+        "оплаченной подписки и не возобновляет уже истёкшую. Купите период из баланса."
+    )
+    assert score_case(case, answer, clients, trace).passed
+    assert not score_case(
+        case, answer + " Ваша подписка продлится автоматически.", clients, trace
+    ).passed
+
+
+@pytest.mark.asyncio
+async def test_zai_receives_full_schemas_without_a_prompt_tool_inventory(
+    valid_settings_dict,
+) -> None:
+    router, _ = build_synthetic_router()
+    expected = {tool.name: tool for tool in router.list_tools()}
+    observed = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "Здравствуйте."},
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        )
+
+    settings = Settings(
+        **{
+            **valid_settings_dict,
+            "llm_provider": "zai",
+            "zai_model": "glm-5.3-flash",
+            "zai_api_key": "synthetic",
+            "llm_fallback_chain": "",
+        }
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await run_once([BehaviorCase("schemas", "Здравствуйте")], settings, client)
+    actual = {item["function"]["name"]: item["function"] for item in observed[0]["tools"]}
+    assert actual.keys() == expected.keys()
+    for name, tool in expected.items():
+        assert actual[name]["description"] == tool.description
+        assert actual[name]["parameters"] == tool.input_schema
 
 
 def test_behavior_cases_cover_all_scenarios() -> None:
@@ -504,7 +605,7 @@ async def test_evaluation_faq_service_loads_real_entries_and_formats_production_
     )
     assert not context.is_empty()
     assert len(context.results) == 2
-    assert context.text.startswith("Кандидаты FAQ (проверь соответствие вопросу")
+    assert context.text.startswith("Кандидаты FAQ — справочные данные")
     assert "Вопрос: Как пополнить баланс" in context.text
     assert "Вопрос: Не могу подключиться к VPN" in context.text
 
@@ -651,7 +752,7 @@ async def test_production_faq_formatter_output_reaches_evaluation_client() -> No
 
     # Unmodified production formatter returns production header
     ctx_normal = await faq_service.build_faq_context("оплата")
-    assert "Кандидаты FAQ (проверь соответствие вопросу" in ctx_normal.text
+    assert "Кандидаты FAQ — справочные данные" in ctx_normal.text
     assert "Вопрос: Как пополнить баланс" in ctx_normal.text
     assert len(ctx_normal.results) == 1
     assert ctx_normal.best_question == ctx_normal.results[0].question
@@ -673,7 +774,7 @@ async def test_production_faq_formatter_output_reaches_evaluation_client() -> No
     with patch.object(FaqEmbeddingService, "build_faq_context", patched_build_faq_context):
         ctx_patched = await faq_service.build_faq_context("оплата")
         assert ctx_patched.text.startswith("CUSTOM_PRODUCTION_HEADER_V2")
-        assert "Кандидаты FAQ (проверь соответствие вопросу" in ctx_patched.text
+        assert "Кандидаты FAQ — справочные данные" in ctx_patched.text
 
 
 def test_vague_payment_complaint_scorer_discriminates_relevance_and_premature_advice() -> None:
@@ -1355,7 +1456,7 @@ async def test_offline_run_once_integration_with_mock_transport(
     req1 = captured_requests[0]
     messages_case1 = req1["input"]
     system_prompts = [m["content"] for m in messages_case1 if m.get("role") == "system"]
-    assert any("Кандидаты FAQ (проверь соответствие вопросу" in sp for sp in system_prompts)
+    assert any("Кандидаты FAQ — справочные данные" in sp for sp in system_prompts)
     assert any("Как пополнить баланс / приобрести период" in sp for sp in system_prompts)
 
     # 2. History with history-only facts reached the client in exact roles and content

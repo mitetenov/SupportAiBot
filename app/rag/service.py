@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from sqlalchemy import text
 
 from app.logging_config import TRACE, log_failure
+from app.rag.catalog import FaqCatalog, format_faq_context
 from app.rag.embedding import EmbeddingProvider
 from app.rag.types import FaqContext, FaqEntry, FaqResult
 from app.storage.database import DatabaseSessionManager
@@ -153,6 +154,7 @@ class FaqEmbeddingService:
         db_manager: DatabaseSessionManager,
         embedding_provider: EmbeddingProvider,
     ) -> None:
+        self.catalog: FaqCatalog | None = None
         self.db_manager = db_manager
         self.embedding_provider = embedding_provider
         self.ready: bool = False
@@ -717,17 +719,13 @@ class FaqEmbeddingService:
         if exclude_questions:
             results = [r for r in results if r.question not in exclude_questions]
 
+        if self.catalog is not None:
+            results = self.catalog.supplement(user_query, results, exclude_questions)
+
         if not results:
             return FaqContext.EMPTY
 
-        sb = (
-            "Кандидаты FAQ (проверь соответствие вопросу, истории и фактам инструментов; "
-            "разрешено кратко изложить подходящую часть с сохранением точных названий, "
-            "ограничений, условий и порядка шагов; если кандидаты не подходят, уточни "
-            "проблему, не давай нерелевантных инструкций):\n"
-        )
-        for r in results:
-            sb += f"Вопрос: {r.question}\nИнструкция: {r.answer}\n\n"
+        sb = format_faq_context(results)
 
         max_similarity = max((r.similarity for r in results), default=0.0)
 

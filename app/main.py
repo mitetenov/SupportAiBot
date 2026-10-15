@@ -31,6 +31,7 @@ from app.llm.mcp_router import McpRouter
 from app.logging_config import log_failure, setup_logging
 from app.logging_http import create_logging_hooks
 from app.logging_redaction import register_settings_secrets
+from app.rag.catalog import FaqCatalog
 from app.rag.embedding import create_embedding_provider
 from app.rag.initializer import FaqInitializer
 from app.rag.knowledge_gaps import KnowledgeGapService
@@ -166,6 +167,7 @@ async def main() -> None:
             db_manager=db_manager,
             embedding_provider=embedding_provider,
         )
+        faq_service.catalog = FaqCatalog.load()
         knowledge_gap_service = KnowledgeGapService(
             db_manager=db_manager,
             faq_service=faq_service,

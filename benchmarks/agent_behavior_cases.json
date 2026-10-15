@@ -56,7 +56,7 @@
     },
     {
       "name": "deposit_without_purchase",
-      "user_message": "Я пополнил баланс, но подписка не продлилась. Что произошло?",
+      "user_message": "Моя подписка уже истекла, автопродление было отключено. Я пополнил баланс, но подписка не продлилась. Что произошло?",
       "expected_tools": ["bedolaga_billing_get"],
       "forbidden_tools": [
         "users_get_by_telegram_id",
@@ -111,7 +111,7 @@
         "users_get_subscription_url_by_telegram_id",
         "subscriptions_get_by_user_id"
       ],
-      "must_contain_any": ["где", "каком шаге", "каком этапе", "какая ошибка", "скриншот", "в боте или"],
+      "must_contain_any": ["где", "каком шаге", "каком этапе", "какая ошибка", "скриншот", "в боте или", "каком именно шаге"],
       "must_not_contain": [
         "аккаунт не найден",
         "нет аккаунта",
@@ -404,8 +404,8 @@
                 "payment_method": "balance",
                 "is_completed": true,
                 "description": "Покупка подписки 1 месяц",
-                "created_at": "2026-09-01T10:05:00Z",
-                "completed_at": "2026-09-01T10:05:00Z"
+                "created_at": "{{today-1}}T10:05:00Z",
+                "completed_at": "{{today-1}}T10:05:00Z"
               },
               {
                 "id": 101,
@@ -417,23 +417,23 @@
                 "payment_method": "card",
                 "is_completed": true,
                 "description": "Пополнение баланса",
-                "created_at": "2026-09-01T10:00:00Z",
-                "completed_at": "2026-09-01T10:01:00Z"
+                "created_at": "{{today-1}}T10:00:00Z",
+                "completed_at": "{{today-1}}T10:01:00Z"
               }
             ],
             "latest_completed_deposit": {
               "amount_kopeks": 50000,
               "amount_rubles": 500.0,
               "category": "deposit",
-              "created_at": "2026-09-01T10:00:00Z",
-              "completed_at": "2026-09-01T10:01:00Z"
+              "created_at": "{{today-1}}T10:00:00Z",
+              "completed_at": "{{today-1}}T10:01:00Z"
             },
             "latest_completed_subscription_purchase": {
               "amount_kopeks": 50000,
               "amount_rubles": 500.0,
               "category": "subscription_purchase",
-              "created_at": "2026-09-01T10:05:00Z",
-              "completed_at": "2026-09-01T10:05:00Z"
+              "created_at": "{{today-1}}T10:05:00Z",
+              "completed_at": "{{today-1}}T10:05:00Z"
             },
             "purchased_after_latest_deposit": true,
             "bot_subscriptions": [
@@ -444,9 +444,9 @@
                 "is_trial": false,
                 "tariff_id": 1,
                 "tariff_name": "1 месяц",
-                "created_at": "2026-09-01T10:05:00Z",
-                "start_date": "2026-09-01T10:05:00Z",
-                "end_date": "2026-10-01T10:05:00Z",
+                "created_at": "{{today-1}}T10:05:00Z",
+                "start_date": "{{today-1}}T10:05:00Z",
+                "end_date": "{{today+29}}T10:05:00Z",
                 "autopay_enabled": false,
                 "autopay_days_before": null,
                 "note": "This is the bot-side Bedolaga purchase record, not the VPN panel status. Verify the actual panel state via the separate Remnawave MCP."
