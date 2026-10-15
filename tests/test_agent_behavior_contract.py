@@ -107,7 +107,8 @@ def test_subscription_link_request_returns_the_url_and_manual_locations() -> Non
     assert "users_get_subscription_url_by_telegram_id" in prompt
     assert "верни саму ссылку" in prompt
     assert "не возвращай ни одну ссылку" in prompt
-    assert "ручные пути" in prompt
+    assert "Персональные URL в FAQ не хранятся; не бери их из FAQ или истории" in prompt
+    assert "Обязательно добавь, где найти ссылку в боте: @PeipivoSalesBot → «Подписка»" in prompt
     assert "@PeipivoSalesBot" in prompt
     assert "три точки" not in prompt
     assert "домен, путь, параметры и токен" in prompt

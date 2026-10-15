@@ -35,7 +35,7 @@
       "user_message": "Дайте мою ссылку на подписку.",
       "expected_tools": ["users_get_subscription_url_by_telegram_id"],
       "forbidden_tools": ["users_get_by_telegram_id", "bedolaga_subscription_get"],
-      "must_contain_any": ["@peipivosalesbot", "lk.peipivo.top", "три точки"],
+      "must_contain_any": ["@peipivosalesbot"],
       "must_contain_all": ["https://sub.example.test/synthetic"],
       "must_not_contain": ["не могу предоставить", "обратитесь в поддержку"],
       "expect_escalation": false
@@ -45,7 +45,7 @@
       "user_message": "Дайте мою полную ссылку на подписку, чтобы добавить её в приложение.",
       "expected_tools": ["users_get_subscription_url_by_telegram_id"],
       "forbidden_tools": ["users_get_by_telegram_id", "bedolaga_subscription_get"],
-      "must_contain_any": ["@peipivosalesbot", "lk.peipivo.top", "три точки"],
+      "must_contain_any": ["@peipivosalesbot"],
       "must_contain_all": ["https://remnawave.example.test/api/sub/SyntheticTokenAbC?userId=77&source=bedolaga"],
       "custom_tool_results": {
         "users_get_subscription_url_by_telegram_id": {

@@ -300,6 +300,19 @@ def test_subscription_url_must_be_returned_intact_in_addition_to_manual_location
         assert result.passed is False
         assert any("response lacks required exact text" in v for v in result.violations)
 
+    cabinet_only = score_case(
+        case,
+        f"Ваша ссылка: {url}. Найти её можно в кабинете https://lk.peipivo.top.",
+        [],
+        trace=trace,
+    )
+    assert not cabinet_only.passed
+    assert any("response lacks any of" in v for v in cabinet_only.violations)
+
+    without_mcp = score_case(case, f"Ваша ссылка: {url}\n{manual}", [], trace=[])
+    assert not without_mcp.passed
+    assert any("missing tools" in v for v in without_mcp.violations)
+
     result = score_case(case, f"Ваша ссылка: {url}\n{manual}", [], trace=trace)
     assert result.passed is True
     assert result.violations == []

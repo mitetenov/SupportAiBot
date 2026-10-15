@@ -117,7 +117,7 @@ reports were preserved. Test identities are pinned by the synthetic router.
 
 | Measurement | Baseline | Candidate |
 | --- | ---: | ---: |
-| Static prompt characters | 9,965 | 9,258 (−7.1%) |
+| Static prompt characters at the live measurements | 9,965 | 9,258 (−7.1%) |
 | Common behavioral scenarios, 16 × 3 | 41/48 | 46/48 |
 | Newly confirmed policy scenarios, 16 × 3 | not comparable: old contradictory policy | 48/48 |
 | Required FAQ present, 32 positive queries | 25/32 | 31/32 |
@@ -151,3 +151,17 @@ lower total cost for every conversation.
 
 Local validation includes the complete pytest suite, coverage gate, Ruff and
 mypy. CI and any subsequent deployment are reported separately in the PR.
+
+### Clarification: personal subscription URLs
+
+The catalog's `subscription_link` article contains only shared instructions and
+the public cabinet address. It never contains a customer's subscription URL.
+The actual URL must always come from a fresh
+`users_get_subscription_url_by_telegram_id` call for the pinned current user,
+never from FAQ or dialog history. Every successful reply must also identify
+`@PeipivoSalesBot → Подписка`; cabinet navigation is supplementary.
+
+This clarification makes the current prompt 9,418 characters (−5.5% from the
+baseline). Regression probes now reject a full URL without an MCP call and a
+reply that mentions only the cabinet. It was verified locally and in CI; the
+live measurements above belong to the explicitly identified earlier revisions.
