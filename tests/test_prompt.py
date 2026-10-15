@@ -90,4 +90,4 @@ class TestSupportPrompt:
         assert "Happ" in SupportPrompt.SYSTEM
         assert "Incy" in SupportPrompt.SYSTEM
         assert "n/a" in SupportPrompt.SYSTEM
-        assert "сначала выясни ОС" in SupportPrompt.SYSTEM
+        assert "выясни используемое приложение, если оно неизвестно" in SupportPrompt.SYSTEM

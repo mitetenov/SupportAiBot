@@ -22,6 +22,12 @@ an existing report. Missing usage/cache values remain null. A nonzero exit code
 means at least one scenario failed, not that the report is lost. Read the actual
 answers and tool sequences; wording-based assertions can produce false positives.
 
+`benchmarks/diagnosis_behavior_cases.json` covers the subscription-first flow:
+refresh/ping with VPN off, conditional Happ update for a refresh error or all
+servers showing n/a, the Incy bypass, known completed steps, and Google/Yandex
+checks. Pass this file with `--cases-file` for an approved live diagnosis run;
+these scenarios do not run automatically in the offline suite.
+
 For a baseline, run the same evaluator and resolved case fixture against the
 baseline checkout on `PYTHONPATH`. Use the exact same scenarios and model
 settings. Relative date fixtures must be resolved on the same date. Preserve
