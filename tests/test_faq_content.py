@@ -151,19 +151,21 @@ class TestGapsOperatorsAnsweredByHand:
 
 
 class TestNaPlatformDiagnosis:
-    """The n/a recovery path depends on the device OS."""
+    """App-specific prechecks precede internet checks and OS-specific recovery."""
 
     @staticmethod
     def answer_for(entries: list[dict[str, Any]], question_start: str) -> str:
         entry = next(e for e in entries if e["question"].startswith(question_start))
         return str(entry["answer"])
 
-    def test_generic_answer_asks_for_the_os_before_recommending_an_app(
+    def test_generic_answer_asks_for_the_app_before_os_specific_recovery(
         self, entries: list[dict[str, Any]]
     ) -> None:
         answer = self.answer_for(entries, "Серверы показывают n/a")
         for platform in ("iOS", "iPadOS", "macOS", "Windows", "Android"):
             assert platform in answer
+        assert answer.index("Если приложение неизвестно") < answer.index("напишите вашу ОС")
+        assert "в Incy пропустите обновление приложения" in answer
         assert "обновите приложение Happ до последней версии или установите" not in answer
 
     def test_apple_platforms_are_sent_to_incy(self, entries: list[dict[str, Any]]) -> None:
@@ -173,7 +175,13 @@ class TestNaPlatformDiagnosis:
         assert "установите Incy" in answer
         assert "@PeipivoSalesBot" in answer
         assert "https://lk.peipivo.top" in answer
-        assert "обновите Happ" not in answer
+        assert answer.index("обновите Happ") < answer.index("https://google.com")
+        assert answer.index("https://google.com") < answer.index("установите Incy")
+        assert "в обновлённом Happ" in answer
+        assert "Если уже используете Incy" in answer
+        assert (
+            "повторную установку или обновление приложения на этом этапе не предлагайте" in answer
+        )
 
     def test_windows_and_android_update_then_reinstall_happ(
         self, entries: list[dict[str, Any]]
@@ -182,17 +190,79 @@ class TestNaPlatformDiagnosis:
         assert "Windows" in answer
         assert "Android" in answer
         assert "обновите Happ до последней версии" in answer
-        assert "Если обновлений нет, удалите Happ и установите его заново" in answer
+        assert "Happ последней версии" in answer
+        assert "можно переустановить Happ" in answer
+        assert answer.index("https://google.com") < answer.index("можно переустановить Happ")
+        assert "Переустановку не предлагайте до проверки Google" in answer
         assert "@PeipivoSalesBot" in answer
         assert "https://lk.peipivo.top" in answer
-        assert "Incy" not in answer
+        assert "Этот шаг относится к Happ" in answer
+        assert "в Incy пропустите обновление приложения" in answer
 
     def test_system_prompt_enforces_the_same_os_split(self) -> None:
         prompt = SupportPrompt.SYSTEM
-        assert "сначала выясни ОС" in prompt
-        assert "Apple — Incy" in prompt
-        assert "Windows/Android — обновление Happ" in prompt
-        assert "при отсутствии обновлений переустановка" in prompt
+        assert "выясни используемое приложение, если оно неизвестно" in prompt
+        assert "Для Happ — обновить Happ" in prompt
+        assert "Для Incy — пропустить обновление приложения" in prompt
+        assert "При оставшихся n/a уточни ОС" in prompt
+        assert "не советуй переустановку/смену приложения" in prompt
+
+
+class TestConnectionDiagnosisOrder:
+    @pytest.mark.parametrize("index", [0, 27, 35, 36, 38, 39, 40])
+    def test_overlapping_articles_keep_the_confirmed_order(self, entries, index) -> None:
+        answer = entries[index]["answer"]
+        assert answer.index("«Обновить подписку»") < answer.index("«Пинг»")
+        assert answer.index("«Пинг»") < answer.index("обновите Happ")
+        assert answer.index("обновите Happ") < answer.index("https://google.com")
+        assert answer.index("https://google.com") < answer.index("https://ya.ru")
+        assert "строго с выключенным VPN" in answer
+        assert "ошибка обновления подписки или все серверы" in answer
+        assert "в Incy пропустите обновление приложения" in answer
+        assert "Если Happ уже последней версии, этот шаг тоже пропустите" in answer
+
+    def test_google_stage_does_not_repeat_completed_refresh_and_ping(self, entries) -> None:
+        for index in (0, 35, 36, 38):
+            answer = entries[index]["answer"]
+            tail = (
+                answer[answer.index("Если Google открылся") :]
+                if "Если Google открылся" in answer
+                else answer.split("Если после этих шагов", 1)[1]
+            )
+            assert "нажмите" not in tail
+            assert "ошибки и не все серверы" in answer
+
+    def test_deduplicated_real_context_preserves_first_steps(self, entries) -> None:
+        from app.rag.catalog import format_faq_context
+        from app.rag.types import FaqResult
+
+        selected = [entries[i] for i in (0, 35, 38)]
+        context = format_faq_context(
+            [FaqResult(e["question"], e["answer"], 0.8, 0.02, e.get("image")) for e in selected]
+        )
+        assert context.count("Напишите, появилась ли ошибка обновления и что показал пинг") == 1
+        assert context.index("«Обновить подписку»") < context.index("«Пинг»")
+        assert (
+            context.index("«Пинг»")
+            < context.index("обновите Happ")
+            < context.index("https://google.com")
+        )
+        assert "в Incy пропустите обновление приложения" in context
+
+    def test_prompt_waits_for_each_step_in_order(self) -> None:
+        prompt = SupportPrompt.SYSTEM.split("ДИАГНОСТИКА:", 1)[1].split(
+            "УСТРОЙСТВА И ЭСКАЛАЦИЯ:", 1
+        )[0]
+        assert prompt.index("«Обновить подписку»") < prompt.index("«Пинг»")
+        assert (
+            prompt.index("«Пинг»")
+            < prompt.index("обновить Happ")
+            < prompt.index("https://google.com")
+        )
+        assert "ошибка обновления подписки или все серверы n/a" in prompt
+        assert "Давай только следующий невыполненный шаг" in prompt
+        assert "дождись его результата" in prompt
+        assert "известное не переспрашивай" in prompt
 
 
 class TestIllustratedEntries:

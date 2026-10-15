@@ -53,7 +53,7 @@ class FaqCatalog:
             r"vpn|впн|happ|incy|устройств|телефон|планшет|ноутбук|компьютер|linux|линукс", text
         ):
             ids.append("device_setup")
-        if re.search(r"n/a|не пингу|нет пинга|серверы.*не отвечают", text):
+        if re.search(r"n[/\\]a|не пингу|нет пинга|серверы.*не отвечают", text):
             ids.extend(("na_diagnosis", "na_apple", "na_windows_android"))
         if re.search(r"где.*кноп|найти.*кноп|какая.*кноп", text):
             ids.append("app_buttons")

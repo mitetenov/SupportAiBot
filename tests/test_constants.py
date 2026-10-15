@@ -137,9 +137,9 @@ class TestSupportPrompt:
         assert "Happ" in SupportPrompt.SYSTEM
         assert "Incy" in SupportPrompt.SYSTEM
         assert "n/a" in SupportPrompt.SYSTEM
-        assert "сначала выясни ОС" in SupportPrompt.SYSTEM
-        assert "Apple — Incy" in SupportPrompt.SYSTEM
-        assert "Windows/Android — обновление Happ" in SupportPrompt.SYSTEM
+        assert "выясни используемое приложение, если оно неизвестно" in SupportPrompt.SYSTEM
+        assert "Для Happ — обновить Happ" in SupportPrompt.SYSTEM
+        assert "Для Incy — пропустить обновление приложения" in SupportPrompt.SYSTEM
 
 
 class TestEscalationRegexes:

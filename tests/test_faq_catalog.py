@@ -14,6 +14,7 @@ from app.rag.types import FaqResult
         ("дайте ссылку на подписку", {"subscription_link"}),
         ("как подключить второй телефон", {"device_setup"}),
         ("все серверы n/a, Android", {"na_diagnosis", "na_apple", "na_windows_android"}),
+        (r"все серверы n\a, Incy", {"na_diagnosis", "na_apple", "na_windows_android"}),
         ("где кнопка обновления", {"app_buttons"}),
         ("как включить автоплатеж", {"auto_renewal"}),
         ("сколько трафика на пробу", {"trial"}),
