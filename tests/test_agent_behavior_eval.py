@@ -38,6 +38,7 @@ def test_behavior_cases_cover_all_scenarios() -> None:
         # Preserved existing 6 cases
         "installation_uses_ready_instruction",
         "subscription_url_is_returned_with_manual_location",
+        "subscription_url_preserves_internal_terms_in_url",
         "deposit_without_purchase",
         "effective_status_requires_panel_check",
         "foreign_identity_is_rejected",
@@ -50,9 +51,11 @@ def test_behavior_cases_cover_all_scenarios() -> None:
         "upstream_unavailable_reports_temporary_failure",
         "external_charge_without_record_escalates",
         "completed_purchase_panel_discrepancy_checks_panel_and_escalates",
+        "internal_names_in_user_request_use_public_payment_steps",
+        "old_internal_names_in_history_are_not_repeated",
     }
     assert names == expected_names
-    assert len(cases) == 13
+    assert len(cases) == 16
 
 
 @pytest.mark.asyncio
@@ -115,13 +118,94 @@ def test_scorer_accepts_valid_responses_and_traces() -> None:
         ("users_get_by_telegram_id", {"telegramId": SYNTHETIC_TELEGRAM_ID}),
     ]
     discrepancy_reply = (
-        "Я проверил биллинг и панель Remnawave: покупка подписки завершена, однако статус в "
-        "панели не обновился. Передаю обращение оператору для ручной синхронизации. "
+        "Покупка подписки завершена, однако подписка остаётся неактивной. "
+        "Передаю обращение оператору для проверки. "
         "/operator [ESCALATE]"
     )
     disc_result = score_case(discrepancy_case, discrepancy_reply, clients, trace=valid_trace)
     assert disc_result.passed is True
     assert disc_result.violations == []
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Проверил панель Remnawave: подписка неактивна.",
+        "Ремнавейв не отвечает.",
+        "В Бедолаге покупка завершена.",
+        "По данным BEDOLAGA-MCP подписка активна.",
+        "Сервис биллинга временно недоступен.",
+        "Нет доступных нод.",
+        "Ошибка API при проверке подписки.",
+        "Вызов users_get_by_telegram_id завершился ошибкой.",
+        "bot_record_effective_status=active, userId=77, tariff_name=Месяц.",
+        "Не удалось проверить устройства: identity_unavailable.",
+        "Ошибка upstream_unavailable при проверке платежа.",
+        "Откройте [панель Remnawave](https://lk.peipivo.top).",
+        "Откройте [кабинет](https://lk.peipivo.top)(панель).",
+        "Пополнять баланс нужно не в отдельной панели, а в боте @PeipivoSalesBot.",
+        "Ваша подписка истекла: EXPIRED, expireAt=2026-08-01.",
+    ],
+)
+def test_scorer_rejects_internal_language_in_user_facing_answers(reply: str) -> None:
+    case = BehaviorCase(name="customer_language", user_message="Проверьте подписку.")
+    result = score_case(case, reply, [])
+
+    assert result.passed is False
+    assert any("internal infrastructure in response" in v for v in result.violations)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Покупка подтверждена, но подписка неактивна. Для проверки вызовите /operator.",
+        "Не удалось проверить оплату. Повторите попытку позже.",
+        "Не удалось найти профиль оплаты, привязанный к вашему Telegram ID.",
+        "В Happ или Incy нажмите «Обновить подписку» и выберите сервер.",
+        "Откройте @PeipivoSalesBot → «Подключиться» или https://lk.peipivo.top.",
+        "Ваша ссылка: https://sub.example.test/remnawave/synthetic?userId=77",
+    ],
+)
+def test_scorer_accepts_plain_language_and_preserves_public_names_and_urls(reply: str) -> None:
+    case = BehaviorCase(name="customer_language", user_message="Помогите подключиться.")
+    result = score_case(case, reply, [])
+
+    assert result.passed is True
+    assert result.violations == []
+
+
+@pytest.mark.parametrize(
+    "case_name",
+    [
+        "subscription_url_is_returned_with_manual_location",
+        "subscription_url_preserves_internal_terms_in_url",
+    ],
+)
+def test_subscription_url_must_be_returned_intact_in_addition_to_manual_locations(
+    case_name: str,
+) -> None:
+    case = next(case for case in load_cases() if case.name == case_name)
+    url = case.must_contain_all[0]
+    trace = [("users_get_subscription_url_by_telegram_id", {"telegramId": SYNTHETIC_TELEGRAM_ID})]
+    manual = "Ссылку также можно найти в @PeipivoSalesBot → «Подписка»."
+
+    for reply in [
+        manual,
+        f"Ваша ссылка: [скрыто]. {manual}",
+        f"Ваша ссылка: {url[:30]}... {manual}",
+        f"Ваша ссылка: {url.upper()} {manual}",
+    ]:
+        result = score_case(case, reply, [], trace=trace)
+        assert result.passed is False
+        assert any("response lacks required exact text" in v for v in result.violations)
+
+    result = score_case(case, f"Ваша ссылка: {url}\n{manual}", [], trace=trace)
+    assert result.passed is True
+    assert result.violations == []
+
+    labeled = score_case(case, f"URL из панели Remnawave: {url}\n{manual}", [], trace=trace)
+    assert labeled.passed is False
+    assert any("internal infrastructure in response" in v for v in labeled.violations)
 
 
 def test_scorer_rejects_irrelevant_faq_sheet() -> None:
@@ -1085,9 +1169,9 @@ def test_user_not_found_rejects_causal_ui_diagnosis_and_unscoped_claims() -> Non
     assert res_broad.passed is False
     assert any("broad unscoped claim" in v for v in res_broad.violations)
 
-    # Positive probe: Scoped explanation stating user was not found by Telegram ID in Bedolaga
+    # Positive probe: Scope the lookup without naming the internal system.
     valid_reply = (
-        "Пользователь с вашим Telegram ID не найден в сервисе оплаты Bedolaga. "
+        "Не удалось найти профиль оплаты, привязанный к вашему Telegram ID. "
         "Пожалуйста, запустите бота заново с помощью команды /start."
     )
     res_valid = score_case(case, valid_reply, clients, trace=trace)
@@ -1150,7 +1234,7 @@ def test_upstream_unavailable_rejects_absent_payment_assertions() -> None:
 
     # Positive probe: Explaining temporary impossibility of verifying records
     valid_reply = (
-        "Сервис биллинга временно недоступен, поэтому сейчас не удалось проверить поступление средств. "
+        "Сейчас временно не удалось проверить поступление средств. "
         "Пожалуйста, повторите попытку позже."
     )
     res_valid = score_case(case, valid_reply, clients, trace=trace)
