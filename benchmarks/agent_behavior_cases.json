@@ -1,6 +1,27 @@
 {
   "cases": [
     {
+      "name": "internal_names_in_user_request_use_public_payment_steps",
+      "user_message": "Мне сказали зайти в панель Bedolaga. Где пополнить баланс и купить период?",
+      "expect_no_tools": true,
+      "must_contain_any": ["@peipivosalesbot", "lk.peipivo.top"],
+      "require_two_step_payment": true,
+      "faq_candidates": [
+        "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?"
+      ]
+    },
+    {
+      "name": "old_internal_names_in_history_are_not_repeated",
+      "user_message": "Дайте понятную инструкцию подключения второго телефона.",
+      "scenario_history": [
+        {"role": "user", "content": "Где управлять VPN?"},
+        {"role": "assistant", "content": "Откройте панель Remnawave через Bedolaga."}
+      ],
+      "expect_no_tools": true,
+      "must_contain_any": ["@peipivosalesbot", "lk.peipivo.top"],
+      "must_not_contain": ["app store", "google play", "вставьте ссылку"]
+    },
+    {
       "name": "installation_uses_ready_instruction",
       "user_message": "Как установить VPN на второй телефон? Дайте пошаговую инструкцию и ссылку на приложение.",
       "expected_tools": [],
@@ -40,7 +61,7 @@
       "user_message": "Проверьте, активна ли моя VPN-подписка сейчас.",
       "expected_tools": ["users_get_by_telegram_id"],
       "forbidden_tools": [],
-      "must_contain_any": ["истек", "не актив", "законч"],
+      "must_contain_any": ["истек", "истёк", "не актив", "неактив", "законч"],
       "must_not_contain": ["bot_record_effective_status подтверждает"],
       "expect_escalation": false
     },

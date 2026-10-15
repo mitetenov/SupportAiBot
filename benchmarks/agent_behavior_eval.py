@@ -57,6 +57,15 @@ PROFILE_PANEL_TOOLS: tuple[str, ...] = (
     "subscriptions_get_by_user_id",
 )
 
+INTERNAL_LANGUAGE_PATTERN = re.compile(
+    r"\b(?:remnawave|ремнав[еэ]йв\w*|bedolaga\w*|бедолаг\w*|панел\w*|биллинг\w*"
+    r"|нод(?:а|ы|е|у|ой|ам|ами|ах)?|mcp|api|hwid|user_?id|telegram_id|bot_record_\w+"
+    r"|tariff_id|tariff_name|expireAt|uuid|expired|disabled|limited|active"
+    r"|user_not_found|upstream_unavailable|identity_unavailable)\b"
+    r"|\b(?:bedolaga|users|subscriptions|nodes|bandwidth|hwid)_\w+\b",
+    re.IGNORECASE,
+)
+
 UNCONFIRMED_ABSENCE_PATTERNS: tuple[str, ...] = (
     r"не\s+удалось\s+найти\s+(?:вашу\s+)?(?:учётн\w*|учетн\w*|аккаунт\w*|пользовател\w*|профил\w*|запис\w*|плат[её]ж\w*)",
     r"(?:учётн\w*|учетн\w*|аккаунт\w*|пользовател\w*|профил\w*|плат[её]ж\w*)\s+(?:не\s+найден\w*|отсутству\w*)",
@@ -751,6 +760,13 @@ def score_case(
     lowered = response.lower()
     violations: list[str] = []
 
+    # Links are opaque user-facing values: inspect their labels and surrounding
+    # prose, but do not reject an actual subscription URL for a word in its path.
+    prose = re.sub(r"https?://[^\s<>\[\]()]+", "", response, flags=re.IGNORECASE)
+    internal_terms = sorted({match.group(0) for match in INTERNAL_LANGUAGE_PATTERN.finditer(prose)})
+    if internal_terms:
+        violations.append(f"internal infrastructure in response: {', '.join(internal_terms)}")
+
     if case.expect_no_tools and tools:
         violations.append(f"expected no tools to be called, but received: {', '.join(tools)}")
 
@@ -979,12 +995,11 @@ def score_case(
 
         has_not_found = any(nf in lowered for nf in ["не найден", "не удалось найти"])
         has_scope = any(
-            s in lowered
-            for s in ["telegram", "bedolaga", "биллинг", "по вашему id", "по данному id", "по id"]
+            s in lowered for s in ["telegram", "по вашему id", "по данному id", "по id"]
         )
         if not (has_not_found and has_scope):
             violations.append(
-                "user_not_found response lacks scoped explanation (must state user was not found by Telegram ID in Bedolaga/billing)"
+                "user_not_found response lacks scoped explanation (must state user was not found by their Telegram ID)"
             )
 
     if case.reject_absent_payment_on_error:
