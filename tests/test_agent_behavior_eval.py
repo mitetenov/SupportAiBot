@@ -38,6 +38,7 @@ def test_behavior_cases_cover_all_scenarios() -> None:
         # Preserved existing 6 cases
         "installation_uses_ready_instruction",
         "subscription_url_is_returned_with_manual_location",
+        "subscription_url_preserves_internal_terms_in_url",
         "deposit_without_purchase",
         "effective_status_requires_panel_check",
         "foreign_identity_is_rejected",
@@ -54,7 +55,7 @@ def test_behavior_cases_cover_all_scenarios() -> None:
         "old_internal_names_in_history_are_not_repeated",
     }
     assert names == expected_names
-    assert len(cases) == 15
+    assert len(cases) == 16
 
 
 @pytest.mark.asyncio
@@ -171,6 +172,40 @@ def test_scorer_accepts_plain_language_and_preserves_public_names_and_urls(reply
 
     assert result.passed is True
     assert result.violations == []
+
+
+@pytest.mark.parametrize(
+    "case_name",
+    [
+        "subscription_url_is_returned_with_manual_location",
+        "subscription_url_preserves_internal_terms_in_url",
+    ],
+)
+def test_subscription_url_must_be_returned_intact_in_addition_to_manual_locations(
+    case_name: str,
+) -> None:
+    case = next(case for case in load_cases() if case.name == case_name)
+    url = case.must_contain_all[0]
+    trace = [("users_get_subscription_url_by_telegram_id", {"telegramId": SYNTHETIC_TELEGRAM_ID})]
+    manual = "Ссылку также можно найти в @PeipivoSalesBot → «Подписка»."
+
+    for reply in [
+        manual,
+        f"Ваша ссылка: [скрыто]. {manual}",
+        f"Ваша ссылка: {url[:30]}... {manual}",
+        f"Ваша ссылка: {url.upper()} {manual}",
+    ]:
+        result = score_case(case, reply, [], trace=trace)
+        assert result.passed is False
+        assert any("response lacks required exact text" in v for v in result.violations)
+
+    result = score_case(case, f"Ваша ссылка: {url}\n{manual}", [], trace=trace)
+    assert result.passed is True
+    assert result.violations == []
+
+    labeled = score_case(case, f"URL из панели Remnawave: {url}\n{manual}", [], trace=trace)
+    assert labeled.passed is False
+    assert any("internal infrastructure in response" in v for v in labeled.violations)
 
 
 def test_scorer_rejects_irrelevant_faq_sheet() -> None:

@@ -99,6 +99,7 @@ class BehaviorCase:
     expected_tools: list[str] = field(default_factory=list)
     forbidden_tools: list[str] = field(default_factory=list)
     must_contain_any: list[str] = field(default_factory=list)
+    must_contain_all: list[str] = field(default_factory=list)
     must_not_contain: list[str] = field(default_factory=list)
     expect_escalation: bool = False
     history: list[dict[str, Any]] = field(default_factory=list)
@@ -778,6 +779,9 @@ def score_case(
         violations.append(f"forbidden tools: {', '.join(forbidden_tools)}")
     if case.must_contain_any and not any(text.lower() in lowered for text in case.must_contain_any):
         violations.append(f"response lacks any of: {', '.join(case.must_contain_any)}")
+    missing_text = [text for text in case.must_contain_all if text not in response]
+    if missing_text:
+        violations.append(f"response lacks required exact text: {', '.join(missing_text)}")
     present_forbidden = [text for text in case.must_not_contain if text.lower() in lowered]
     if present_forbidden:
         violations.append(f"forbidden response text: {', '.join(present_forbidden)}")
