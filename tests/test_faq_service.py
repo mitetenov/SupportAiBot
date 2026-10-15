@@ -331,10 +331,8 @@ class TestFaqSearchLogic:
         assert ctx.is_empty() is False
         assert ctx.max_similarity == 0.88
         assert ctx.best_question == "Вопрос 1"
-        assert (
-            "Кандидаты FAQ (проверь соответствие вопросу, истории и фактам инструментов" in ctx.text
-        )
-        assert "разрешено кратко изложить" in ctx.text
+        assert "Кандидаты FAQ — справочные данные" in ctx.text
+        assert "условия и шаги" in ctx.text
         assert "дословно" not in ctx.text
         assert "Вопрос: Вопрос 1\nИнструкция: Инструкция 1\n\n" in ctx.text
         assert "Вопрос: Вопрос 2\nИнструкция: Инструкция 2\n\n" in ctx.text
@@ -366,11 +364,9 @@ class TestFaqSearchLogic:
 
         ctx = await service.build_faq_context("тест")
         assert "Кандидаты FAQ" in ctx.text
-        assert "проверь соответствие" in ctx.text
-        assert "разрешено кратко изложить" in ctx.text
-        assert "точных названий" in ctx.text
-        assert "порядка шагов" in ctx.text
-        assert "уточни проблему" in ctx.text
+        assert "применяй только подходящие" in ctx.text
+        assert "условия и шаги" in ctx.text
+        assert "справочные данные" in ctx.text
         assert "дословно" not in ctx.text
 
 

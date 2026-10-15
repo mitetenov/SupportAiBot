@@ -1,0 +1,350 @@
+{
+  "cases": [
+    {
+      "name": "trial_traffic_limit",
+      "user_message": "В пробной подписке трафик тоже безлимитный?",
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "20 ГБ",
+        "20 гигабайт"
+      ],
+      "faq_candidates": [
+        "Есть ли лимит по трафику? Сколько ГБ доступно?"
+      ]
+    },
+    {
+      "name": "paid_traffic_unlimited",
+      "user_message": "Сколько трафика включено в оплаченную подписку?",
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "безлимит",
+        "не ограничен",
+        "нет лимита",
+        "ограничений"
+      ],
+      "faq_candidates": [
+        "Есть ли лимит по трафику? Сколько ГБ доступно?"
+      ]
+    },
+    {
+      "name": "renewal_opt_in_controls",
+      "user_message": "Как включить автопродление с баланса бота?",
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "автоплатеж",
+        "автоплатёж"
+      ],
+      "must_not_contain": [
+        "карта будет",
+        "с карты автоматически"
+      ],
+      "faq_candidates": [
+        "Как отменить подписку / отключить автопродление / автоплатёж?"
+      ]
+    },
+    {
+      "name": "trial_does_not_auto_convert",
+      "user_message": "У меня закончился триал. Если просто положить деньги на баланс, он автоматически станет платным?",
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "приобрести",
+        "купить",
+        "покупк"
+      ],
+      "faq_candidates": [
+        "Как отменить подписку / отключить автопродление / автоплатёж?",
+        "Закончился пробный период / трафик / подписка — что делать?"
+      ]
+    },
+    {
+      "name": "expired_subscription_requires_purchase",
+      "user_message": "Объясните общее правило: если оплаченная подписка уже истекла, но автопродление было включено, достаточно пополнить баланс или нужно купить период? Мой аккаунт проверять не нужно.",
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "приобрести",
+        "купить",
+        "покупк"
+      ],
+      "faq_candidates": [
+        "Как отменить подписку / отключить автопродление / автоплатёж?"
+      ]
+    },
+    {
+      "name": "gift_account_without_trial",
+      "user_message": "Хочу купить человеку подарок. Ему нужно зарегистрироваться и обязательно активировать триал?",
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "необязател",
+        "не нужно",
+        "не требуется",
+        "необязат",
+        "не обязательно"
+      ],
+      "faq_candidates": [
+        "Как подарить подписку человеку, у которого ещё нет аккаунта?"
+      ]
+    },
+    {
+      "name": "telegram_proxy_independent",
+      "user_message": "Ваш Telegram-прокси не подключается. У меня нет VPN-приложения, оно нужно?",
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "не нужно",
+        "не требуется",
+        "не зависит",
+        "отдельно"
+      ],
+      "must_not_contain": [
+        "обновите подписку",
+        "установите Happ",
+        "установите Incy"
+      ],
+      "faq_candidates": [
+        "Что делать, если прокси для Telegram не работает?"
+      ]
+    },
+    {
+      "name": "linux_uses_ready_instruction",
+      "user_message": "У меня Linux. Как подключить ваш VPN?",
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "инструкц"
+      ],
+      "must_not_contain": [
+        "не поддерживается",
+        "sudo",
+        "apt install",
+        "скачайте OpenVPN"
+      ],
+      "faq_candidates": [
+        "Какое приложение используется? Через что подключаться?"
+      ]
+    },
+    {
+      "name": "android_na_followup",
+      "user_message": "Android",
+      "history": [
+        {
+          "role": "user",
+          "content": "Без VPN Google открывается, подписку обновил, все серверы показывают n/a."
+        },
+        {
+          "role": "assistant",
+          "content": "Какая у вас операционная система?"
+        }
+      ],
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "Happ"
+      ],
+      "must_not_contain": [
+        "установите Incy",
+        "откройте https://google.com",
+        "какая у вас операционная"
+      ]
+    },
+    {
+      "name": "apple_na_followup",
+      "user_message": "iPhone",
+      "history": [
+        {
+          "role": "user",
+          "content": "Google без VPN открылся. Подписку обновил, все серверы n/a."
+        },
+        {
+          "role": "assistant",
+          "content": "Какая у вас операционная система?"
+        }
+      ],
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "Incy"
+      ],
+      "must_not_contain": [
+        "обновите Happ",
+        "откройте https://google.com",
+        "какая у вас операционная"
+      ]
+    },
+    {
+      "name": "android_never_mode_switch",
+      "user_message": "На Android без VPN Google работает, но при включении VPN вообще ничего не открывается. Подписку и Happ уже обновил.",
+      "must_not_contain": [
+        "TUN",
+        "Proxy"
+      ],
+      "faq_candidates": [
+        "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+      ]
+    },
+    {
+      "name": "windows_update_before_mode_switch",
+      "user_message": "На Windows при включении VPN весь интернет перестаёт работать. Без VPN Google открывается. Подписку и приложение давно не обновлял.",
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "обнов"
+      ],
+      "must_not_contain": [
+        "переключите",
+        "смените режим",
+        "попробуйте Proxy",
+        "попробуйте режим"
+      ],
+      "faq_candidates": [
+        "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+      ]
+    },
+    {
+      "name": "profile_absence_does_not_prove_unlinked_telegram",
+      "user_message": "Если бот пишет, что не видит аккаунт, это всегда означает, что Telegram не привязан? Спрашиваю об общем правиле.",
+      "must_contain_any": [
+        "провер",
+        "если",
+        "не означает",
+        "не доказывает"
+      ],
+      "must_not_contain": [
+        "ваш Telegram-аккаунт ещё не привязан"
+      ],
+      "faq_candidates": [
+        "Меня не нашли в системе / бот пишет что нет аккаунта / не видит мою подписку"
+      ],
+      "expect_no_tools": true
+    },
+    {
+      "name": "incy_buttons_supported",
+      "user_message": "У меня Incy. Где кнопки обновления и пинга?",
+      "expect_no_tools": true,
+      "must_contain_any": [
+        "справа",
+        "правой"
+      ],
+      "must_not_contain": [
+        "установите Happ"
+      ],
+      "faq_candidates": [
+        "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении"
+      ]
+    },
+    {
+      "name": "windows_mode_switch_after_active_server",
+      "user_message": "На Windows без VPN Google открывается, но при включении VPN пропадает весь интернет. Подписку и Happ уже обновил до последней версии, обновил список и проверил пинг. Подключаюсь к серверу Германия, режим сейчас TUN. Проверьте сервер и подскажите следующий шаг.",
+      "expected_tools": [
+        "nodes_list",
+        "nodes_get"
+      ],
+      "expected_tool_order": [
+        "nodes_list",
+        "nodes_get"
+      ],
+      "expect_escalation": null,
+      "custom_tool_results": {
+        "nodes_list": {
+          "response": [
+            {
+              "uuid": "11111111-2222-4333-8444-555555555555",
+              "name": "Германия",
+              "countryCode": "DE"
+            }
+          ]
+        },
+        "nodes_get": {
+          "response": {
+            "uuid": "11111111-2222-4333-8444-555555555555",
+            "name": "Германия",
+            "countryCode": "DE",
+            "isConnected": true,
+            "isDisabled": false
+          }
+        },
+        "users_get_by_telegram_id": {
+          "ok": true,
+          "response": {
+            "users": [
+              {
+                "id": 77,
+                "username": "synthetic-eval-user",
+                "status": "ACTIVE",
+                "expireAt": "2027-10-01T00:00:00Z"
+              }
+            ]
+          }
+        },
+        "subscriptions_get_by_user_id": {
+          "ok": true,
+          "response": {
+            "status": "ACTIVE",
+            "expireAt": "2027-10-01T00:00:00Z"
+          }
+        }
+      },
+      "faq_candidates": [
+        "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+      ],
+      "must_contain_any": [
+        "Proxy"
+      ]
+    },
+    {
+      "name": "windows_inactive_server_no_mode_switch",
+      "user_message": "На Windows без VPN Google открывается, но при включении VPN пропадает весь интернет. Подписку и Happ уже обновил до последней версии, обновил список и проверил пинг. Подключаюсь к серверу Германия, режим сейчас TUN. Проверьте сервер и подскажите следующий шаг.",
+      "expected_tools": [
+        "nodes_list",
+        "nodes_get"
+      ],
+      "expected_tool_order": [
+        "nodes_list",
+        "nodes_get"
+      ],
+      "expect_escalation": null,
+      "custom_tool_results": {
+        "nodes_list": {
+          "response": [
+            {
+              "uuid": "11111111-2222-4333-8444-555555555555",
+              "name": "Германия",
+              "countryCode": "DE"
+            }
+          ]
+        },
+        "nodes_get": {
+          "response": {
+            "uuid": "11111111-2222-4333-8444-555555555555",
+            "name": "Германия",
+            "countryCode": "DE",
+            "isConnected": false,
+            "isDisabled": false
+          }
+        },
+        "users_get_by_telegram_id": {
+          "ok": true,
+          "response": {
+            "users": [
+              {
+                "id": 77,
+                "username": "synthetic-eval-user",
+                "status": "ACTIVE",
+                "expireAt": "2027-10-01T00:00:00Z"
+              }
+            ]
+          }
+        },
+        "subscriptions_get_by_user_id": {
+          "ok": true,
+          "response": {
+            "status": "ACTIVE",
+            "expireAt": "2027-10-01T00:00:00Z"
+          }
+        }
+      },
+      "faq_candidates": [
+        "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+      ],
+      "must_not_contain": [
+        "переключите",
+        "смените режим",
+        "режим Proxy"
+      ]
+    }
+  ]
+}

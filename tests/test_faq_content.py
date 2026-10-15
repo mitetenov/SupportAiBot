@@ -1,7 +1,7 @@
 """Guards on the shipped knowledge base and its agreement with the system prompt.
 
-The bot quotes ``faq/faq.json`` verbatim, so a wrong entry is a wrong answer to
-every user who asks. These tests pin the facts operators had to correct by hand.
+The bot may paraphrase FAQ answers. These tests pin the underlying facts and
+conditions that operators or the service owner confirmed.
 """
 
 import json
@@ -49,27 +49,29 @@ class TestKnowledgeBaseIsWellFormed:
 
 
 class TestAutoRenewal:
-    """No charge ever leaves the card; the subscription renews off the bot balance.
-
-    The old entry promised an autopay toggle in the bot, so the bot sent people
-    hunting for a control that does not exist and confirmed a card charge that
-    never happens.
-    """
+    """Optional renewal uses internal balance for an active paid subscription."""
 
     def test_states_that_nothing_is_charged_to_the_card(
         self, entries: list[dict[str, Any]]
     ) -> None:
         answer = find(entries, "автопродление")["answer"].lower()
         assert "карт" in answer
-        assert "не списыва" in answer
+        assert "автоматического списания с банковской карты" in answer
+        assert "нет" in answer
 
     def test_explains_renewal_from_the_bot_balance(self, entries: list[dict[str, Any]]) -> None:
         answer = find(entries, "автопродление")["answer"].lower()
         assert "баланс" in answer
 
-    def test_does_not_promise_a_toggle_in_the_bot(self, entries: list[dict[str, Any]]) -> None:
+    def test_explains_the_confirmed_controls_and_renewal_scope(
+        self, entries: list[dict[str, Any]]
+    ) -> None:
         answer = find(entries, "автопродление")["answer"].lower()
-        assert "отключить автопродление" not in answer
+        assert "«автоплатеж» → «включить»" in answer
+        assert "переключатель «автопродление»" in answer
+        assert "только для действующей оплаченной подписки" in answer
+        assert "не покупает первый платный период после триала" in answer
+        assert "не возобновляет уже истёкшую подписку" in answer
 
     def test_is_reachable_from_how_users_actually_phrase_it(
         self, entries: list[dict[str, Any]]
@@ -93,9 +95,10 @@ class TestSubscriptionLink:
     ) -> None:
         assert all("три точки" not in e["answer"].lower() for e in entries)
 
-    def test_the_prompt_no_longer_denies_that_menu_exists(self) -> None:
+    def test_the_prompt_does_not_restore_the_removed_copying_instruction(self) -> None:
         assert "Только главный экран" not in SupportPrompt.SYSTEM
-        assert "три точки" in SupportPrompt.SYSTEM
+        assert "три точки" not in SupportPrompt.SYSTEM
+        assert "верни саму ссылку целиком без изменений" in SupportPrompt.SYSTEM
 
 
 class TestEmptyServerListAfterInstallation:
@@ -128,7 +131,8 @@ class TestGapsOperatorsAnsweredByHand:
         self, entries: list[dict[str, Any]]
     ) -> None:
         answer = find(entries, "подар", "нет аккаунта")["answer"].lower()
-        assert "пробн" in answer
+        assert "аккаунт" in answer
+        assert "пробную подписку необязательно" in answer
 
     def test_telegram_id_lookup_is_documented(self, entries: list[dict[str, Any]]) -> None:
         answer = find(entries, "telegram id")["answer"].lower()
@@ -185,10 +189,10 @@ class TestNaPlatformDiagnosis:
 
     def test_system_prompt_enforces_the_same_os_split(self) -> None:
         prompt = SupportPrompt.SYSTEM
-        assert "если ОС не указана, спроси её" in prompt
-        assert "Для iOS, iPadOS и macOS предложи установить Incy" in prompt
-        assert "Для Windows и Android предложи обновить Happ" in prompt
-        assert "если обновлений нет" in prompt
+        assert "сначала выясни ОС" in prompt
+        assert "Apple — Incy" in prompt
+        assert "Windows/Android — обновление Happ" in prompt
+        assert "при отсутствии обновлений переустановка" in prompt
 
 
 class TestIllustratedEntries:
@@ -250,3 +254,33 @@ class TestPaymentTroubleshooting:
         assert "выбор" in answer or "проведен" in answer
         assert "другой способ пополнения" in answer
         assert "@peipivosalesbot" in answer
+
+
+class TestConfirmedProductPolicies:
+    def test_cabinet_navigation_uses_the_confirmed_labels(self, entries) -> None:
+        for entry in entries:
+            assert "«Баланс и платежи»" not in entry["answer"]
+            assert "«Подписки»" not in entry["answer"]
+        assert "«Баланс»" in entries[5]["answer"]
+        assert "«Подписка»" in entries[5]["answer"]
+
+    def test_trial_and_paid_traffic_agree_across_articles(self, entries) -> None:
+        for index in (8, 9, 12):
+            assert "20 ГБ" in entries[index]["answer"]
+            assert "оплачен" in entries[index]["answer"]
+
+    def test_telegram_proxy_recovery_does_not_require_vpn(self, entries) -> None:
+        answer = find(entries, "прокси", "не работает")["answer"]
+        assert "отдельно от VPN-подписки" in answer
+        assert "Обновите подписку" not in answer
+
+    def test_windows_modes_keep_all_prerequisites(self, entries) -> None:
+        for index in (19, 35):
+            answer = entries[index]["answer"].lower()
+            for fact in ("windows", "подписк", "приложени", "сервер", "активен", "последн"):
+                assert fact in answer
+
+    def test_linux_has_ready_instructions_and_button_guide_covers_both_apps(self, entries) -> None:
+        assert "Linux" in entries[10]["answer"]
+        assert "на странице своей подписки" in entries[10]["answer"]
+        assert "В Happ и Incy кнопки расположены одинаково" in entries[53]["answer"]

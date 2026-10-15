@@ -91,8 +91,7 @@ class TestSupportPrompt:
         assert "«Подключить устройство»" in SupportPrompt.SYSTEM
 
     def test_the_connection_rule_should_cover_additional_devices_too(self) -> None:
-        assert "ПОДКЛЮЧЕНИЕ УСТРОЙСТВА" in SupportPrompt.SYSTEM
-        assert "ПЕРВОГО устройства и для ЛЮБОГО СЛЕДУЮЩЕГО" in SupportPrompt.SYSTEM
+        assert "первого и любого следующего устройства" in SupportPrompt.SYSTEM
         assert "под тем же аккаунтом" in SupportPrompt.SYSTEM
 
     def test_system_should_still_allow_troubleshooting_for_already_connected_users(self) -> None:
@@ -100,8 +99,10 @@ class TestSupportPrompt:
 
     def test_system_should_require_a_fresh_account_scoped_hwid_snapshot(self) -> None:
         prompt = SupportPrompt.SYSTEM
-        assert "этот support-инструмент сам получает все аккаунты" in prompt
-        assert "Не используй старые userId/hwid из истории" in prompt
+        assert "hwid_devices_list" in prompt
+        assert "аккаунты текущего пользователя и актуальные userId/hwid" in prompt
+        assert "только пары из последнего списка" in prompt
+        assert "никогда старые или выдуманные ID" in prompt
         assert "status=already_absent" in prompt
 
     def test_with_telegram_user_id_should_append_id(self) -> None:
@@ -136,7 +137,9 @@ class TestSupportPrompt:
         assert "Happ" in SupportPrompt.SYSTEM
         assert "Incy" in SupportPrompt.SYSTEM
         assert "n/a" in SupportPrompt.SYSTEM
-        assert "несовместим" in SupportPrompt.SYSTEM
+        assert "сначала выясни ОС" in SupportPrompt.SYSTEM
+        assert "Apple — Incy" in SupportPrompt.SYSTEM
+        assert "Windows/Android — обновление Happ" in SupportPrompt.SYSTEM
 
 
 class TestEscalationRegexes:

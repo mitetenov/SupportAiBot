@@ -1,0 +1,1893 @@
+{
+  "scorer_sha256": "2b1629ded4973e9bd5d07c06c01496fc3ff49b246096ea7af5f0ecc47b36b504",
+  "measurements": {
+    "baseline": {
+      "model": "glm-5.3-flash",
+      "reasoning_effort": "medium",
+      "prompt_chars": 9965,
+      "prompt_sha256": "0af4d37b925d604dcba76ceb86e7ead75414af74e71afbc5c3c96ac41ecf7347",
+      "faq_sha256": "9280abff5b4a230f6781f82c2aabe22b9d9d8623a554465f1a98ffa5fee18c9d",
+      "cases_sha256": "f830f6df266b0607e7adfd1d4696eafc525bf8da50973d9117d7b74b97b29ab0",
+      "core": {
+        "cases": {
+          "old_internal_names_in_history_are_not_repeated": {
+            "passed": 3,
+            "runs": 3
+          },
+          "internal_names_in_user_request_use_public_payment_steps": {
+            "passed": 0,
+            "runs": 3
+          },
+          "installation_uses_ready_instruction": {
+            "passed": 3,
+            "runs": 3
+          },
+          "subscription_url_is_returned_with_manual_location": {
+            "passed": 3,
+            "runs": 3
+          },
+          "subscription_url_preserves_internal_terms_in_url": {
+            "passed": 3,
+            "runs": 3
+          },
+          "deposit_without_purchase": {
+            "passed": 3,
+            "runs": 3
+          },
+          "foreign_identity_is_rejected": {
+            "passed": 3,
+            "runs": 3
+          },
+          "effective_status_requires_panel_check": {
+            "passed": 3,
+            "runs": 3
+          },
+          "refund_escalates": {
+            "passed": 3,
+            "runs": 3
+          },
+          "vague_payment_complaint_requires_clarification": {
+            "passed": 2,
+            "runs": 3
+          },
+          "general_payment_howto_uses_faq_without_tools": {
+            "passed": 3,
+            "runs": 3
+          },
+          "followup_with_known_context_avoids_repeated_questions": {
+            "passed": 3,
+            "runs": 3
+          },
+          "lookup_user_not_found_explains_search_without_ui_diagnosis": {
+            "passed": 0,
+            "runs": 3
+          },
+          "upstream_unavailable_reports_temporary_failure": {
+            "passed": 3,
+            "runs": 3
+          },
+          "external_charge_without_record_escalates": {
+            "passed": 3,
+            "runs": 3
+          },
+          "completed_purchase_panel_discrepancy_checks_panel_and_escalates": {
+            "passed": 3,
+            "runs": 3
+          }
+        },
+        "api_requests": 75,
+        "usage": {
+          "input_tokens": 254216,
+          "output_tokens": 7509,
+          "cached_input_tokens": 208576
+        }
+      },
+      "all": {
+        "cases": {
+          "old_internal_names_in_history_are_not_repeated": {
+            "passed": 3,
+            "runs": 3
+          },
+          "internal_names_in_user_request_use_public_payment_steps": {
+            "passed": 0,
+            "runs": 3
+          },
+          "installation_uses_ready_instruction": {
+            "passed": 3,
+            "runs": 3
+          },
+          "subscription_url_is_returned_with_manual_location": {
+            "passed": 3,
+            "runs": 3
+          },
+          "subscription_url_preserves_internal_terms_in_url": {
+            "passed": 3,
+            "runs": 3
+          },
+          "deposit_without_purchase": {
+            "passed": 3,
+            "runs": 3
+          },
+          "foreign_identity_is_rejected": {
+            "passed": 3,
+            "runs": 3
+          },
+          "effective_status_requires_panel_check": {
+            "passed": 3,
+            "runs": 3
+          },
+          "refund_escalates": {
+            "passed": 3,
+            "runs": 3
+          },
+          "vague_payment_complaint_requires_clarification": {
+            "passed": 2,
+            "runs": 3
+          },
+          "general_payment_howto_uses_faq_without_tools": {
+            "passed": 3,
+            "runs": 3
+          },
+          "followup_with_known_context_avoids_repeated_questions": {
+            "passed": 3,
+            "runs": 3
+          },
+          "lookup_user_not_found_explains_search_without_ui_diagnosis": {
+            "passed": 0,
+            "runs": 3
+          },
+          "upstream_unavailable_reports_temporary_failure": {
+            "passed": 3,
+            "runs": 3
+          },
+          "external_charge_without_record_escalates": {
+            "passed": 3,
+            "runs": 3
+          },
+          "completed_purchase_panel_discrepancy_checks_panel_and_escalates": {
+            "passed": 3,
+            "runs": 3
+          }
+        },
+        "api_requests": 75,
+        "usage": {
+          "input_tokens": 254216,
+          "output_tokens": 7509,
+          "cached_input_tokens": 208576
+        }
+      },
+      "passed": 41,
+      "runs": 48,
+      "failures": [
+        {
+          "name": "internal_names_in_user_request_use_public_payment_steps",
+          "run": 1,
+          "violations": [
+            "internal infrastructure in response: панели"
+          ],
+          "response": "У нас нет отдельной «панели» для этого — всё делается через публичные интерфейсы сервиса.\n\nПополнить баланс и купить период можно двумя способами:\n- В боте @PeipivoSalesBot: вкладка «Баланс» для пополнения, затем вкладка «Подписка» для приобретения нужного периода.\n- В личном кабинете https://lk.peipivo.top: раздел «Баланс и платежи» для пополнения, раздел «Подписки» для покупки периода.\n\nДоступные тарифы, цены и способы пополнения вы найдёте прямо там."
+        },
+        {
+          "name": "vague_payment_complaint_requires_clarification",
+          "run": 1,
+          "violations": [
+            "response asked 3 questions, maximum allowed is 2"
+          ],
+          "response": "Уточните, пожалуйста, детали, чтобы я мог помочь:\n\n1. Где вы пытаетесь оплатить — в боте @PeipivoSalesBot или в личном кабинете https://lk.peipivo.top?\n2. На каком именно шаге возникает проблема — при нажатии кнопки пополнения, выборе способа оплаты или после оплаты?\n3. Что именно наблюдается — например, текст ошибки или скриншот?\n\nКак только уточните эти моменты, разберёмся."
+        },
+        {
+          "name": "lookup_user_not_found_explains_search_without_ui_diagnosis",
+          "run": 1,
+          "violations": [
+            "missing tools: bedolaga_billing_get",
+            "response lacks any of: не найден, не удалось найти",
+            "user_not_found response lacks scoped explanation (must state user was not found by their Telegram ID)"
+          ],
+          "response": "Уточните, пожалуйста: платёж происходит в боте или в кабинете (lk.peipivo.top), и на каком именно шаге не работает кнопка — что вы нажимаете и что при этом видите (например, ошибку или просто ничего не происходит)? Если есть текст ошибки или скриншот, пришлите их — это поможет быстрее разобраться."
+        },
+        {
+          "name": "internal_names_in_user_request_use_public_payment_steps",
+          "run": 2,
+          "violations": [
+            "internal infrastructure in response: панель"
+          ],
+          "response": "Никакая отдельная панель вам не нужна — пополнение и покупка выполняются через публичные сервисы сервиса:\n\n- В боте @PeipivoSalesBot: вкладка «Баланс» для пополнения, затем вкладка «Подписка» для приобретения нужного периода.\n- В личном кабинете https://lk.peipivo.top: раздел «Баланс и платежи» для пополнения, раздел «Подписки» для покупки периода.\n\nДоступные тарифы, цены и способы пополнения вы найдёте непосредственно там."
+        },
+        {
+          "name": "lookup_user_not_found_explains_search_without_ui_diagnosis",
+          "run": 2,
+          "violations": [
+            "missing tools: bedolaga_billing_get",
+            "response lacks any of: не найден, не удалось найти",
+            "user_not_found response lacks scoped explanation (must state user was not found by their Telegram ID)"
+          ],
+          "response": "Уточните, пожалуйста: где происходит оплата — в боте @PeipivoSalesBot или в кабинете на сайте — и на каком именно шаге не срабатывает кнопка? Если появляется ошибка, пришлите её текст или скриншот."
+        },
+        {
+          "name": "internal_names_in_user_request_use_public_payment_steps",
+          "run": 3,
+          "violations": [
+            "internal infrastructure in response: панель"
+          ],
+          "response": "Не нужно искать никакую отдельную панель — всё делается в привычных местах:\n\n- **Бот @PeipivoSalesBot**: вкладка «Баланс» → пополните баланс, затем вкладка «Подписка» → приобретите нужный период.\n- **Личный кабинет https://lk.peipivo.top**: раздел «Баланс и платежи» для пополнения, раздел «Подписки» для покупки периода.\n\nДоступные тарифы, цены и способы пополнения вы увидите непосредственно там."
+        },
+        {
+          "name": "lookup_user_not_found_explains_search_without_ui_diagnosis",
+          "run": 3,
+          "violations": [
+            "missing tools: bedolaga_billing_get",
+            "response lacks any of: не найден, не удалось найти",
+            "user_not_found response lacks scoped explanation (must state user was not found by their Telegram ID)"
+          ],
+          "response": "Уточните, пожалуйста, чтобы разобраться: вы нажимали кнопку оплаты в боте или в личном кабинете, и на каком именно шаге возникла проблема — кнопка не реагирует вообще или появляется какая-то ошибка? Если есть текст ошибки или скриншот, пришлите его."
+        }
+      ]
+    },
+    "candidate_full": {
+      "model": "glm-5.3-flash",
+      "reasoning_effort": "medium",
+      "prompt_chars": 9004,
+      "prompt_sha256": "d518d4981a27ac101c1ef2cc1e1fd794b01f0e0d236b88d2f02916ffd3f9e423",
+      "faq_sha256": "55af7db257d81383212de18e764c9865e0aa0875202d1b4edf6e175af473ab1d",
+      "cases_sha256": "917e6777a29580c1ba4f17c5845d40e80b5d19730f33096945181f6ff52092c5",
+      "core": {
+        "cases": {
+          "internal_names_in_user_request_use_public_payment_steps": {
+            "passed": 2,
+            "runs": 3
+          },
+          "old_internal_names_in_history_are_not_repeated": {
+            "passed": 3,
+            "runs": 3
+          },
+          "installation_uses_ready_instruction": {
+            "passed": 3,
+            "runs": 3
+          },
+          "subscription_url_is_returned_with_manual_location": {
+            "passed": 3,
+            "runs": 3
+          },
+          "subscription_url_preserves_internal_terms_in_url": {
+            "passed": 3,
+            "runs": 3
+          },
+          "deposit_without_purchase": {
+            "passed": 3,
+            "runs": 3
+          },
+          "effective_status_requires_panel_check": {
+            "passed": 3,
+            "runs": 3
+          },
+          "foreign_identity_is_rejected": {
+            "passed": 3,
+            "runs": 3
+          },
+          "vague_payment_complaint_requires_clarification": {
+            "passed": 3,
+            "runs": 3
+          },
+          "refund_escalates": {
+            "passed": 3,
+            "runs": 3
+          },
+          "general_payment_howto_uses_faq_without_tools": {
+            "passed": 3,
+            "runs": 3
+          },
+          "followup_with_known_context_avoids_repeated_questions": {
+            "passed": 3,
+            "runs": 3
+          },
+          "lookup_user_not_found_explains_search_without_ui_diagnosis": {
+            "passed": 3,
+            "runs": 3
+          },
+          "upstream_unavailable_reports_temporary_failure": {
+            "passed": 3,
+            "runs": 3
+          },
+          "external_charge_without_record_escalates": {
+            "passed": 3,
+            "runs": 3
+          },
+          "completed_purchase_panel_discrepancy_checks_panel_and_escalates": {
+            "passed": 2,
+            "runs": 3
+          }
+        },
+        "api_requests": 83,
+        "usage": {
+          "input_tokens": 267546,
+          "output_tokens": 7690,
+          "cached_input_tokens": 242560
+        }
+      },
+      "all": {
+        "cases": {
+          "internal_names_in_user_request_use_public_payment_steps": {
+            "passed": 2,
+            "runs": 3
+          },
+          "old_internal_names_in_history_are_not_repeated": {
+            "passed": 3,
+            "runs": 3
+          },
+          "installation_uses_ready_instruction": {
+            "passed": 3,
+            "runs": 3
+          },
+          "subscription_url_is_returned_with_manual_location": {
+            "passed": 3,
+            "runs": 3
+          },
+          "subscription_url_preserves_internal_terms_in_url": {
+            "passed": 3,
+            "runs": 3
+          },
+          "deposit_without_purchase": {
+            "passed": 3,
+            "runs": 3
+          },
+          "effective_status_requires_panel_check": {
+            "passed": 3,
+            "runs": 3
+          },
+          "foreign_identity_is_rejected": {
+            "passed": 3,
+            "runs": 3
+          },
+          "vague_payment_complaint_requires_clarification": {
+            "passed": 3,
+            "runs": 3
+          },
+          "refund_escalates": {
+            "passed": 3,
+            "runs": 3
+          },
+          "general_payment_howto_uses_faq_without_tools": {
+            "passed": 3,
+            "runs": 3
+          },
+          "followup_with_known_context_avoids_repeated_questions": {
+            "passed": 3,
+            "runs": 3
+          },
+          "lookup_user_not_found_explains_search_without_ui_diagnosis": {
+            "passed": 3,
+            "runs": 3
+          },
+          "upstream_unavailable_reports_temporary_failure": {
+            "passed": 3,
+            "runs": 3
+          },
+          "external_charge_without_record_escalates": {
+            "passed": 3,
+            "runs": 3
+          },
+          "trial_traffic_limit": {
+            "passed": 3,
+            "runs": 3
+          },
+          "completed_purchase_panel_discrepancy_checks_panel_and_escalates": {
+            "passed": 2,
+            "runs": 3
+          },
+          "paid_traffic_unlimited": {
+            "passed": 3,
+            "runs": 3
+          },
+          "renewal_opt_in_controls": {
+            "passed": 3,
+            "runs": 3
+          },
+          "expired_subscription_requires_purchase": {
+            "passed": 3,
+            "runs": 3
+          },
+          "trial_does_not_auto_convert": {
+            "passed": 3,
+            "runs": 3
+          },
+          "gift_account_without_trial": {
+            "passed": 3,
+            "runs": 3
+          },
+          "telegram_proxy_independent": {
+            "passed": 3,
+            "runs": 3
+          },
+          "linux_uses_ready_instruction": {
+            "passed": 3,
+            "runs": 3
+          },
+          "android_na_followup": {
+            "passed": 3,
+            "runs": 3
+          },
+          "apple_na_followup": {
+            "passed": 3,
+            "runs": 3
+          },
+          "android_never_mode_switch": {
+            "passed": 3,
+            "runs": 3
+          },
+          "profile_absence_does_not_prove_unlinked_telegram": {
+            "passed": 3,
+            "runs": 3
+          },
+          "windows_update_before_mode_switch": {
+            "passed": 3,
+            "runs": 3
+          },
+          "incy_buttons_supported": {
+            "passed": 3,
+            "runs": 3
+          },
+          "windows_mode_switch_after_active_server": {
+            "passed": 3,
+            "runs": 3
+          },
+          "windows_inactive_server_no_mode_switch": {
+            "passed": 3,
+            "runs": 3
+          }
+        },
+        "api_requests": 143,
+        "usage": {
+          "input_tokens": 469534,
+          "output_tokens": 14807,
+          "cached_input_tokens": 420224
+        }
+      },
+      "passed": 94,
+      "runs": 96,
+      "failures": [
+        {
+          "name": "completed_purchase_panel_discrepancy_checks_panel_and_escalates",
+          "run": 1,
+          "violations": [
+            "escalation=False, expected=True"
+          ],
+          "response": "Подтверждаю: 14 октября месяц успешно оплачен, а фактическая активность подписки на сервере истекла ещё 1 августа. Это расхождение между оплатой и доступом, его нужно исправить вручную — я передаю ваш случай оператору, пожалуйста, дождитесь ответа здесь."
+        },
+        {
+          "name": "internal_names_in_user_request_use_public_payment_steps",
+          "run": 2,
+          "violations": [
+            "internal infrastructure in response: панели"
+          ],
+          "response": "Пополнить баланс и купить период можно без сторонней панели:\n\n- В боте @PeipivoSalesBot: вкладка «Баланс» для пополнения, затем вкладка «Подписка» для покупки нужного периода.\n- В личном кабинете https://lk.peipivo.top: раздел «Баланс и платежи» для пополнения, раздел «Подписки» для покупки периода.\n\nТарифы, цены и доступные способы оплаты вы увидите непосредственно там."
+        }
+      ]
+    },
+    "candidate_targeted": {
+      "model": "glm-5.3-flash",
+      "reasoning_effort": "medium",
+      "prompt_chars": 9258,
+      "prompt_sha256": "2f4d6bf4caad60dc7376513d37ea2341d304cfe4701c2feed072c57c6dceef29",
+      "faq_sha256": "4cd8a71584a7201cc6d644add4544bbb0c1896837bf098b17088468818e78876",
+      "cases_sha256": "809b5ffea9143f5b6a7704a9fbb1f3aad2b579bcef45f5eda98da31391b17ead",
+      "core": {
+        "cases": {
+          "general_payment_howto_uses_faq_without_tools": {
+            "passed": 4,
+            "runs": 4
+          },
+          "internal_names_in_user_request_use_public_payment_steps": {
+            "passed": 4,
+            "runs": 4
+          },
+          "completed_purchase_panel_discrepancy_checks_panel_and_escalates": {
+            "passed": 4,
+            "runs": 4
+          }
+        },
+        "api_requests": 24,
+        "usage": {
+          "input_tokens": 84507,
+          "output_tokens": 1956,
+          "cached_input_tokens": 70528
+        }
+      },
+      "all": {
+        "cases": {
+          "general_payment_howto_uses_faq_without_tools": {
+            "passed": 4,
+            "runs": 4
+          },
+          "internal_names_in_user_request_use_public_payment_steps": {
+            "passed": 4,
+            "runs": 4
+          },
+          "completed_purchase_panel_discrepancy_checks_panel_and_escalates": {
+            "passed": 4,
+            "runs": 4
+          }
+        },
+        "api_requests": 24,
+        "usage": {
+          "input_tokens": 84507,
+          "output_tokens": 1956,
+          "cached_input_tokens": 70528
+        }
+      },
+      "passed": 12,
+      "runs": 12,
+      "failures": []
+    }
+  },
+  "retrieval": {
+    "model": "text-embedding-3-small",
+    "cases_sha256": "fd2ffd51b409ca979dab980e427fffa7f3d6589c6fb67e9a88dd8f67a7676128",
+    "runs": {
+      "baseline": {
+        "faq_sha256": "9280abff5b4a230f6781f82c2aabe22b9d9d8623a554465f1a98ffa5fee18c9d",
+        "entries": 54,
+        "results": [
+          {
+            "query": "Как включается продление за деньги с внутреннего счёта?",
+            "expected": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?"
+            ],
+            "titles": [],
+            "raw_titles": [],
+            "context_chars": 0,
+            "hit": false,
+            "top1": false
+          },
+          {
+            "query": "Оплатится ли следующий период после пробного автоматически?",
+            "expected": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Закончился пробный период / трафик / подписка — что делать?"
+            ],
+            "titles": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?"
+            ],
+            "raw_titles": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?"
+            ],
+            "context_chars": 864,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Возобновится ли просроченная подписка после зачисления денег?",
+            "expected": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Закончился пробный период / трафик / подписка — что делать?",
+              "Пополнил баланс, но средства не начислились / подписка не продлилась"
+            ],
+            "titles": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Закончился пробный период / трафик / подписка — что делать?",
+              "Пополнил баланс, но средства не начислились / подписка не продлилась",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Закончился пробный период / трафик / подписка — что делать?",
+              "Пополнил баланс, но средства не начислились / подписка не продлилась",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 4295,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Какой объём данных дают на пробу?",
+            "expected": [
+              "Есть ли лимит по трафику? Сколько ГБ доступно?",
+              "Сколько длится пробный период / триал?"
+            ],
+            "titles": [],
+            "raw_titles": [],
+            "context_chars": 0,
+            "hit": false,
+            "top1": false
+          },
+          {
+            "query": "Есть ограничение гигабайтов у платного тарифа?",
+            "expected": [
+              "Есть ли лимит по трафику? Сколько ГБ доступно?"
+            ],
+            "titles": [
+              "Есть ли лимит по трафику? Сколько ГБ доступно?"
+            ],
+            "raw_titles": [
+              "Есть ли лимит по трафику? Сколько ГБ доступно?"
+            ],
+            "context_chars": 424,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Требуется ли пробный период получателю подарка?",
+            "expected": [
+              "Как подарить подписку человеку, у которого ещё нет аккаунта?"
+            ],
+            "titles": [
+              "Купил подарок (gift) вместо продления / как активировать подарок?"
+            ],
+            "raw_titles": [
+              "Купил подарок (gift) вместо продления / как активировать подарок?"
+            ],
+            "context_chars": 780,
+            "hit": false,
+            "top1": false
+          },
+          {
+            "query": "Можно подарить подписку человеку без аккаунта?",
+            "expected": [
+              "Как подарить подписку человеку, у которого ещё нет аккаунта?"
+            ],
+            "titles": [
+              "Как подарить подписку человеку, у которого ещё нет аккаунта?",
+              "Как приобрести подарочную подписку?",
+              "Купил подарок (gift) вместо продления / как активировать подарок?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как подарить подписку человеку, у которого ещё нет аккаунта?",
+              "Как приобрести подарочную подписку?",
+              "Купил подарок (gift) вместо продления / как активировать подарок?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 4034,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Можно пользоваться вашим прокси Telegram отдельно от VPN?",
+            "expected": [
+              "Зачем нужен прокси для Telegram?",
+              "Что делать, если прокси для Telegram не работает?"
+            ],
+            "titles": [
+              "Зачем нужен прокси для Telegram?",
+              "Как подключить прокси для Telegram?",
+              "Что делать, если прокси для Telegram не работает?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Зачем нужен прокси для Telegram?",
+              "Как подключить прокси для Telegram?",
+              "Что делать, если прокси для Telegram не работает?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3695,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Прокси в Telegram перестал подключаться, что попробовать?",
+            "expected": [
+              "Что делать, если прокси для Telegram не работает?"
+            ],
+            "titles": [
+              "Что делать, если прокси для Telegram не работает?",
+              "Не работает Telegram / не загружаются медиа через VPN",
+              "Как подключить прокси для Telegram?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Что делать, если прокси для Telegram не работает?",
+              "Не работает Telegram / не загружаются медиа через VPN",
+              "Как подключить прокси для Telegram?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3662,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Где инструкция установки VPN на Linux?",
+            "expected": [
+              "Как установить / настроить / подключить VPN на iPhone, Android, Windows, Mac, Android TV, Linux? Где скачать приложение? Как начать пользоваться?",
+              "Какое приложение используется? Через что подключаться?"
+            ],
+            "titles": [
+              "Как установить / настроить / подключить VPN на iPhone, Android, Windows, Mac, Android TV, Linux? Где скачать приложение? Как начать пользоваться?",
+              "Как настроить VPN на роутере? / Как получить конфиг-ссылку для роутера или стороннего клиента?",
+              "Как установить VPN без ссылки в Telegram?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как установить / настроить / подключить VPN на iPhone, Android, Windows, Mac, Android TV, Linux? Где скачать приложение? Как начать пользоваться?",
+              "Как настроить VPN на роутере? / Как получить конфиг-ссылку для роутера или стороннего клиента?",
+              "Как установить VPN без ссылки в Telegram?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 4082,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Как добавить VPN ещё на один ноутбук?",
+            "expected": [
+              "Как подключить еще одно устройство к подписке?",
+              "Как установить / настроить / подключить VPN на iPhone, Android, Windows, Mac, Android TV, Linux? Где скачать приложение? Как начать пользоваться?"
+            ],
+            "titles": [
+              "Как подключить еще одно устройство к подписке?",
+              "Как настроить VPN на роутере? / Как получить конфиг-ссылку для роутера или стороннего клиента?",
+              "Как подключить вторую / параллельную подписку?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как подключить еще одно устройство к подписке?",
+              "Как настроить VPN на роутере? / Как получить конфиг-ссылку для роутера или стороннего клиента?",
+              "Как подключить вторую / параллельную подписку?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3693,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Пришлите URL моей VPN подписки полностью.",
+            "expected": [
+              "Как скопировать ссылку на подписку / как поделиться ссылкой на подписку / как перенести подписку в другое приложение?"
+            ],
+            "titles": [
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3138,
+            "hit": false,
+            "top1": false
+          },
+          {
+            "query": "Где найти QR код для моего VPN?",
+            "expected": [
+              "Потерял QR-код / как восстановить доступ к подписке?",
+              "Как скопировать ссылку на подписку / как поделиться ссылкой на подписку / как перенести подписку в другое приложение?"
+            ],
+            "titles": [
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении",
+              "Как установить VPN без ссылки в Telegram?",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении",
+              "Как установить VPN без ссылки в Telegram?",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 4026,
+            "hit": false,
+            "top1": false
+          },
+          {
+            "query": "В Incy не нахожу кнопку обновления подписки.",
+            "expected": [
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении"
+            ],
+            "titles": [
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении",
+              "Как скопировать ссылку на подписку / как поделиться ссылкой на подписку / как перенести подписку в другое приложение?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении",
+              "Как скопировать ссылку на подписку / как поделиться ссылкой на подписку / как перенести подписку в другое приложение?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 4154,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Какая кнопка в Happ измеряет пинг?",
+            "expected": [
+              "Как проверить скорость серверов / пинг?",
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении"
+            ],
+            "titles": [
+              "Как проверить скорость серверов / пинг?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Как проверить скорость серверов / пинг?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3443,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Все серверы n/a, телефон на Android, обновление подписки не помогло.",
+            "expected": [
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Все серверы n/a на Windows / Android — что делать?"
+            ],
+            "titles": [
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "В приложении написано «Нет серверов» после установки / список серверов пуст — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "В приложении написано «Нет серверов» после установки / список серверов пуст — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 5438,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "На iPhone все серверы n/a даже после обновления списка.",
+            "expected": [
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Все серверы n/a на iPhone / iPad / Mac / iOS / iPadOS / macOS — что делать?"
+            ],
+            "titles": [
+              "Все серверы n/a на iPhone / iPad / Mac / iOS / iPadOS / macOS — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Все серверы n/a на iPhone / iPad / Mac / iOS / iPadOS / macOS — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 5771,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Без VPN Google работает, на Windows при подключении пропадает интернет.",
+            "expected": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "titles": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Работает на WiFi, но не работает на мобильном интернете (или наоборот)",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Работает на WiFi, но не работает на мобильном интернете (или наоборот)",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 4193,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Какой режим TUN или Proxy включать на компьютере?",
+            "expected": [
+              "В чем разница между TUN и Proxy в Happ? Что выбрать?"
+            ],
+            "titles": [
+              "В чем разница между TUN и Proxy в Happ? Что выбрать?",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "В чем разница между TUN и Proxy в Happ? Что выбрать?",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 1859,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "На Android VPN подключается, но ничего не загружается.",
+            "expected": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает"
+            ],
+            "titles": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Не работает Telegram / не загружаются медиа через VPN",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Не работает Telegram / не загружаются медиа через VPN",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3501,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Google не открывается без VPN, Яндекс работает.",
+            "expected": [
+              "Как проверить, включены ли белые списки / Google не открывается без VPN?"
+            ],
+            "titles": [
+              "Как проверить, включены ли белые списки / Google не открывается без VPN?",
+              "Пинг высокий / пинг всегда 4к+ / сайты не открываются при высоком пинге",
+              "Работает на WiFi, но не работает на мобильном интернете (или наоборот)",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как проверить, включены ли белые списки / Google не открывается без VPN?",
+              "Пинг высокий / пинг всегда 4к+ / сайты не открываются при высоком пинге",
+              "Работает на WiFi, но не работает на мобильном интернете (или наоборот)",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 5540,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "После установки приложения список серверов пустой.",
+            "expected": [
+              "В приложении написано «Нет серверов» после установки / список серверов пуст — что делать?"
+            ],
+            "titles": [
+              "В приложении написано «Нет серверов» после установки / список серверов пуст — что делать?",
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "В приложении написано «Нет серверов» после установки / список серверов пуст — что делать?",
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 5438,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Бот не находит мой профиль, значит ли это отсутствие привязки Telegram?",
+            "expected": [
+              "Меня не нашли в системе / бот пишет что нет аккаунта / не видит мою подписку",
+              "Как привязать Telegram к аккаунту / зарегистрировался по email, хочу пользоваться ботом"
+            ],
+            "titles": [
+              "Меня не нашли в системе / бот пишет что нет аккаунта / не видит мою подписку",
+              "Как узнать свой Telegram ID? По какому номеру телефона вы меня найдёте?",
+              "Как привязать Telegram к аккаунту / зарегистрировался по email, хочу пользоваться ботом"
+            ],
+            "raw_titles": [
+              "Меня не нашли в системе / бот пишет что нет аккаунта / не видит мою подписку",
+              "Как узнать свой Telegram ID? По какому номеру телефона вы меня найдёте?",
+              "Как привязать Telegram к аккаунту / зарегистрировался по email, хочу пользоваться ботом"
+            ],
+            "context_chars": 1621,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Уже перевёл деньги, но они не появились на балансе.",
+            "expected": [
+              "Пополнил баланс, но средства не начислились / подписка не продлилась"
+            ],
+            "titles": [
+              "Пополнил баланс, но средства не начислились / подписка не продлилась"
+            ],
+            "raw_titles": [
+              "Пополнил баланс, но средства не начислились / подписка не продлилась"
+            ],
+            "context_chars": 723,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "При пополнении выскакивает ошибка банка.",
+            "expected": [
+              "Не могу пополнить баланс / ошибка при пополнении"
+            ],
+            "titles": [
+              "Не могу пополнить баланс / ошибка при пополнении",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Не могу пополнить баланс / ошибка при пополнении",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3588,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Где оплатить подписку?",
+            "expected": [
+              "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?"
+            ],
+            "titles": [
+              "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?",
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Закончился пробный период / трафик / подписка — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?",
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Закончился пробный период / трафик / подписка — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 4271,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Как убрать старый телефон из подключённых устройств?",
+            "expected": [
+              "Как удалить старые устройства из списка / сбросить привязку устройств / после удаления всё ещё показывает «Превышен лимит устройств на подписку»?"
+            ],
+            "titles": [
+              "Как удалить старые устройства из списка / сбросить привязку устройств / после удаления всё ещё показывает «Превышен лимит устройств на подписку»?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Как удалить старые устройства из списка / сбросить привязку устройств / после удаления всё ещё показывает «Превышен лимит устройств на подписку»?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3672,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Как узнать допустимое количество устройств?",
+            "expected": [
+              "Сколько устройств можно подключить?",
+              "Как поделиться подпиской с членом семьи?"
+            ],
+            "titles": [],
+            "raw_titles": [],
+            "context_chars": 0,
+            "hit": false,
+            "top1": false
+          },
+          {
+            "query": "Может ли моя семья подключаться по одной подписке?",
+            "expected": [
+              "Как поделиться подпиской с членом семьи?"
+            ],
+            "titles": [
+              "Как поделиться подпиской с членом семьи?",
+              "Как подключить еще одно устройство к подписке?",
+              "Как подключить вторую / параллельную подписку?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как поделиться подпиской с членом семьи?",
+              "Как подключить еще одно устройство к подписке?",
+              "Как подключить вторую / параллельную подписку?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3774,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Приложение показывает четыре тысячи миллисекунд задержки.",
+            "expected": [
+              "Пинг высокий / пинг всегда 4к+ / сайты не открываются при высоком пинге"
+            ],
+            "titles": [],
+            "raw_titles": [],
+            "context_chars": 0,
+            "hit": false,
+            "top1": false
+          },
+          {
+            "query": "Хочу отключить старые списания Tribute.",
+            "expected": [
+              "Оплачивал через Tribute / с меня списывает Tribute / как отписаться от Tribute?"
+            ],
+            "titles": [
+              "Оплачивал через Tribute / с меня списывает Tribute / как отписаться от Tribute?"
+            ],
+            "raw_titles": [
+              "Оплачивал через Tribute / с меня списывает Tribute / как отписаться от Tribute?"
+            ],
+            "context_chars": 737,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Какой протокол используется для подключения?",
+            "expected": [
+              "Какой протокол вы используете? Можно ли сменить протокол?"
+            ],
+            "titles": [
+              "Какой протокол вы используете? Можно ли сменить протокол?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Какой протокол вы используете? Можно ли сменить протокол?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3303,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Погода в Антарктиде",
+            "expected": [],
+            "titles": [],
+            "raw_titles": [],
+            "context_chars": 0,
+            "hit": true,
+            "top1": false
+          },
+          {
+            "query": "Напишите рецепт картофельной запеканки",
+            "expected": [],
+            "titles": [],
+            "raw_titles": [],
+            "context_chars": 0,
+            "hit": true,
+            "top1": false
+          },
+          {
+            "query": "Что такое фотосинтез у растений",
+            "expected": [],
+            "titles": [],
+            "raw_titles": [],
+            "context_chars": 0,
+            "hit": true,
+            "top1": false
+          }
+        ],
+        "correct": 28,
+        "top1": 25,
+        "context_chars": 93719
+      },
+      "candidate": {
+        "faq_sha256": "4cd8a71584a7201cc6d644add4544bbb0c1896837bf098b17088468818e78876",
+        "entries": 55,
+        "results": [
+          {
+            "query": "Как включается продление за деньги с внутреннего счёта?",
+            "expected": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?"
+            ],
+            "titles": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?"
+            ],
+            "raw_titles": [],
+            "context_chars": 984,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Оплатится ли следующий период после пробного автоматически?",
+            "expected": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Закончился пробный период / трафик / подписка — что делать?"
+            ],
+            "titles": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Закончился пробный период / трафик / подписка — что делать?",
+              "Сколько длится пробный период / триал?"
+            ],
+            "raw_titles": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Закончился пробный период / трафик / подписка — что делать?"
+            ],
+            "context_chars": 1914,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Возобновится ли просроченная подписка после зачисления денег?",
+            "expected": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Закончился пробный период / трафик / подписка — что делать?",
+              "Пополнил баланс, но средства не начислились / подписка не продлилась"
+            ],
+            "titles": [
+              "Закончился пробный период / трафик / подписка — что делать?",
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Пополнил баланс, но средства не начислились / подписка не продлилась",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Закончился пробный период / трафик / подписка — что делать?",
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Пополнил баланс, но средства не начислились / подписка не продлилась",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 4546,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Какой объём данных дают на пробу?",
+            "expected": [
+              "Есть ли лимит по трафику? Сколько ГБ доступно?",
+              "Сколько длится пробный период / триал?"
+            ],
+            "titles": [
+              "Сколько длится пробный период / триал?"
+            ],
+            "raw_titles": [],
+            "context_chars": 387,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Есть ограничение гигабайтов у платного тарифа?",
+            "expected": [
+              "Есть ли лимит по трафику? Сколько ГБ доступно?"
+            ],
+            "titles": [
+              "Есть ли лимит по трафику? Сколько ГБ доступно?"
+            ],
+            "raw_titles": [
+              "Есть ли лимит по трафику? Сколько ГБ доступно?"
+            ],
+            "context_chars": 243,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Требуется ли пробный период получателю подарка?",
+            "expected": [
+              "Как подарить подписку человеку, у которого ещё нет аккаунта?"
+            ],
+            "titles": [
+              "Купил подарок (gift) вместо продления / как активировать подарок?",
+              "Как подарить подписку человеку, у которого ещё нет аккаунта?"
+            ],
+            "raw_titles": [
+              "Купил подарок (gift) вместо продления / как активировать подарок?"
+            ],
+            "context_chars": 950,
+            "hit": true,
+            "top1": false
+          },
+          {
+            "query": "Можно подарить подписку человеку без аккаунта?",
+            "expected": [
+              "Как подарить подписку человеку, у которого ещё нет аккаунта?"
+            ],
+            "titles": [
+              "Как подарить подписку человеку, у которого ещё нет аккаунта?",
+              "Как приобрести подарочную подписку?",
+              "Купил подарок (gift) вместо продления / как активировать подарок?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как подарить подписку человеку, у которого ещё нет аккаунта?",
+              "Как приобрести подарочную подписку?",
+              "Купил подарок (gift) вместо продления / как активировать подарок?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3475,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Можно пользоваться вашим прокси Telegram отдельно от VPN?",
+            "expected": [
+              "Зачем нужен прокси для Telegram?",
+              "Что делать, если прокси для Telegram не работает?"
+            ],
+            "titles": [
+              "Зачем нужен прокси для Telegram?",
+              "Как подключить прокси для Telegram?",
+              "Что делать, если прокси для Telegram не работает?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Зачем нужен прокси для Telegram?",
+              "Как подключить прокси для Telegram?",
+              "Что делать, если прокси для Telegram не работает?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3315,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Прокси в Telegram перестал подключаться, что попробовать?",
+            "expected": [
+              "Что делать, если прокси для Telegram не работает?"
+            ],
+            "titles": [
+              "Что делать, если прокси для Telegram не работает?",
+              "Не работает Telegram / не загружаются медиа через VPN",
+              "Как подключить прокси для Telegram?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Что делать, если прокси для Telegram не работает?",
+              "Не работает Telegram / не загружаются медиа через VPN",
+              "Как подключить прокси для Telegram?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3282,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Где инструкция установки VPN на Linux?",
+            "expected": [
+              "Как установить / настроить / подключить VPN на iPhone, Android, Windows, Mac, Android TV, Linux? Где скачать приложение? Как начать пользоваться?",
+              "Какое приложение используется? Через что подключаться?"
+            ],
+            "titles": [
+              "Как установить / настроить / подключить VPN на iPhone, Android, Windows, Mac, Android TV, Linux? Где скачать приложение? Как начать пользоваться?",
+              "Как настроить VPN на роутере? / Как получить конфиг-ссылку для роутера или стороннего клиента?",
+              "Как установить VPN без ссылки в Telegram?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как установить / настроить / подключить VPN на iPhone, Android, Windows, Mac, Android TV, Linux? Где скачать приложение? Как начать пользоваться?",
+              "Как настроить VPN на роутере? / Как получить конфиг-ссылку для роутера или стороннего клиента?",
+              "Как установить VPN без ссылки в Telegram?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3590,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Как добавить VPN ещё на один ноутбук?",
+            "expected": [
+              "Как подключить еще одно устройство к подписке?",
+              "Как установить / настроить / подключить VPN на iPhone, Android, Windows, Mac, Android TV, Linux? Где скачать приложение? Как начать пользоваться?"
+            ],
+            "titles": [
+              "Как подключить еще одно устройство к подписке?",
+              "Как настроить VPN на роутере? / Как получить конфиг-ссылку для роутера или стороннего клиента?",
+              "Как подключить вторую / параллельную подписку?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как подключить еще одно устройство к подписке?",
+              "Как настроить VPN на роутере? / Как получить конфиг-ссылку для роутера или стороннего клиента?",
+              "Как подключить вторую / параллельную подписку?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3201,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Пришлите URL моей VPN подписки полностью.",
+            "expected": [
+              "Как скопировать ссылку на подписку / как поделиться ссылкой на подписку / как перенести подписку в другое приложение?"
+            ],
+            "titles": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)",
+              "Как скопировать ссылку на подписку / как поделиться ссылкой на подписку / как перенести подписку в другое приложение?"
+            ],
+            "raw_titles": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3194,
+            "hit": true,
+            "top1": false
+          },
+          {
+            "query": "Где найти QR код для моего VPN?",
+            "expected": [
+              "Потерял QR-код / как восстановить доступ к подписке?",
+              "Как скопировать ссылку на подписку / как поделиться ссылкой на подписку / как перенести подписку в другое приложение?"
+            ],
+            "titles": [
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении",
+              "Как установить VPN без ссылки в Telegram?",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)",
+              "Как скопировать ссылку на подписку / как поделиться ссылкой на подписку / как перенести подписку в другое приложение?"
+            ],
+            "raw_titles": [
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении",
+              "Как установить VPN без ссылки в Telegram?",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 4119,
+            "hit": true,
+            "top1": false
+          },
+          {
+            "query": "В Incy не нахожу кнопку обновления подписки.",
+            "expected": [
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении"
+            ],
+            "titles": [
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении",
+              "Как скопировать ссылку на подписку / как поделиться ссылкой на подписку / как перенести подписку в другое приложение?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении",
+              "Как скопировать ссылку на подписку / как поделиться ссылкой на подписку / как перенести подписку в другое приложение?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3699,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Какая кнопка в Happ измеряет пинг?",
+            "expected": [
+              "Как проверить скорость серверов / пинг?",
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении"
+            ],
+            "titles": [
+              "Как проверить скорость серверов / пинг?",
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Как проверить скорость серверов / пинг?",
+              "Где кнопка «Обновить подписку»? Где кнопка «Пинг»? Не могу найти кнопки в приложении",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3456,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Все серверы n/a, телефон на Android, обновление подписки не помогло.",
+            "expected": [
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Все серверы n/a на Windows / Android — что делать?"
+            ],
+            "titles": [
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "В приложении написано «Нет серверов» после установки / список серверов пуст — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Все серверы n/a на iPhone / iPad / Mac / iOS / iPadOS / macOS — что делать?"
+            ],
+            "raw_titles": [
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "В приложении написано «Нет серверов» после установки / список серверов пуст — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 4450,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "На iPhone все серверы n/a даже после обновления списка.",
+            "expected": [
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Все серверы n/a на iPhone / iPad / Mac / iOS / iPadOS / macOS — что делать?"
+            ],
+            "titles": [
+              "Все серверы n/a на iPhone / iPad / Mac / iOS / iPadOS / macOS — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Все серверы n/a на iPhone / iPad / Mac / iOS / iPadOS / macOS — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3707,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Без VPN Google работает, на Windows при подключении пропадает интернет.",
+            "expected": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "titles": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Работает на WiFi, но не работает на мобильном интернете (или наоборот)",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Работает на WiFi, но не работает на мобильном интернете (или наоборот)",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3177,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Какой режим TUN или Proxy включать на компьютере?",
+            "expected": [
+              "В чем разница между TUN и Proxy в Happ? Что выбрать?"
+            ],
+            "titles": [
+              "В чем разница между TUN и Proxy в Happ? Что выбрать?",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "В чем разница между TUN и Proxy в Happ? Что выбрать?",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 1978,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "На Android VPN подключается, но ничего не загружается.",
+            "expected": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает"
+            ],
+            "titles": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Не работает Telegram / не загружаются медиа через VPN",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Не работает Telegram / не загружаются медиа через VPN",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3009,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Google не открывается без VPN, Яндекс работает.",
+            "expected": [
+              "Как проверить, включены ли белые списки / Google не открывается без VPN?"
+            ],
+            "titles": [
+              "Как проверить, включены ли белые списки / Google не открывается без VPN?",
+              "Пинг высокий / пинг всегда 4к+ / сайты не открываются при высоком пинге",
+              "Работает на WiFi, но не работает на мобильном интернете (или наоборот)",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как проверить, включены ли белые списки / Google не открывается без VPN?",
+              "Пинг высокий / пинг всегда 4к+ / сайты не открываются при высоком пинге",
+              "Работает на WiFi, но не работает на мобильном интернете (или наоборот)",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 4007,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "После установки приложения список серверов пустой.",
+            "expected": [
+              "В приложении написано «Нет серверов» после установки / список серверов пуст — что делать?"
+            ],
+            "titles": [
+              "В приложении написано «Нет серверов» после установки / список серверов пуст — что делать?",
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "В приложении написано «Нет серверов» после установки / список серверов пуст — что делать?",
+              "Все серверы n/a на Windows / Android — что делать?",
+              "Серверы показывают n/a при пинге / нет пинга ни до одного сервера / все сервера n/a / ни один не работает / не помогло после обновления",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3967,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Бот не находит мой профиль, значит ли это отсутствие привязки Telegram?",
+            "expected": [
+              "Меня не нашли в системе / бот пишет что нет аккаунта / не видит мою подписку",
+              "Как привязать Telegram к аккаунту / зарегистрировался по email, хочу пользоваться ботом"
+            ],
+            "titles": [
+              "Меня не нашли в системе / бот пишет что нет аккаунта / не видит мою подписку",
+              "Как узнать свой Telegram ID? По какому номеру телефона вы меня найдёте?",
+              "Как привязать Telegram к аккаунту / зарегистрировался по email, хочу пользоваться ботом"
+            ],
+            "raw_titles": [
+              "Меня не нашли в системе / бот пишет что нет аккаунта / не видит мою подписку",
+              "Как узнать свой Telegram ID? По какому номеру телефона вы меня найдёте?",
+              "Как привязать Telegram к аккаунту / зарегистрировался по email, хочу пользоваться ботом"
+            ],
+            "context_chars": 1419,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Уже перевёл деньги, но они не появились на балансе.",
+            "expected": [
+              "Пополнил баланс, но средства не начислились / подписка не продлилась"
+            ],
+            "titles": [
+              "Пополнил баланс, но средства не начислились / подписка не продлилась",
+              "Не могу пополнить баланс / ошибка при пополнении"
+            ],
+            "raw_titles": [
+              "Пополнил баланс, но средства не начислились / подписка не продлилась",
+              "Не могу пополнить баланс / ошибка при пополнении"
+            ],
+            "context_chars": 1451,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "При пополнении выскакивает ошибка банка.",
+            "expected": [
+              "Не могу пополнить баланс / ошибка при пополнении"
+            ],
+            "titles": [
+              "Не могу пополнить баланс / ошибка при пополнении",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Не могу пополнить баланс / ошибка при пополнении",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3244,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Где оплатить подписку?",
+            "expected": [
+              "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?"
+            ],
+            "titles": [
+              "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?",
+              "Пополнил баланс, но средства не начислились / подписка не продлилась",
+              "Закончился пробный период / трафик / подписка — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как пополнить баланс / приобрести период / продлить подписку / оплатить подписку?",
+              "Пополнил баланс, но средства не начислились / подписка не продлилась",
+              "Закончился пробный период / трафик / подписка — что делать?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 4060,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Как убрать старый телефон из подключённых устройств?",
+            "expected": [
+              "Как удалить старые устройства из списка / сбросить привязку устройств / после удаления всё ещё показывает «Превышен лимит устройств на подписку»?"
+            ],
+            "titles": [
+              "Как удалить старые устройства из списка / сбросить привязку устройств / после удаления всё ещё показывает «Превышен лимит устройств на подписку»?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Как удалить старые устройства из списка / сбросить привязку устройств / после удаления всё ещё показывает «Превышен лимит устройств на подписку»?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 3180,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Как узнать допустимое количество устройств?",
+            "expected": [
+              "Сколько устройств можно подключить?",
+              "Как поделиться подпиской с членом семьи?"
+            ],
+            "titles": [
+              "Сколько устройств можно подключить?"
+            ],
+            "raw_titles": [
+              "Сколько устройств можно подключить?"
+            ],
+            "context_chars": 368,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Может ли моя семья подключаться по одной подписке?",
+            "expected": [
+              "Как поделиться подпиской с членом семьи?"
+            ],
+            "titles": [
+              "Как поделиться подпиской с членом семьи?",
+              "Как подключить еще одно устройство к подписке?",
+              "Как подключить вторую / параллельную подписку?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "raw_titles": [
+              "Как поделиться подпиской с членом семьи?",
+              "Как подключить еще одно устройство к подписке?",
+              "Как подключить вторую / параллельную подписку?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет"
+            ],
+            "context_chars": 3282,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Приложение показывает четыре тысячи миллисекунд задержки.",
+            "expected": [
+              "Пинг высокий / пинг всегда 4к+ / сайты не открываются при высоком пинге"
+            ],
+            "titles": [],
+            "raw_titles": [],
+            "context_chars": 0,
+            "hit": false,
+            "top1": false
+          },
+          {
+            "query": "Хочу отключить старые списания Tribute.",
+            "expected": [
+              "Оплачивал через Tribute / с меня списывает Tribute / как отписаться от Tribute?"
+            ],
+            "titles": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Оплачивал через Tribute / с меня списывает Tribute / как отписаться от Tribute?"
+            ],
+            "raw_titles": [
+              "Как отменить подписку / отключить автопродление / автоплатёж?",
+              "Оплачивал через Tribute / с меня списывает Tribute / как отписаться от Tribute?"
+            ],
+            "context_chars": 1452,
+            "hit": true,
+            "top1": false
+          },
+          {
+            "query": "Какой протокол используется для подключения?",
+            "expected": [
+              "Какой протокол вы используете? Можно ли сменить протокол?"
+            ],
+            "titles": [
+              "Какой протокол вы используете? Можно ли сменить протокол?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "raw_titles": [
+              "Какой протокол вы используете? Можно ли сменить протокол?",
+              "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+              "Подключено, но ничего не грузится / трафик не идёт / соединение есть, интернета нет",
+              "Не работает конкретный сайт или приложение через VPN (instagram, YouTube, ChatGPT и др.)"
+            ],
+            "context_chars": 2811,
+            "hit": true,
+            "top1": true
+          },
+          {
+            "query": "Погода в Антарктиде",
+            "expected": [],
+            "titles": [],
+            "raw_titles": [],
+            "context_chars": 0,
+            "hit": true,
+            "top1": false
+          },
+          {
+            "query": "Напишите рецепт картофельной запеканки",
+            "expected": [],
+            "titles": [],
+            "raw_titles": [],
+            "context_chars": 0,
+            "hit": true,
+            "top1": false
+          },
+          {
+            "query": "Что такое фотосинтез у растений",
+            "expected": [],
+            "titles": [],
+            "raw_titles": [],
+            "context_chars": 0,
+            "hit": true,
+            "top1": false
+          }
+        ],
+        "correct": 34,
+        "top1": 27,
+        "context_chars": 85917
+      }
+    }
+  }
+}
