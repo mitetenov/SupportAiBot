@@ -32,7 +32,7 @@ services:
     networks:
       - internal
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3100/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "/app/remnawave-mcp", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -56,7 +56,7 @@ services:
     networks:
       - internal
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3100/health')"]
+      test: ["CMD", "/app/bedolaga-mcp", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
