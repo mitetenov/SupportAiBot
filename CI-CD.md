@@ -6,7 +6,7 @@
 
 ```
 push → SupportAiBot (master)
-  └─ test (pytest & ruff) → build → mitetenov/supportbot:latest + :{version} + :{sha}
+  └─ test (Go race/PG + Python reference) → build → mitetenov/supportbot:latest + :{version} + :{sha}
                                        └─ Deploy (вручную, workflow_dispatch) → SSH на сервер
 
 push → mcp-remnawave (main)
@@ -23,8 +23,10 @@ push → bedolaga-mcp (main)
 
 | Job | Когда | Что делает |
 |-----|-------|------------|
-| `test` | всегда, включая PR | `ruff check .`, `ruff format --check .`, `mypy` и `pytest -v` (с порогом покрытия 85%) на Python 3.14 (`uv`). Это merge-gate: именно его стоит требовать в branch protection |
+| `test` | всегда, включая PR | `gofmt`, `go vet`, `go test -race ./...` с PostgreSQL/pgvector; затем эталонные `ruff`, `mypy` и `pytest` на Python 3.14 (`uv`, порог покрытия 85%). Это merge-gate: именно его стоит требовать в branch protection |
 | `build` | только не-PR (`master`, ручной запуск) | multi-arch образ (linux/amd64 + linux/arm64), пуш в Docker Hub |
+
+Образ бота содержит нативный Go-бинарник `/app/supportbot`; Python остаётся только в CI для эталонных проверок и выбора версии релиза. Healthcheck выполняет `/app/supportbot healthcheck`.
 
 Теги образа: `latest`, `:{version}`, `:{sha}`.
 

@@ -1,41 +1,23 @@
-# Keep the build context small: everything not listed here is shipped to the
-# daemon on every build, and changing any of it can invalidate the cache.
+# Only runtime Go sources, embedded prompt and read-only FAQ assets enter builds.
+# In particular, never send .env, Python baseline, Git state, docs or local caches.
+**
+!go.mod
+!go.sum
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!faq/
+!faq/**
 
-# Python build and cache artifacts
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.ruff_cache/
-tests/
+# Tests and their Python-generated reference payloads are not Go runtime inputs.
+**/*_test.go
+**/testdata/
+**/testdata/**
+**/__pycache__/
+**/*.pyc
+faq/images/README.md
 
-# VCS and CI
-.git/
-.gitignore
-.github/
-.worktrees/
-.superpowers/
-
-# IDE and OS
-.idea/
-*.iml
-*.iws
-*.ipr
-.vscode/
-.DS_Store
-
-# Secrets and local state
-.env
-.env.example
-data/
-*.log
-DataExport_*/
-
-# Docs and orchestration — not needed to compile or run
-README.md
-CI-CD.md
-docker-compose.yml
-Dockerfile
-.dockerignore
+# Defense in depth for accidentally nested local credentials.
+**/.env
+**/.env.*

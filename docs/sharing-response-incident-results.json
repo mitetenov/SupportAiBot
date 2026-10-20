@@ -1,0 +1,156 @@
+{
+  "date": "2026-10-20",
+  "historical_turn": {
+    "utc": "2026-10-20T10:16:31Z/2026-10-20T10:16:42Z",
+    "provider": "zai",
+    "model": "glm-5.3-flash",
+    "effective_effort": "high",
+    "attempt": 1,
+    "http_status": 200,
+    "tool_calls": 0,
+    "fallback": false,
+    "raw_provider_json_recorded": false,
+    "persisted_assistant_matches_defective_telegram_text": true,
+    "history_order": "three alternating user/assistant pairs; no unrelated conversation data"
+  },
+  "retrieval_evidence": {
+    "persisted_gap_trigger": "LOW_SIMILARITY",
+    "persisted_max_similarity": 0.6437962168178226,
+    "persisted_faq_count": 3,
+    "persisted_best_question": "Не могу подключиться к VPN / не работает / не заходит / подписка активна, но не работает",
+    "main_query_hits_reconstructed_with_persisted_embedding": 0,
+    "exact_historical_full_candidate_list_logged": false
+  },
+  "targeted_race_tests": {
+    "packages": [
+      "internal/rag",
+      "internal/llm",
+      "internal/mcp",
+      "internal/diagnostics"
+    ],
+    "real_disposable_postgres": true,
+    "actual_mcp_fixture_binaries": true,
+    "counts": {
+      "pass": {
+        "top_level": 44,
+        "subtests": 364
+      },
+      "fail": {
+        "top_level": 0,
+        "subtests": 0
+      },
+      "skip": {
+        "top_level": 0,
+        "subtests": 0
+      }
+    },
+    "command": "go test -race -json ./internal/rag ./internal/llm ./internal/mcp ./internal/diagnostics -count=1",
+    "configured_fixture_env_names": [
+      "TEST_DATABASE_URL",
+      "TEST_REMNAWAVE_MCP_BIN",
+      "TEST_BEDOLAGA_MCP_BIN"
+    ]
+  },
+  "candidate_live_replays": [
+    {
+      "duration_seconds": 4.870618584,
+      "effective_effort": "high",
+      "history_written": false,
+      "model": "glm-5.3-flash",
+      "provider": "zai",
+      "question": "можно я дам ее поруге? она тоже хочет пользоваться вашим vpn",
+      "reasoning_separate": true,
+      "request": 1,
+      "status": 200,
+      "text": "Да, вы можете передать другу инструкцию по подключению — скопируйте её в боте @PeipivoSalesBot (вкладка «Подключиться») или в кабинете https://lk.peipivo.top (раздел «Подключить устройство»). Учтите: количество устройств зависит от вашего тарифа, а трафик и срок действия подписки общие на все устройства.",
+      "tool_calls": 0,
+      "tools_exposed": false
+    },
+    {
+      "duration_seconds": 6.4607535,
+      "effective_effort": "high",
+      "history_written": false,
+      "model": "glm-5.3-flash",
+      "provider": "zai",
+      "question": "То есть подруге нельзя пользоваться моей подпиской?",
+      "reasoning_separate": true,
+      "request": 2,
+      "status": 200,
+      "text": "Прошу прощения за неточность в предыдущем ответе — уточняю: да, поделиться можно. Количество устройств зависит от вашего тарифа (смотрите в боте @PeipivoSalesBot или кабинете https://lk.peipivo.top). Чтобы подключить устройство подруги, скопируйте инструкцию из бота (вкладка «Подключиться») или из кабинета (раздел «Подключить устройство») и передайте ей. Учтите: трафик и срок действия подписки общие на все устройства.",
+      "tool_calls": 0,
+      "tools_exposed": false
+    }
+  ],
+  "running": {
+    "image_id": "sha256:38c42042245c09cc7a99b7d16e40620137a5bd10f919f2e01de8badde033a98e",
+    "health": "healthy",
+    "existing_history_rows_preserved": 6,
+    "existing_history_ids_and_content_unchanged": true,
+    "faq": {
+      "count": 55,
+      "vectors": 55
+    },
+    "polling_conflict_409": false,
+    "startup_evidence": [
+      {
+        "time": "2026-10-20T10:29:47.191450969Z",
+        "level": "INFO",
+        "msg": "MCP initialized",
+        "component": "runtime",
+        "operation": "startup",
+        "server": "remnawave",
+        "tools": 17,
+        "protocol_version": "2026-07-28"
+      },
+      {
+        "time": "2026-10-20T10:29:47.193944511Z",
+        "level": "INFO",
+        "msg": "MCP initialized",
+        "component": "runtime",
+        "operation": "startup",
+        "server": "bedolaga",
+        "tools": 8,
+        "protocol_version": "2026-07-28"
+      },
+      {
+        "time": "2026-10-20T10:29:47.194241803Z",
+        "level": "INFO",
+        "msg": "FAQ initialization started",
+        "component": "runtime",
+        "operation": "startup",
+        "embedding_dimension": 1536
+      },
+      {
+        "time": "2026-10-20T10:29:47.198451886Z",
+        "level": "INFO",
+        "msg": "FAQ index unchanged; retained embeddings",
+        "component": "runtime",
+        "operation": "startup",
+        "indexed_count": 55
+      },
+      {
+        "time": "2026-10-20T10:29:47.201117261Z",
+        "level": "INFO",
+        "msg": "Health server started",
+        "component": "runtime",
+        "operation": "startup",
+        "port": 8080
+      },
+      {
+        "time": "2026-10-20T10:29:48.94126047Z",
+        "level": "INFO",
+        "msg": "Bot commands registered",
+        "component": "runtime",
+        "operation": "startup"
+      }
+    ]
+  },
+  "cleanup": "Only separate regression PostgreSQL removed; four user-stack services remain running",
+  "limitations": [
+    "Original raw provider response was not captured at INFO; exact original response JSON cannot be recovered.",
+    "Controlled replays were not Telegram end-to-end messages and used sanitized history with verified FAQ and no tools.",
+    "A bounded prompt/retrieval correction does not guarantee every future probabilistic model response."
+  ],
+  "remote_changes": "none",
+  "user_history_modified": false
+}

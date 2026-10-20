@@ -2,6 +2,7 @@ services:
   support-bot:
     image: mitetenov/supportbot:${BOT_TAG:-latest}
     container_name: vpn-support-bot
+    stop_grace_period: 30s
     restart: unless-stopped
     env_file: .env
     depends_on:
@@ -18,7 +19,7 @@ services:
     networks:
       - internal
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      test: ["CMD", "/app/supportbot", "healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3

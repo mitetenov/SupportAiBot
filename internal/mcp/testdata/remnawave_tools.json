@@ -1,0 +1,312 @@
+[
+  {
+    "name": "users_get",
+    "description": "Get a specific Remnawave user by their numeric ID",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "number",
+          "description": "User ID"
+        }
+      },
+      "required": [
+        "userId"
+      ]
+    }
+  },
+  {
+    "name": "users_get_by_username",
+    "description": "Get a Remnawave user by their username",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string",
+          "description": "Username"
+        }
+      },
+      "required": [
+        "username"
+      ]
+    }
+  },
+  {
+    "name": "users_get_by_short_uuid",
+    "description": "Get a Remnawave user by their short UUID",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "shortUuid": {
+          "type": "string",
+          "description": "Short UUID"
+        }
+      },
+      "required": [
+        "shortUuid"
+      ]
+    }
+  },
+  {
+    "name": "users_get_by_telegram_id",
+    "description": "Get Remnawave users by their Telegram ID. Returns a list — one Telegram ID may own several accounts.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "telegramId": {
+          "type": "number",
+          "description": "Telegram user ID"
+        },
+        "size": {
+          "description": "Max users to return (default 25)",
+          "type": "number"
+        }
+      },
+      "required": [
+        "telegramId"
+      ]
+    }
+  },
+  {
+    "name": "users_get_subscription_url_by_telegram_id",
+    "description": "Get the only unambiguous VPN subscription URL for the authenticated Telegram user. Returns no URL if several distinct accounts match.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "telegramId": {
+          "type": "number",
+          "description": "Authenticated Telegram user ID"
+        }
+      },
+      "required": [
+        "telegramId"
+      ]
+    }
+  },
+  {
+    "name": "users_accessible_nodes",
+    "description": "List nodes a Remnawave user can connect to",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "number",
+          "description": "User ID"
+        }
+      },
+      "required": [
+        "userId"
+      ]
+    }
+  },
+  {
+    "name": "users_resolve",
+    "description": "Search and resolve a user by ID, short UUID, or username. Exactly one of the fields must be provided.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "User numeric ID",
+          "type": "number"
+        },
+        "shortUuid": {
+          "description": "Short UUID",
+          "type": "string"
+        },
+        "username": {
+          "description": "Username",
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "nodes_list",
+    "description": "List all Remnawave nodes",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "nodes_get",
+    "description": "Get a specific node by UUID",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "uuid": {
+          "type": "string",
+          "description": "Node UUID"
+        }
+      },
+      "required": [
+        "uuid"
+      ]
+    }
+  },
+  {
+    "name": "subscriptions_get_by_user_id",
+    "description": "Get subscription details by user ID",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "number",
+          "description": "User ID"
+        }
+      },
+      "required": [
+        "userId"
+      ]
+    }
+  },
+  {
+    "name": "subscriptions_get_by_username",
+    "description": "Get subscription details by username",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "username": {
+          "type": "string",
+          "description": "Username"
+        }
+      },
+      "required": [
+        "username"
+      ]
+    }
+  },
+  {
+    "name": "subscriptions_get_by_short_uuid",
+    "description": "Get subscription details by short UUID",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "shortUuid": {
+          "type": "string",
+          "description": "Short UUID"
+        }
+      },
+      "required": [
+        "shortUuid"
+      ]
+    }
+  },
+  {
+    "name": "subscription_info",
+    "description": "Get subscription info by short UUID (public endpoint)",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "shortUuid": {
+          "type": "string",
+          "description": "Short UUID"
+        }
+      },
+      "required": [
+        "shortUuid"
+      ]
+    }
+  },
+  {
+    "name": "hwid_devices_list",
+    "description": "List the current HWID devices across every Remnawave account owned by the authenticated Telegram ID",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "telegramId": {
+          "type": "number",
+          "description": "Authenticated Telegram user ID"
+        }
+      },
+      "required": [
+        "telegramId"
+      ]
+    }
+  },
+  {
+    "name": "hwid_device_delete",
+    "description": "Delete one HWID device after verifying that its userId belongs to the authenticated Telegram ID and that the exact hwid is current",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "telegramId": {
+          "type": "number",
+          "description": "Authenticated Telegram user ID"
+        },
+        "userId": {
+          "type": "number",
+          "description": "User ID from the current HWID list"
+        },
+        "hwid": {
+          "type": "string",
+          "description": "HWID from the current HWID list"
+        }
+      },
+      "required": [
+        "telegramId",
+        "userId",
+        "hwid"
+      ]
+    }
+  },
+  {
+    "name": "hwid_devices_delete_all",
+    "description": "Delete all HWID devices for a user",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "number",
+          "description": "User ID"
+        }
+      },
+      "required": [
+        "userId"
+      ]
+    }
+  },
+  {
+    "name": "bandwidth_user_usage",
+    "description": "Get bandwidth usage for a single user",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "number",
+          "description": "User ID"
+        },
+        "start": {
+          "type": "string",
+          "description": "Start date (YYYY-MM-DD)"
+        },
+        "end": {
+          "type": "string",
+          "description": "End date (YYYY-MM-DD)"
+        }
+      },
+      "required": [
+        "userId",
+        "start",
+        "end"
+      ]
+    }
+  }
+]

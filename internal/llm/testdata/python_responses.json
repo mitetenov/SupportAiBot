@@ -1,0 +1,1933 @@
+[
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {},
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "choices": []
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "Answer"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "network_error",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "<think>private</think> Answer",
+            "reasoning_content": "retain",
+            "reasoning": "groq-reasoning"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "[]"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "tool_calls",
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ],
+            "reasoning_content": "retain"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "output": [
+        {
+          "type": "message",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Answer"
+            }
+          ]
+        }
+      ]
+    },
+    "error": false,
+    "text": "Answer",
+    "calls": [],
+    "reasoning": null,
+    "replay": [
+      {
+        "type": "message",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "Answer"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "output": [
+        {
+          "type": "reasoning",
+          "id": "r1",
+          "encrypted_content": "opaque"
+        },
+        {
+          "type": "function_call",
+          "name": "example",
+          "call_id": "c1",
+          "arguments": "{\"arg\":1}"
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": {
+          "arg": 1
+        },
+        "thoughtSignature": null
+      }
+    ],
+    "reasoning": null,
+    "replay": [
+      {
+        "type": "reasoning",
+        "id": "r1",
+        "encrypted_content": "opaque"
+      },
+      {
+        "type": "function_call",
+        "name": "example",
+        "call_id": "c1",
+        "arguments": "{\"arg\":1}"
+      }
+    ]
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Answer"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "example",
+                  "id": "c1",
+                  "args": {
+                    "arg": 1
+                  }
+                },
+                "thoughtSignature": "opaque"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {},
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "choices": []
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "Answer"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "network_error",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "<think>private</think> Answer",
+            "reasoning_content": "retain",
+            "reasoning": "groq-reasoning"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "[]"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "tool_calls",
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ],
+            "reasoning_content": "retain"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "output": [
+        {
+          "type": "message",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Answer"
+            }
+          ]
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "output": [
+        {
+          "type": "reasoning",
+          "id": "r1",
+          "encrypted_content": "opaque"
+        },
+        {
+          "type": "function_call",
+          "name": "example",
+          "call_id": "c1",
+          "arguments": "{\"arg\":1}"
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Возможно, запрос был заблокирован фильтрами.",
+    "fallback": false
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Answer"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "Answer",
+    "calls": [],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Answer"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "example",
+                  "id": "c1",
+                  "args": {
+                    "arg": 1
+                  }
+                },
+                "thoughtSignature": "opaque"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": {
+          "arg": 1
+        },
+        "thoughtSignature": "opaque"
+      }
+    ],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "model",
+        "parts": [
+          {
+            "functionCall": {
+              "name": "example",
+              "id": "c1",
+              "args": {
+                "arg": 1
+              }
+            },
+            "thoughtSignature": "opaque"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {},
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "choices": []
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "Answer"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "Answer",
+    "calls": [],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "Answer",
+        "tool_calls": []
+      }
+    ]
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "partial",
+    "calls": [],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "partial",
+        "tool_calls": []
+      }
+    ]
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "network_error",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "partial",
+    "calls": [],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "partial",
+        "tool_calls": []
+      }
+    ]
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "<think>private</think> Answer",
+            "reasoning_content": "retain",
+            "reasoning": "groq-reasoning"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "<think>private</think> Answer",
+    "calls": [],
+    "reasoning": "retain",
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "<think>private</think> Answer",
+        "tool_calls": [],
+        "reasoning_content": "retain"
+      }
+    ]
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": {
+          "arg": 1
+        },
+        "thoughtSignature": null
+      }
+    ],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "type": "function",
+            "function": {
+              "name": "example",
+              "arguments": "{\"arg\": 1}"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "[]"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": [],
+        "thoughtSignature": null
+      }
+    ],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "type": "function",
+            "function": {
+              "name": "example",
+              "arguments": "{}"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "tool_calls",
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ],
+            "reasoning_content": "retain"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": {
+          "arg": 1
+        },
+        "thoughtSignature": null
+      }
+    ],
+    "reasoning": "retain",
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "type": "function",
+            "function": {
+              "name": "example",
+              "arguments": "{\"arg\": 1}"
+            }
+          }
+        ],
+        "reasoning_content": "retain"
+      }
+    ]
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "output": [
+        {
+          "type": "message",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Answer"
+            }
+          ]
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "output": [
+        {
+          "type": "reasoning",
+          "id": "r1",
+          "encrypted_content": "opaque"
+        },
+        {
+          "type": "function_call",
+          "name": "example",
+          "call_id": "c1",
+          "arguments": "{\"arg\":1}"
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Answer"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "deepseek",
+    "model": "deepseek-flash",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "example",
+                  "id": "c1",
+                  "args": {
+                    "arg": 1
+                  }
+                },
+                "thoughtSignature": "opaque"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {},
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "choices": []
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "Answer"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "Answer",
+    "calls": [],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "Answer",
+        "tool_calls": []
+      }
+    ]
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "partial",
+    "calls": [],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "partial",
+        "tool_calls": []
+      }
+    ]
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "network_error",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "partial",
+    "calls": [],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "partial",
+        "tool_calls": []
+      }
+    ]
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "<think>private</think> Answer",
+            "reasoning_content": "retain",
+            "reasoning": "groq-reasoning"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "Answer",
+    "calls": [],
+    "reasoning": "groq-reasoning",
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "Answer",
+        "tool_calls": []
+      }
+    ]
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": {
+          "arg": 1
+        },
+        "thoughtSignature": null
+      }
+    ],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "type": "function",
+            "function": {
+              "name": "example",
+              "arguments": "{\"arg\": 1}"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "[]"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": [],
+        "thoughtSignature": null
+      }
+    ],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "type": "function",
+            "function": {
+              "name": "example",
+              "arguments": "{}"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "tool_calls",
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ],
+            "reasoning_content": "retain"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": {
+          "arg": 1
+        },
+        "thoughtSignature": null
+      }
+    ],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c1",
+            "type": "function",
+            "function": {
+              "name": "example",
+              "arguments": "{\"arg\": 1}"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "output": [
+        {
+          "type": "message",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Answer"
+            }
+          ]
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "output": [
+        {
+          "type": "reasoning",
+          "id": "r1",
+          "encrypted_content": "opaque"
+        },
+        {
+          "type": "function_call",
+          "name": "example",
+          "call_id": "c1",
+          "arguments": "{\"arg\":1}"
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Answer"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "groq",
+    "model": "openai/gpt-oss-20b",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "example",
+                  "id": "c1",
+                  "args": {
+                    "arg": 1
+                  }
+                },
+                "thoughtSignature": "opaque"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {},
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "choices": []
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "Answer"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "Answer",
+    "calls": [],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "Answer",
+        "tool_calls": []
+      }
+    ]
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить завершённый ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "network_error",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Произошла ошибка при обработке запроса. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "<think>private</think> Answer",
+            "reasoning_content": "retain",
+            "reasoning": "groq-reasoning"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "Answer",
+    "calls": [],
+    "reasoning": "groq-reasoning",
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "Answer",
+        "tool_calls": [],
+        "reasoning": "groq-reasoning"
+      }
+    ]
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": {
+          "arg": 1
+        },
+        "thoughtSignature": null
+      }
+    ],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "c1",
+            "type": "function",
+            "function": {
+              "name": "example",
+              "arguments": "{\"arg\": 1}"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "[]"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Ошибка обработки ответа модели.",
+    "fallback": false
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "tool_calls",
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ],
+            "reasoning_content": "retain"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": {
+          "arg": 1
+        },
+        "thoughtSignature": null
+      }
+    ],
+    "reasoning": "retain",
+    "replay": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "c1",
+            "type": "function",
+            "function": {
+              "name": "example",
+              "arguments": "{\"arg\": 1}"
+            }
+          }
+        ],
+        "reasoning": "retain"
+      }
+    ]
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "output": [
+        {
+          "type": "message",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Answer"
+            }
+          ]
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "output": [
+        {
+          "type": "reasoning",
+          "id": "r1",
+          "encrypted_content": "opaque"
+        },
+        {
+          "type": "function_call",
+          "name": "example",
+          "call_id": "c1",
+          "arguments": "{\"arg\":1}"
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Answer"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "openrouter",
+    "model": "z-ai/glm-4.7",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "example",
+                  "id": "c1",
+                  "args": {
+                    "arg": 1
+                  }
+                },
+                "thoughtSignature": "opaque"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {},
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "choices": []
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "Answer"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "Answer",
+    "calls": [],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "Answer",
+        "tool_calls": []
+      }
+    ]
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить завершённый ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "network_error",
+          "message": {
+            "content": "partial"
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Произошла ошибка при обработке запроса. Попробуйте позже.",
+    "fallback": true
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": "<think>private</think> Answer",
+            "reasoning_content": "retain",
+            "reasoning": "groq-reasoning"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "Answer",
+    "calls": [],
+    "reasoning": "retain",
+    "replay": [
+      {
+        "role": "assistant",
+        "content": "Answer",
+        "tool_calls": [],
+        "reasoning_content": "retain"
+      }
+    ]
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": {
+          "arg": 1
+        },
+        "thoughtSignature": null
+      }
+    ],
+    "reasoning": null,
+    "replay": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "c1",
+            "type": "function",
+            "function": {
+              "name": "example",
+              "arguments": "{\"arg\": 1}"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "[]"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Ошибка обработки ответа модели.",
+    "fallback": false
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "choices": [
+        {
+          "finish_reason": "tool_calls",
+          "message": {
+            "tool_calls": [
+              {
+                "id": "c1",
+                "function": {
+                  "name": "example",
+                  "arguments": "{\"arg\":1}"
+                }
+              }
+            ],
+            "reasoning_content": "retain"
+          }
+        }
+      ]
+    },
+    "error": false,
+    "text": "",
+    "calls": [
+      {
+        "name": "example",
+        "id": "c1",
+        "arguments": {
+          "arg": 1
+        },
+        "thoughtSignature": null
+      }
+    ],
+    "reasoning": "retain",
+    "replay": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "c1",
+            "type": "function",
+            "function": {
+              "name": "example",
+              "arguments": "{\"arg\": 1}"
+            }
+          }
+        ],
+        "reasoning_content": "retain"
+      }
+    ]
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "output": [
+        {
+          "type": "message",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Answer"
+            }
+          ]
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "output": [
+        {
+          "type": "reasoning",
+          "id": "r1",
+          "encrypted_content": "opaque"
+        },
+        {
+          "type": "function_call",
+          "name": "example",
+          "call_id": "c1",
+          "arguments": "{\"arg\":1}"
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Answer"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  },
+  {
+    "provider": "zai",
+    "model": "glm-4.7",
+    "payload": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "example",
+                  "id": "c1",
+                  "args": {
+                    "arg": 1
+                  }
+                },
+                "thoughtSignature": "opaque"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "error": true,
+    "user_message": "Не удалось получить ответ от модели. Попробуйте позже.",
+    "fallback": false
+  }
+]

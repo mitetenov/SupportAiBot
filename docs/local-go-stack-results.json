@@ -1,0 +1,121 @@
+{
+  "date": "2026-10-20",
+  "project": "supportbot-local-go",
+  "services": {
+    "support-bot": {
+      "container": "supportbot-local-go-support-bot-1",
+      "image": "supportbot-go:optimized",
+      "image_id": "sha256:5288614407a77a4b60ff9728c970fafde347b7e7c21671665f1cf033eabecc8c",
+      "health": "healthy",
+      "native_go": "go1.27.3",
+      "elf": true,
+      "python_runtime_absent": true,
+      "restart_count": 0
+    },
+    "mcp-remnawave": {
+      "container": "supportbot-local-go-mcp-remnawave-1",
+      "image": "supportbot-local/remnawave-mcp:go",
+      "image_id": "sha256:c99565ed368e8343a90d93269cf975ab0ba710388062936ffab3f6713f7c52d7",
+      "health": "healthy",
+      "native_go": "go1.27.3",
+      "elf": true,
+      "python_runtime_absent": true,
+      "restart_count": 0
+    },
+    "bedolaga-mcp": {
+      "container": "supportbot-local-go-bedolaga-mcp-1",
+      "image": "supportbot-local/bedolaga-mcp:go",
+      "image_id": "sha256:2aa88ed480f224fba7a1e02d95cf2cc671288b257e30947fecf7f33df62db1c3",
+      "health": "healthy",
+      "native_go": "go1.27.2",
+      "elf": true,
+      "python_runtime_absent": true,
+      "restart_count": 0
+    }
+  },
+  "database": {
+    "faq_count": 55,
+    "embedding_count": 55,
+    "history_count": 0
+  },
+  "persistent_volume": [
+    "supportbot-local-go_pgvector-data"
+  ],
+  "startup_evidence": [
+    {
+      "time": "2026-10-20T10:05:06.730992089Z",
+      "level": "INFO",
+      "msg": "Starting support bot",
+      "component": "runtime",
+      "operation": "startup"
+    },
+    {
+      "time": "2026-10-20T10:05:06.774514006Z",
+      "level": "INFO",
+      "msg": "MCP initialized",
+      "component": "runtime",
+      "operation": "startup",
+      "server": "remnawave",
+      "tools": 17,
+      "protocol_version": "2026-07-28"
+    },
+    {
+      "time": "2026-10-20T10:05:06.777375006Z",
+      "level": "INFO",
+      "msg": "MCP initialized",
+      "component": "runtime",
+      "operation": "startup",
+      "server": "bedolaga",
+      "tools": 8,
+      "protocol_version": "2026-07-28"
+    },
+    {
+      "time": "2026-10-20T10:05:11.664053175Z",
+      "level": "INFO",
+      "msg": "FAQ initialization completed",
+      "component": "runtime",
+      "operation": "startup",
+      "indexed_count": 55,
+      "expected_count": 55
+    },
+    {
+      "time": "2026-10-20T10:05:11.666378258Z",
+      "level": "INFO",
+      "msg": "Health server started",
+      "component": "runtime",
+      "operation": "startup",
+      "port": 8080
+    },
+    {
+      "time": "2026-10-20T10:05:13.059516759Z",
+      "level": "INFO",
+      "msg": "Bot commands registered",
+      "component": "runtime",
+      "operation": "startup"
+    }
+  ],
+  "telegram_polling_conflict_seen": false,
+  "runtime_log_level": "INFO",
+  "health_urls": [
+    "http://127.0.0.1:8080/health",
+    "http://127.0.0.1:13100/health",
+    "http://127.0.0.1:13101/health"
+  ],
+  "synthetic_messages_or_llm_requests_sent": false,
+  "stack_left_running": true,
+  "independent_review": {
+    "health_http200_all_three": true,
+    "mcp_initialize_and_tools_list": {
+      "remnawave": {
+        "tools": 17,
+        "version": "3.3.0"
+      },
+      "bedolaga": {
+        "tools": 8,
+        "version": "1.2.0"
+      }
+    },
+    "native_go_elf_cgo0_arm64_all_three": true,
+    "backend_tool_calls_sent": false
+  }
+}

@@ -1,0 +1,50 @@
+[
+  {
+    "text": "Не только",
+    "rejected": false
+  },
+  {
+    "text": "другое устройство",
+    "rejected": false
+  },
+  {
+    "text": "не товарищ",
+    "rejected": false
+  },
+  {
+    "text": "подключить другое",
+    "rejected": false
+  },
+  {
+    "text": "другое!",
+    "rejected": true
+  },
+  {
+    "text": "это не то.",
+    "rejected": true
+  },
+  {
+    "text": "Всё ещё не заработало",
+    "rejected": true
+  },
+  {
+    "text": "по-прежнему",
+    "rejected": true
+  },
+  {
+    "text": "Всё равно не помогает",
+    "rejected": true
+  },
+  {
+    "text": "другое?!",
+    "rejected": true
+  },
+  {
+    "text": "не помогите",
+    "rejected": false
+  },
+  {
+    "text": "не та-версия",
+    "rejected": true
+  }
+]

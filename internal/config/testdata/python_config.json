@@ -1,0 +1,142 @@
+[
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture"
+    },
+    "valid": true
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "BOT_LOG_LEVEL": "trace"
+    },
+    "valid": true
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "BOT_LOG_LEVEL": "debug"
+    },
+    "valid": false
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "REASONING_EFFORT": "auto"
+    },
+    "valid": false
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "REASONING_EFFORT": " HIGH "
+    },
+    "valid": true
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS": "1,garbage,5000000001"
+    },
+    "valid": true
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "TELEGRAM_SUPPORT_ADMIN_TELEGRAM_IDS": "[1,2]"
+    },
+    "valid": true
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "BEDOLAGA_MCP_ENABLED": "yes",
+      "BEDOLAGA_MCP_URL": "http://fixture"
+    },
+    "valid": true
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "BEDOLAGA_MCP_ENABLED": "off"
+    },
+    "valid": true
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "PGVECTOR_PORT": " 5432 "
+    },
+    "valid": true
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "LLM_FALLBACK_CHAIN": " "
+    },
+    "valid": false
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "LLM_FALLBACK_CHAIN": "groq:model,"
+    },
+    "valid": false
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "LLM_FALLBACK_CHAIN": "groq:model,,zai:m"
+    },
+    "valid": false
+  },
+  {
+    "env": {
+      "TELEGRAM_BOT_TOKEN": "fixture",
+      "TELEGRAM_SUPPORT_GROUP_CHAT_ID": "-100",
+      "OPENAI_API_KEY": "sk-test",
+      "GEMINI_API_KEY": "fixture",
+      "OPENAI_TEMPERATURE": ""
+    },
+    "valid": false
+  }
+]
