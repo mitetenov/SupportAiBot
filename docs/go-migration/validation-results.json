@@ -1,0 +1,85 @@
+{
+  "top_level_passed": 87,
+  "subcases_passed": 340,
+  "failures": [],
+  "skipped_tests": [],
+  "package_results": [
+    {
+      "Package": "supportbot/internal/diagnostics",
+      "Elapsed": 1.603
+    },
+    {
+      "Package": "supportbot/internal/bot",
+      "Elapsed": 1.708
+    },
+    {
+      "Package": "supportbot/internal/config",
+      "Elapsed": 2.181
+    },
+    {
+      "Package": "supportbot/internal/bedolaga",
+      "Elapsed": 3.362
+    },
+    {
+      "Package": "supportbot/cmd/supportbot",
+      "Elapsed": 3.739
+    },
+    {
+      "Package": "supportbot/internal/llm",
+      "Elapsed": 4.371
+    },
+    {
+      "Package": "supportbot/internal/mcp",
+      "Elapsed": 4.817
+    },
+    {
+      "Package": "supportbot/internal/storage",
+      "Elapsed": 5.717
+    },
+    {
+      "Package": "supportbot/internal/logging",
+      "Elapsed": 5.817
+    },
+    {
+      "Package": "supportbot/internal/rag",
+      "Elapsed": 6.58
+    },
+    {
+      "Package": "supportbot/internal/telegram",
+      "Elapsed": 5.086
+    }
+  ],
+  "date": "2026-10-20",
+  "baseline_sha": "62f690fd92cd2c024045e94232a1dff2ce388f3e",
+  "python_reference": {
+    "passed": 1719,
+    "coverage_percent": 89.63,
+    "seconds": 11.85
+  },
+  "native_image": "supportbot-go:parity",
+  "native_image_id": "sha256:0a6b8096046b9d738d206512c12b1ed115e3421dc9039bd27ea91fbb79717926",
+  "docker_smoke": {
+    "health": true,
+    "commands": true,
+    "help": true,
+    "model_answer": true,
+    "mcp": true,
+    "persisted_history_rows": 2,
+    "graceful_exit_code": 0,
+    "python_runtime_present": false
+  },
+  "configured_acceptance": [
+    "real_postgresql_pgvector",
+    "native_remnawave_mcp_against_local_backend",
+    "native_bedolaga_mcp_against_local_backend"
+  ],
+  "remote_ci_run": false,
+  "deployed": false,
+  "cleanup": {
+    "smoke_bot_container_removed": true,
+    "smoke_database_removed": true,
+    "fixture_postgresql_container_removed": true,
+    "background_api_stub_processes_remaining": 0,
+    "local_image_retained": true
+  }
+}

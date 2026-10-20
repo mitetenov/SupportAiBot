@@ -1,4 +1,4 @@
-# VPN Support Bot
+# VPN Support Bot (Go)
 
 Telegram-бот первой линии поддержки VPN-сервиса. Он отвечает на типовые
 вопросы, помогает проверить подписку и подключение, принимает скриншоты и при
@@ -6,6 +6,16 @@ Telegram-бот первой линии поддержки VPN-сервиса. �
 
 Бот работает с обращениями из Telegram и, опционально, с тикетами из кабинета
 [Bedolaga](https://github.com/fr1ngg/remnawave-bedolaga-telegram-bot).
+
+Основной процесс бота написан на Go и запускается бинарником `/app/supportbot`.
+Существующие переменные `.env`, PostgreSQL/pgvector, FAQ и независимые MCP-сервисы
+сохранены. Исходная Python-реализация в `app/` и `tests/` оставлена как проверяемый
+baseline миграции; в runtime-образ она не включается.
+
+Локальная сборка: `go build -o supportbot ./cmd/supportbot`; запуск: `./supportbot`.
+Проверки: `go test -race ./...`; с отдельной тестовой PostgreSQL+pgvector передайте
+`TEST_DATABASE_URL`. Матрица функционального переноса и границы подтверждённых
+проверок находятся в [docs/go-migration/parity-matrix.md](docs/go-migration/parity-matrix.md).
 
 ## Возможности
 
@@ -80,7 +90,7 @@ LLM ──► McpRouter ──┬──► bedolaga-mcp ──► Bedolaga Bot A
 
 | Компонент | Версия | Протокол |
 |---|---|---|
-| supportBot | `2.0.1` (Python MCP SDK `2.0.0`, режим `auto`) | `2026-07-28` (fallback до `2025-11-25`) |
+| supportBot | `2.0.1` (Go MCP SDK `1.7.0`, modern с legacy fallback) | `2026-07-28` (fallback до `2025-11-25`) |
 | bedolaga-mcp | `1.2.0` (Python MCP SDK `2.0.0`) | `2026-07-28` / legacy sessionful |
 | Bedolaga Bot API (upstream) | commit `49b05d5`, приложение `4.1.0` | — |
 | mcp-remnawave | `v3.3.0` (TypeScript MCP SDK `2.0.0`) | `2026-07-28` / legacy sessionful |
@@ -171,7 +181,7 @@ cp .env.example .env
 # заполните .env
 docker compose pull
 docker compose up -d
-docker compose exec support-bot python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+docker compose exec support-bot /app/supportbot healthcheck
 ```
 
 Если последняя команда завершилась без ошибки, бот запущен.
@@ -404,7 +414,7 @@ Z.AI использует нативные параметры `thinking` и `rea
 #### Семантика повторов (retry) и таймаутов
 
 - Для каждого провайдера настраивается независимый таймаут HTTP-запросов (по умолчанию `120.0` секунд через поля `*_TIMEOUT_SECONDS`). Допустимы только положительные конечные числа.
-- Все исходящие HTTP-запросы используют единую политику из 3 попыток с экспоненциальным backoff и джиттером для временных сбоев: HTTP `408`, `429`, `500`, `502`, `503`, `504`, сетевые тайм-ауты и ошибки соединения (`httpx.TransportError`).
+- Все исходящие HTTP-запросы используют единую политику из 3 попыток с экспоненциальным backoff и джиттером для временных сбоев: HTTP `408`, `429`, `500`, `502`, `503`, `504`, сетевые тайм-ауты и ошибки соединения (транспортные ошибки).
 - Клиентские ошибки (HTTP `400`, `401`, `403`, `404`, `413`, `422`), а также бизнес-ошибки в теле ответа (например, код `1113` исчерпания баланса или код `1210` в Z.AI) не вызывают бесполезных повторных запросов к тому же endpoint, а сразу переводят ход на fallback (если статус входит в список разрешённых) либо возвращают ошибку.
 - Автоматическая смена или эвристическая подмена endpoint отсутствует: запросы направляются строго по сконфигурированному URL.
 
@@ -688,24 +698,31 @@ reverse proxy.
 
 ## Локальная разработка
 
-Требуется Python 3.14+ и `uv`.
+Требуется Go 1.26+.
 
 ```bash
-uv sync --extra dev
-```
-
-Запуск приложения:
-
-```bash
-set -a
-source .env
-set +a
-uv run python -m app.main
+go build -o supportbot ./cmd/supportbot
+./supportbot                 # читает .env и переменные окружения
+./supportbot healthcheck
 ```
 
 Проверки перед отправкой изменений:
 
 ```bash
+go vet ./...
+go test -race ./...
+```
+
+Для интеграционных проверок используется отдельная PostgreSQL/pgvector с
+`TEST_DATABASE_URL`; полная команда с локальными MCP executables и результаты
+находятся в [validation.md](docs/go-migration/validation.md). Настройки запуска,
+диагностика, совместимость данных и порядок отката описаны в
+[operations.md](docs/go-migration/operations.md).
+
+Python 3.14+ и `uv` нужны только для сохранённых эталонных тестов и benchmark:
+
+```bash
+uv sync --extra dev
 uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .

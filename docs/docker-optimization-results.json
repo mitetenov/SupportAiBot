@@ -1,0 +1,230 @@
+{
+  "date": "2026-10-20",
+  "measurement": "Docker-reported local image Size, not registry compressed size",
+  "images": [
+    {
+      "Id": "sha256:0a6b8096046b9d738d206512c12b1ed115e3421dc9039bd27ea91fbb79717926",
+      "RepoTags": [
+        "supportbot-go:parity"
+      ],
+      "Architecture": "arm64",
+      "Size": 33264068
+    },
+    {
+      "Id": "sha256:3197a8b7ee3b87f2c52ec71e0d62fcf9384ad32deb1f5f0c6b7dcbfd242ee5ca",
+      "RepoTags": [
+        "supportbot-go:optimized"
+      ],
+      "Architecture": "arm64",
+      "Size": 18446327
+    },
+    {
+      "Id": "sha256:4f65bfb33abfbfdd5cb90beb4620923ea85470f4317279718e604f86a91a65d7",
+      "RepoTags": [
+        "supportbot-go:optimized-amd64"
+      ],
+      "Architecture": "amd64",
+      "Size": 5400950
+    }
+  ],
+  "saved_bytes": 14817741,
+  "reduction_percent": 44.54578736431154,
+  "cache": {
+    "unchanged": {
+      "binary_metadata": {
+        "sha256": "e5a823195a5744be240899b8b43f7712d5e0c0295cafc951845061a38fd6e23b",
+        "mtime": 0,
+        "mode": 365,
+        "uid": 0,
+        "gid": 0
+      },
+      "layers": [
+        "sha256:bbcbeed25f0c318d9c3ddaf0d8d34c089a2fe9f84566a035e15e5e1da4ccb117",
+        "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+        "sha256:246bb99fc416b3473db693ea80c6eda389f86229ed86d00cc06a49aaa84fe2a8",
+        "sha256:a61cb71211b06409334cb9fc228f845bceafb477d3036aaba2eccaf3503fc1dc"
+      ],
+      "image_bytes": 18446327,
+      "seconds": 1.233,
+      "steps": {
+        "compile": "CACHED",
+        "modules": "CACHED",
+        "faq": "CACHED",
+        "binary": "CACHED"
+      },
+      "go_module_redownload_messages": false
+    },
+    "source": {
+      "binary_metadata": {
+        "sha256": "e5a823195a5744be240899b8b43f7712d5e0c0295cafc951845061a38fd6e23b",
+        "mtime": 0,
+        "mode": 365,
+        "uid": 0,
+        "gid": 0
+      },
+      "layers": [
+        "sha256:bbcbeed25f0c318d9c3ddaf0d8d34c089a2fe9f84566a035e15e5e1da4ccb117",
+        "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+        "sha256:246bb99fc416b3473db693ea80c6eda389f86229ed86d00cc06a49aaa84fe2a8",
+        "sha256:a61cb71211b06409334cb9fc228f845bceafb477d3036aaba2eccaf3503fc1dc"
+      ],
+      "image_bytes": 18446327,
+      "seconds": 1.695,
+      "steps": {
+        "modules": "CACHED",
+        "compile": "DONE",
+        "faq": "CACHED",
+        "binary": "CACHED"
+      },
+      "go_module_redownload_messages": false
+    },
+    "asset": {
+      "binary_metadata": {
+        "sha256": "e5a823195a5744be240899b8b43f7712d5e0c0295cafc951845061a38fd6e23b",
+        "mtime": 0,
+        "mode": 365,
+        "uid": 0,
+        "gid": 0
+      },
+      "layers": [
+        "sha256:bbcbeed25f0c318d9c3ddaf0d8d34c089a2fe9f84566a035e15e5e1da4ccb117",
+        "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+        "sha256:9d3e88c9062239b4e7eec373df679da3fc4242a12a2170519d79cf3378140adf",
+        "sha256:a61cb71211b06409334cb9fc228f845bceafb477d3036aaba2eccaf3503fc1dc"
+      ],
+      "image_bytes": 18442120,
+      "seconds": 1.152,
+      "steps": {
+        "modules": "CACHED",
+        "compile": "CACHED",
+        "faq": "DONE",
+        "binary": "DONE"
+      },
+      "go_module_redownload_messages": false
+    },
+    "dependency": {
+      "binary_metadata": {
+        "sha256": "6c377cc141c8dffe869a0de42246830418199fd9120e26796e8059ab4a87cdb1",
+        "mtime": 0,
+        "mode": 365,
+        "uid": 0,
+        "gid": 0
+      },
+      "layers": [
+        "sha256:bbcbeed25f0c318d9c3ddaf0d8d34c089a2fe9f84566a035e15e5e1da4ccb117",
+        "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+        "sha256:246bb99fc416b3473db693ea80c6eda389f86229ed86d00cc06a49aaa84fe2a8",
+        "sha256:3aaaf97560748e5a088f3b44df68492c852e663ea959c565ee6c668aa1042d7e"
+      ],
+      "image_bytes": 18445794,
+      "seconds": 12.248,
+      "steps": {
+        "modules": "DONE",
+        "compile": "DONE",
+        "faq": "CACHED",
+        "binary": "DONE"
+      },
+      "go_module_redownload_messages": false
+    },
+    "export": {
+      "binary_metadata": {
+        "sha256": "e5a823195a5744be240899b8b43f7712d5e0c0295cafc951845061a38fd6e23b",
+        "mtime": 0,
+        "mode": 365,
+        "uid": 0,
+        "gid": 0
+      },
+      "layers": [
+        "sha256:bbcbeed25f0c318d9c3ddaf0d8d34c089a2fe9f84566a035e15e5e1da4ccb117",
+        "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+        "sha256:246bb99fc416b3473db693ea80c6eda389f86229ed86d00cc06a49aaa84fe2a8",
+        "sha256:a61cb71211b06409334cb9fc228f845bceafb477d3036aaba2eccaf3503fc1dc"
+      ],
+      "image_bytes": 18446327,
+      "seconds": 2.747,
+      "steps": {
+        "compile": "CACHED",
+        "faq": "CACHED",
+        "modules": "CACHED",
+        "binary": "CACHED"
+      },
+      "go_module_redownload_messages": false
+    },
+    "fresh-import": {
+      "binary_metadata": {
+        "sha256": "e5a823195a5744be240899b8b43f7712d5e0c0295cafc951845061a38fd6e23b",
+        "mtime": 0,
+        "mode": 365,
+        "uid": 0,
+        "gid": 0
+      },
+      "layers": [
+        "sha256:bbcbeed25f0c318d9c3ddaf0d8d34c089a2fe9f84566a035e15e5e1da4ccb117",
+        "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+        "sha256:246bb99fc416b3473db693ea80c6eda389f86229ed86d00cc06a49aaa84fe2a8",
+        "sha256:a61cb71211b06409334cb9fc228f845bceafb477d3036aaba2eccaf3503fc1dc"
+      ],
+      "image_bytes": 18446327,
+      "seconds": 25.708,
+      "steps": {
+        "modules": "CACHED",
+        "compile": "DONE",
+        "faq": "CACHED",
+        "binary": "CACHED"
+      },
+      "go_module_redownload_messages": false
+    }
+  },
+  "runtime": {
+    "ca_roots": 121,
+    "ca_sha256": "028fca5150ee1915c4474489985d55c54fceaa680c754cc8d1301734f01b2232",
+    "cwd": "/app",
+    "dns": true,
+    "faq_json": true,
+    "faq_png": true,
+    "gid": 101,
+    "home": "/app",
+    "https": true,
+    "machine": "EM_AARCH64",
+    "static_elf": true,
+    "uid": 100,
+    "image": "supportbot-go:optimized",
+    "default_ca_matches_baseline": true,
+    "default_ca_bytes": 181724,
+    "image_bytes": 18446327,
+    "runtime_layers": 4,
+    "readonly_rootfs": true
+  },
+  "whole_bot": {
+    "native_image": "passed",
+    "image": "supportbot-go:optimized",
+    "readonly_rootfs": true,
+    "health": true,
+    "external_api_fixtures": {
+      "help": true,
+      "answer": true,
+      "commands": true,
+      "mcp": true
+    },
+    "persisted_history": 2,
+    "graceful_exit": 0,
+    "python_runtime": "absent"
+  },
+  "validation": {
+    "linux_arm64_runtime": "passed",
+    "linux_amd64_image_build": "passed; runtime not executed",
+    "ruff_changed_harnesses": "passed",
+    "github_actions": "not run remotely",
+    "registry_publication": "not performed",
+    "deployment": "not performed"
+  },
+  "cache_export_note": "Docker Desktop printed service.Write unavailable diagnostics after a successful local-cache export (exit 0). A fresh isolated BuildKit builder successfully imported the resulting cache and compiled changed source without module downloads.",
+  "cleanup": {
+    "task_created_postgres_fixture": "removed",
+    "diagnostic_and_fresh_import_builders": "removed",
+    "runtime_and_smoke_containers": "removed",
+    "running_containers_after_cleanup": 0,
+    "existing_user_builders_and_caches": "preserved",
+    "baseline_and_final_images": "retained"
+  }
+}

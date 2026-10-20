@@ -1,0 +1,277 @@
+{
+  "customers": [
+    {
+      "name": "normal",
+      "text": "check subscription",
+      "response": "answer",
+      "limited": false,
+      "operator": false,
+      "trace": [
+        {
+          "event": "model",
+          "text": "check subscription",
+          "user": 42
+        },
+        {
+          "event": "send",
+          "text": "answer",
+          "user": 42
+        },
+        {
+          "event": "forward",
+          "text": "answer",
+          "user": 42,
+          "escalate": false
+        },
+        {
+          "event": "gap",
+          "text": "check subscription",
+          "user": 42
+        }
+      ]
+    },
+    {
+      "name": "model escalation",
+      "text": "connection",
+      "response": "I need help [ESCALATE]",
+      "limited": false,
+      "operator": false,
+      "trace": [
+        {
+          "event": "model",
+          "text": "connection",
+          "user": 42
+        },
+        {
+          "event": "send",
+          "text": "I need help",
+          "user": 42
+        },
+        {
+          "event": "forward",
+          "text": "I need help",
+          "user": 42,
+          "escalate": true
+        },
+        {
+          "event": "gap",
+          "text": "connection",
+          "user": 42
+        }
+      ]
+    },
+    {
+      "name": "human request",
+      "text": "нужен оператор",
+      "response": "answer",
+      "limited": false,
+      "operator": false,
+      "trace": [
+        {
+          "event": "model",
+          "text": "нужен оператор",
+          "user": 42
+        },
+        {
+          "event": "send",
+          "text": "answer",
+          "user": 42
+        },
+        {
+          "event": "forward",
+          "text": "answer",
+          "user": 42,
+          "escalate": true
+        },
+        {
+          "event": "gap",
+          "text": "нужен оператор",
+          "user": 42
+        }
+      ]
+    },
+    {
+      "name": "rate limited",
+      "text": "check",
+      "response": "answer",
+      "limited": true,
+      "operator": false,
+      "trace": [
+        {
+          "event": "send",
+          "text": "Вы пишете быстрее, чем я успеваю отвечать. Передал сообщение оператору — он ответит в этом чате.",
+          "user": 42
+        },
+        {
+          "event": "forward",
+          "text": "[AI не отвечал — пользователь пишет слишком часто]",
+          "user": 42,
+          "escalate": true
+        }
+      ]
+    },
+    {
+      "name": "operator active",
+      "text": "check",
+      "response": "answer",
+      "limited": false,
+      "operator": true,
+      "trace": [
+        {
+          "event": "forward",
+          "text": "[AI не отвечал — оператор недавно был активен]",
+          "user": 42,
+          "escalate": false
+        }
+      ]
+    }
+  ],
+  "tickets": [
+    {
+      "input": {
+        "id": 7,
+        "user_id": 12,
+        "title": "Проблема оплаты",
+        "status": "open",
+        "messages": [
+          {
+            "id": 10,
+            "message_text": "уже третий раз"
+          }
+        ]
+      },
+      "question": "Проблема оплаты\n\nуже третий раз",
+      "awaits": true,
+      "last_user_id": 10
+    },
+    {
+      "input": {
+        "id": 7,
+        "user_id": 12,
+        "title": "Оплата",
+        "status": "pending",
+        "messages": [
+          {
+            "id": 10,
+            "message_text": "Оплата не проходит"
+          }
+        ]
+      },
+      "question": "Оплата не проходит",
+      "awaits": true,
+      "last_user_id": 10
+    },
+    {
+      "input": {
+        "id": 7,
+        "user_id": 12,
+        "title": "старое название",
+        "status": "open",
+        "messages": [
+          {
+            "id": 10,
+            "message_text": "старый вопрос"
+          },
+          {
+            "id": 11,
+            "message_text": "новый вопрос"
+          }
+        ]
+      },
+      "question": "новый вопрос",
+      "awaits": true,
+      "last_user_id": 11
+    },
+    {
+      "input": {
+        "id": 7,
+        "user_id": 12,
+        "title": "Проблема",
+        "status": "open",
+        "messages": [
+          {
+            "id": 10,
+            "message_text": "старое"
+          },
+          {
+            "id": 11,
+            "message_text": null,
+            "has_media": true
+          }
+        ]
+      },
+      "question": "Проблема",
+      "awaits": true,
+      "last_user_id": 11
+    },
+    {
+      "input": {
+        "id": 7,
+        "user_id": 12,
+        "title": " ",
+        "status": "open",
+        "messages": [
+          {
+            "id": 10,
+            "message_text": "   "
+          }
+        ]
+      },
+      "question": "",
+      "awaits": true,
+      "last_user_id": 10
+    },
+    {
+      "input": {
+        "id": 7,
+        "user_id": 12,
+        "title": "closed",
+        "status": "closed",
+        "messages": [
+          {
+            "id": 10,
+            "message_text": "check"
+          }
+        ]
+      },
+      "question": "closed\n\ncheck",
+      "awaits": false,
+      "last_user_id": 10
+    },
+    {
+      "input": {
+        "id": 7,
+        "user_id": 12,
+        "title": "admin",
+        "status": "answered",
+        "messages": [
+          {
+            "id": 10,
+            "message_text": "reply",
+            "is_from_admin": true
+          }
+        ]
+      },
+      "question": "admin\n\nreply",
+      "awaits": false,
+      "last_user_id": null
+    },
+    {
+      "input": {
+        "id": 7,
+        "user_id": 12,
+        "title": "empty",
+        "status": "open",
+        "messages": []
+      },
+      "question": "empty",
+      "awaits": false,
+      "last_user_id": null
+    }
+  ],
+  "commands": {
+    "bot.help": "Я бот технической поддержки VPN-сервиса.\n\nЧто я умею:\n• Диагностика подключения и проверка состояния серверов\n• Проверка вашей подписки и привязанных устройств\n• Ответы на частые вопросы\n\nКоманды:\n/start — начать заново, сбросить историю диалога\n/operator — позвать живого оператора\n/help — эта справка\n\nПокупка и управление подпиской:\n• Бот: @PeipivoSalesBot\n• Личный кабинет: https://lk.peipivo.top\n\nПросто напишите ваш вопрос.",
+    "bot.unknown.command": "Неизвестная команда. Напишите вопрос, /help — список команд, /operator — связь с оператором.",
+    "bot.start.welcome": "Привет, чем вам помочь? Опишите проблему."
+  }
+}

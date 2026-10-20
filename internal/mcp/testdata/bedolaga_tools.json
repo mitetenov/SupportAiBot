@@ -1,0 +1,310 @@
+[
+  {
+    "name": "bedolaga_user_get",
+    "description": "Read-only. Get the current user's Bedolaga account and balance. Identity is pinned by the system, never by the caller: provide exactly one of telegram_id (positive Telegram ID) or user_id (internal Bedolaga id for email-only cabinet tickets). A balance credit (deposit) is NOT a purchase — only a completed subscription_payment confirms a purchase. This tool does not know the VPN panel status; panel truth is checked via the separate Remnawave MCP.",
+    "inputSchema": {
+      "properties": {
+        "telegram_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Telegram Id"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        }
+      },
+      "title": "_user_get_handlerArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "bedolaga_billing_get",
+    "description": "Read-only. One call to see balance, recent financial events and internal Bedolaga purchase records so a top-up can be told apart from a purchase. Identity is pinned by the system, never by the caller: provide exactly one of telegram_id (positive Telegram ID) or user_id (internal Bedolaga id for email-only cabinet tickets). deposit means a balance credit, not a purchase; only a completed subscription_payment confirms a purchase. The internal bot-side record status (bot_record_status) is NOT the VPN panel status — panel truth is checked via the separate Remnawave MCP.",
+    "inputSchema": {
+      "properties": {
+        "telegram_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Telegram Id"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        },
+        "limit": {
+          "default": 20,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "_billing_get_handlerArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "bedolaga_referrals_get",
+    "description": "Read-only. Get the current user's referral summary in Bedolaga: referral code, invitee counts and earnings, without any third-party personal data. Identity is pinned by the system, never by the caller: provide exactly one of telegram_id (positive Telegram ID) or user_id (internal Bedolaga id for email-only cabinet tickets). Subscription and VPN panel status are checked via the separate Remnawave MCP.",
+    "inputSchema": {
+      "properties": {
+        "telegram_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Telegram Id"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        }
+      },
+      "title": "_referrals_get_handlerArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "bedolaga_subscription_get",
+    "description": "Read-only. Get the current user's bot-side subscription records and lifecycle dates (created_at, start_date, end_date, trial, autopay). Identity is pinned by the system, never by the caller: provide exactly one of telegram_id (positive Telegram ID) or user_id (internal Bedolaga id for email-only cabinet tickets). This record reflects bot-side purchases only and is NOT the VPN panel status; verify actual panel state via Remnawave MCP.",
+    "inputSchema": {
+      "properties": {
+        "telegram_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Telegram Id"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        }
+      },
+      "title": "_subscription_get_handlerArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "bedolaga_tickets_get",
+    "description": "Read-only. Get the current user's support ticket summaries (id, title, status, priority, timestamps) without message contents or media. Identity is pinned by the system, never by the caller: provide exactly one of telegram_id (positive Telegram ID) or user_id (internal Bedolaga id for email-only cabinet tickets).",
+    "inputSchema": {
+      "properties": {
+        "telegram_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Telegram Id"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        },
+        "limit": {
+          "default": 10,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "_tickets_get_handlerArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "bedolaga_payment_status_get",
+    "description": "Read-only. Get the current user's accounting payment events and completion status (completed / not_completed / unknown). Identity is pinned by the system, never by the caller: provide exactly one of telegram_id (positive Telegram ID) or user_id (internal Bedolaga id for email-only cabinet tickets). not_completed indicates only that the payment is not completed in bot accounting, NOT that a provider attempt failed or is pending.",
+    "inputSchema": {
+      "properties": {
+        "telegram_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Telegram Id"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        },
+        "limit": {
+          "default": 5,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "_payment_status_get_handlerArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "bedolaga_promocode_check",
+    "description": "Read-only. Check global promo code definition, validity, bonus amounts, and remaining uses. Identity is pinned by the system, never by the caller: provide exactly one of telegram_id (positive Telegram ID) or user_id (internal Bedolaga id for email-only cabinet tickets). Checks global definition only; cannot verify if the current user is eligible or has already redeemed the code.",
+    "inputSchema": {
+      "properties": {
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "telegram_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Telegram Id"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        }
+      },
+      "required": [
+        "code"
+      ],
+      "title": "_promocode_check_handlerArguments",
+      "type": "object"
+    }
+  },
+  {
+    "name": "bedolaga_gifts_get",
+    "description": "Read-only. Get the current user's gift purchase accounting events. Identity is pinned by the system, never by the caller: provide exactly one of telegram_id (positive Telegram ID) or user_id (internal Bedolaga id for email-only cabinet tickets). Shows own gift purchase transactions only; received gifts, gift tokens, and recipient activation status are not available.",
+    "inputSchema": {
+      "properties": {
+        "telegram_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Telegram Id"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        },
+        "limit": {
+          "default": 20,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "_gifts_get_handlerArguments",
+      "type": "object"
+    }
+  }
+]

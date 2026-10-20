@@ -17,9 +17,37 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: parity
+          POSTGRES_PASSWORD: local-parity-only
+          POSTGRES_DB: supportbot_parity
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U parity -d supportbot_parity"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l cmd internal)"
+
+      - name: Vet Go
+        run: go vet ./...
+
+      - name: Test Go with race detector
+        env:
+          TEST_DATABASE_URL: postgres://parity:local-parity-only@localhost:5432/supportbot_parity?sslmode=disable
+        run: ./scripts/parity/test_go.sh
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v7
@@ -55,12 +83,31 @@ jobs:
       - name: Run tests
         run: uv run --no-sync pytest -v
 
+  image-check:
+    name: image-check (amd64 + arm64)
+    needs: test
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4.3.0
+      - name: Validate native multi-platform images without publication
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64,linux/arm64
+          cache-from: type=gha,scope=supportbot-go
+          cache-to: type=gha,scope=supportbot-go,mode=max
+
   build:
     name: build
     needs: test
     # Nothing to publish from a pull request; the image is built and pushed
     # only once the change is on master.
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -118,5 +165,5 @@ jobs:
             mitetenov/supportbot:latest
             mitetenov/supportbot:${{ steps.version.outputs.version }}
             mitetenov/supportbot:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=supportbot-go
+          cache-to: type=gha,scope=supportbot-go,mode=max

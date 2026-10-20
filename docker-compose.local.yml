@@ -1,0 +1,81 @@
+# Native local stack. Configuration stays in the existing external .env file.
+name: supportbot-local-go
+services:
+  support-bot:
+    image: supportbot-go:optimized
+    build:
+      context: .
+    env_file: ${SUPPORTBOT_ENV_FILE:?use scripts/local-stack.sh}
+    environment:
+      PGVECTOR_HOST: pgvector
+      PGVECTOR_PORT: 5432
+      REMNAWAVE_MCP_URL: http://mcp-remnawave:3100/
+      BEDOLAGA_MCP_URL: http://bedolaga-mcp:3100/
+      # Keep real credentials out of opt-in raw traces in this local session.
+      BOT_LOG_LEVEL: INFO
+    ports:
+      - 127.0.0.1:8080:8080
+    depends_on:
+      pgvector:
+        condition: service_healthy
+      mcp-remnawave:
+        condition: service_healthy
+      bedolaga-mcp:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    healthcheck:
+      test: [CMD, /app/supportbot, healthcheck]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+  mcp-remnawave:
+    image: supportbot-local/remnawave-mcp:go
+    build:
+      context: ${REMNAWAVE_MCP_SOURCE:?use scripts/local-stack.sh}
+    env_file: ${SUPPORTBOT_ENV_FILE:?use scripts/local-stack.sh}
+    environment:
+      MCP_HTTP_HOST: 0.0.0.0
+      MCP_HTTP_PORT: 3100
+    ports:
+      - 127.0.0.1:13100:3100
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, /app/remnawave-mcp, healthcheck]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+  bedolaga-mcp:
+    image: supportbot-local/bedolaga-mcp:go
+    build:
+      context: ${BEDOLAGA_MCP_SOURCE:?use scripts/local-stack.sh}
+    env_file: ${SUPPORTBOT_ENV_FILE:?use scripts/local-stack.sh}
+    environment:
+      MCP_HTTP_HOST: 0.0.0.0
+      MCP_HTTP_PORT: 3100
+    ports:
+      - 127.0.0.1:13101:3100
+    command: [/app/bedolaga-mcp, http]
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD, /app/bedolaga-mcp, healthcheck]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+  pgvector:
+    image: pgvector/pgvector:pg17
+    env_file: ${SUPPORTBOT_ENV_FILE:?use scripts/local-stack.sh}
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  pgvector-data:

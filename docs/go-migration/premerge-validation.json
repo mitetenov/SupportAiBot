@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-20",
+  "base_branch": "master",
+  "base_sha": "fd0a3a8",
+  "go": {
+    "command": "./scripts/parity/test_go.sh -json",
+    "fresh_disposable_database": true,
+    "public_vector_initialized_before_parallel_packages": true,
+    "actual_sibling_mcp_fixture_binaries": true,
+    "race": true,
+    "counts": {
+      "pass": {
+        "top_level": 91,
+        "subtests": 380
+      },
+      "fail": {
+        "top_level": 0,
+        "subtests": 0
+      },
+      "skip": {
+        "top_level": 0,
+        "subtests": 0
+      }
+    },
+    "vet": "passed"
+  },
+  "python": {
+    "tests_passed": 1719,
+    "coverage_percent": 89.63,
+    "ruff_check": "passed",
+    "ruff_format": "passed",
+    "mypy": "62 source files passed"
+  },
+  "secret_audit": {
+    "staged_known_environment_credentials": "no matches",
+    "actual_personal_subscription_url": "no matches",
+    "unexpected_binaries_and_cache_artifacts": "none"
+  },
+  "ci_limitations": "CI uses real pgvector and local API fixtures; actual sibling binary acceptance requires TEST_*_MCP_BIN and remains local-only. CI does not call paid providers or send Telegram messages.",
+  "runtime": "Existing four healthy local services left running; no restart requested for documentation/CI/test-fixture edits."
+}
