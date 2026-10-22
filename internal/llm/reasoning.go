@@ -109,7 +109,7 @@ func geminiThinking(m, e string) (Object, error) {
 			native = "high"
 		}
 		if !allowed[native] {
-			return nil, fmt.Errorf("Gemini model %s does not support reasoning effort %s", m, e)
+			return nil, fmt.Errorf("gemini model %s does not support reasoning effort %s", m, e)
 		}
 		return Object{"thinkingLevel": native}, nil
 	}

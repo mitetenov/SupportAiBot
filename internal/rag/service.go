@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/jackc/pgx/v5"
 	"os"
 	"regexp"
 	"sort"
@@ -19,6 +18,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/jackc/pgx/v5"
 )
 
 const ConnectionFAQQuery = "Не могу подключиться к VPN / не работает / не заходит"

@@ -5,13 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func TestRenderResultPrecedence(t *testing.T) {

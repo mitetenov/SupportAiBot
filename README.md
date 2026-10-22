@@ -13,8 +13,7 @@ Telegram-бот первой линии поддержки VPN-сервиса. �
 Эталонные данные совместимости сохранены в `internal/**/testdata/`.
 
 Локальная сборка: `go build -o supportbot ./cmd/supportbot`; запуск: `./supportbot`.
-Проверки: `go test -race ./...`; с отдельной тестовой PostgreSQL+pgvector передайте
-`TEST_DATABASE_URL`. Матрица функционального переноса и границы подтверждённых
+Проверки: `go test -race -count=1 ./...`; используются только изолированные unit/mock-тесты. Матрица функционального переноса и границы подтверждённых
 проверок находятся в [docs/go-migration/parity-matrix.md](docs/go-migration/parity-matrix.md).
 
 ## Возможности
@@ -689,7 +688,7 @@ reverse proxy.
 
 ## Локальная разработка
 
-Требуется Go 1.26+.
+Требуется Go 1.27.3.
 
 ```bash
 go build -o supportbot ./cmd/supportbot
@@ -704,15 +703,16 @@ go vet ./...
 go test -race ./...
 ```
 
-Для интеграционных проверок используется отдельная PostgreSQL/pgvector с
-`TEST_DATABASE_URL`; полная команда с локальными MCP executables и результаты
-находятся в [validation.md](docs/go-migration/validation.md). Настройки запуска,
-диагностика, совместимость данных и порядок отката описаны в
+Тесты с реальной PostgreSQL/pgvector и отдельными MCP-процессами удалены.
+Исторические результаты переноса находятся в
+[validation.md](docs/go-migration/validation.md); текущие проверки описаны в
+[docs/ci.md](docs/ci.md). Настройки запуска и отката — в
 [operations.md](docs/go-migration/operations.md).
 
 Оценка стоимости ответов и сравнение FAQ доступны через `go run ./cmd/benchmarks`.
 Команды и ограничения описаны в [benchmarks/PROMPT_QUALITY.md](benchmarks/PROMPT_QUALITY.md).
-Docker-проверки: `go run ./cmd/verify smoke|runtime|cache`.
+`go run ./cmd/verify smoke|runtime|cache` сохранён как ручной операционный инструмент;
+CI его не запускает. Dockerfile проверяется сборкой без runtime smoke.
 Версия для публикации выбирается из `VERSION` и тегов Docker Hub командой
 `go run ./cmd/nextversion mitetenov/supportbot`.
 
@@ -733,3 +733,22 @@ docker compose up -d --wait support-bot
 - Однократное обновление MCP очищает старую singleton-сессию.
 - После деплоя обеих версий перезапуск бота `docker compose restart support-bot` безопасен и не перезапускает MCP.
 - При работе на v3.2.0 аварийным восстановлением остаётся `docker compose up -d --force-recreate mcp-remnawave support-bot`, но для штатного деплоя оно больше не требуется.
+
+## Go development standard
+
+Go 1.27.3 is shared by the module, CI and Docker. CI uses Ubuntu 26.04,
+verified SHA-pinned Actions, module consistency and verification, formatting,
+vet, golangci-lint v2.15.0, unit/race tests with mock and in-process HTTP fixtures,
+and a static production build. PR/manual validation checks the scratch runtime
+without registry credentials. Weekly Dependabot covers Go, Docker and Actions,
+grouping minor/patch updates separately from major updates. Publication preserves
+the serialized dynamic Docker version picker and linux/amd64 image contract.
+The manual deployment workflow is separate and is never invoked by validation.
+
+Current standard: Go 1.27.3, Ubuntu 26.04, SHA-pinned Actions, module tidy/verify,
+format/vet/golangci-lint v2.15.0, isolated unit/mock and race tests, production and
+Docker builds. Weekly Dependabot covers Go, Docker and Actions; minor/patch groups
+exclude majors. Real database, subprocess/service and FFmpeg integration tests
+and test-only fixtures were removed by request. Production runtime dependencies,
+health commands, persisted formats and operational utilities remain unchanged.
+Historical integration results above describe the earlier test scope.

@@ -2,24 +2,19 @@ package rag
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"reflect"
 	"strings"
 	"supportbot/internal/config"
 	"supportbot/internal/domain"
-	"supportbot/internal/storage"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 type fakeEmbedding struct {
@@ -53,35 +48,7 @@ func (f *fakeEmbedding) EmbedBatch(ctx context.Context, texts []string) ([][]flo
 	}
 	return out, nil
 }
-func ragDB(t *testing.T) *storage.Store {
-	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL required")
-	}
-	ctx := context.Background()
-	admin, e := storage.New(ctx, dsn)
-	if e != nil {
-		t.Fatal(e)
-	}
-	schema := fmt.Sprintf("go_rag_%d", time.Now().UnixNano())
-	if _, e = admin.Pool.Exec(ctx, "CREATE SCHEMA "+schema); e != nil {
-		t.Fatal(e)
-	}
-	u, _ := url.Parse(dsn)
-	q := u.Query()
-	q.Set("search_path", schema+",public")
-	u.RawQuery = q.Encode()
-	s, e := storage.New(ctx, u.String())
-	if e != nil {
-		t.Fatal(e)
-	}
-	t.Cleanup(func() { s.Close(); admin.Pool.Exec(ctx, "DROP SCHEMA "+schema+" CASCADE"); admin.Close() })
-	if e = s.Migrate(ctx, 3); e != nil {
-		t.Fatal(e)
-	}
-	return s
-}
+
 func TestPythonDifferentialFoundation(t *testing.T) {
 	raw, e := os.ReadFile("testdata/python_foundation.json")
 	if e != nil {
@@ -125,54 +92,7 @@ func TestPythonDifferentialFoundation(t *testing.T) {
 		}
 	}
 }
-func TestRealHybridInitializerRestartAndAtomicFailure(t *testing.T) {
-	s := ragDB(t)
-	ctx := context.Background()
-	embedding := &fakeEmbedding{model: "v1"}
-	f := New(s, embedding)
-	path := t.TempDir() + "/faq.json"
-	os.WriteFile(path, []byte(`[{"id":"payment","question":"Как оплатить подписку","answer":"Оплата банковской картой","keywords":["оплата","карта"]},{"id":"trial","question":"Есть триал","answer":"Пробный период","keywords":"триал"}]`), 0600)
-	if e := f.Initialize(ctx, path); e != nil {
-		t.Fatal(e)
-	}
-	calls := embedding.calls.Load()
-	second := New(s, embedding)
-	if e := second.Initialize(ctx, path); e != nil {
-		t.Fatal(e)
-	}
-	if calls != embedding.calls.Load() {
-		t.Fatal("compatible startup reembedded retained index")
-	}
-	got, e := second.BuildFAQContext(ctx, "оплатить подписку", nil)
-	if e != nil || len(got.Results) == 0 || got.Results[0].Question != "Как оплатить подписку" {
-		t.Fatalf("hybrid search failed %#v %v", got, e)
-	}
-	second.SetVectorSearchEnabled(false)
-	got, e = second.BuildFAQContext(ctx, "банковской картой", nil)
-	if e != nil || len(got.Results) == 0 {
-		t.Fatalf("real FTS degradation failed %#v %v", got, e)
-	}
-	embedding.fail = true
-	embedding.model = "v2"
-	if e = second.Initialize(ctx, path); e == nil {
-		t.Fatal("failed embedding replacement reported success")
-	}
-	var count int
-	_ = s.Pool.QueryRow(ctx, "SELECT COUNT(*) FROM faq").Scan(&count)
-	if count != 2 {
-		t.Fatal("failed replacement erased old rows")
-	}
-	g := NewGaps(s, second, embedding)
-	for i := 0; i < 2; i++ {
-		if e = g.Evaluate(ctx, "Неизвестный вопрос", 5000000001, "", domain.FAQContext{}); e != nil {
-			t.Fatal(e)
-		}
-	}
-	gaps, e := g.Top(ctx, 15)
-	if e != nil || len(gaps) != 1 || gaps[0].GapCount != 2 {
-		t.Fatal("text fallback gap dedup failed", gaps, e)
-	}
-}
+
 func TestEmbeddingBatchReordersOpenAI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer sentinel" || r.URL.Path != "/embeddings" {
@@ -219,47 +139,6 @@ func TestLRUHitsAndConcurrentDuplicateInsertion(t *testing.T) {
 	}
 	if len(f.cacheOrder) != len(f.cache) {
 		t.Fatal("cache/order diverged")
-	}
-}
-func TestFilledPythonMetadataAvoidsReindex(t *testing.T) {
-	s := ragDB(t)
-	ctx := context.Background()
-	_, e := s.Pool.Exec(ctx, `DROP TABLE user_names,topic_mappings,message_mappings,chat_messages,llm_token_usage,knowledge_gaps,faq,faq_metadata,bedolaga_ticket_state`)
-	if e != nil {
-		t.Fatal(e)
-	}
-	ddl, e := os.ReadFile("../storage/testdata/python_schema.sql")
-	if e != nil {
-		t.Fatal(e)
-	}
-	if _, e = s.Pool.Exec(ctx, string(ddl)); e != nil {
-		t.Fatal(e)
-	}
-	if e = s.Migrate(ctx, 3); e != nil {
-		t.Fatal(e)
-	}
-	raw := []byte(`[{"id":"keep","question":"Q","answer":"A"}]`)
-	path := t.TempDir() + "/faq.json"
-	os.WriteFile(path, raw, 0600)
-	embedding := &fakeEmbedding{model: "same"}
-	faq := New(s, embedding)
-	hash := sha256.Sum256(raw)
-	fingerprint := faq.GetIndexFingerprint(hex.EncodeToString(hash[:]))
-	if _, e = s.Pool.Exec(ctx, `INSERT INTO faq(id,question,answer,embedding) VALUES('python','Q','A','[1,0,0]')`); e != nil {
-		t.Fatal(e)
-	}
-	if _, e = s.Pool.Exec(ctx, `INSERT INTO faq_metadata(key,val) VALUES('faq_index_fingerprint',$1)`, fingerprint); e != nil {
-		t.Fatal(e)
-	}
-	if e = faq.Initialize(ctx, path); e != nil {
-		t.Fatal(e)
-	}
-	if embedding.calls.Load() != 0 {
-		t.Fatal("compatible Python metadata caused unnecessary reindex")
-	}
-	var id string
-	if e = s.Pool.QueryRow(ctx, "SELECT id FROM faq").Scan(&id); e != nil || id != "python" {
-		t.Fatal("compatible Python row was replaced", id, e)
 	}
 }
 

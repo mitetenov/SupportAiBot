@@ -103,7 +103,7 @@ func (c *Client) perform(req *http.Request, out any) (failure error) {
 	}()
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return errors.New("Telegram transport request failed")
+		return errors.New("telegram transport request failed")
 	}
 	defer resp.Body.Close()
 	status = resp.StatusCode
@@ -114,7 +114,7 @@ func (c *Client) perform(req *http.Request, out any) (failure error) {
 		Description string          `json:"description"`
 	}
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&result); err != nil {
-		return errors.New("Telegram response is not valid JSON")
+		return errors.New("telegram response is not valid JSON")
 	}
 	diagnostics.Payload(req.Context(), "Telegram API response", result)
 	if !result.OK {
@@ -179,12 +179,12 @@ func (c *Client) Upload(ctx context.Context, method string, fields map[string]st
 }
 func (c *Client) Download(ctx context.Context, path string, maxBytes int64) (data []byte, failure error) {
 	ctx = diagnostics.WithRequest(diagnostics.WithOperation(ctx, "telegram", "download"), diagnostics.NewID())
-	diagnostics.Payload(ctx, "Telegram file download metadata", map[string]any{"file_path": path, "max_bytes": maxBytes})
+	diagnostics.Payload(ctx, "telegram file download metadata", map[string]any{"file_path": path, "max_bytes": maxBytes})
 	defer func() {
 		if failure != nil {
-			diagnostics.Error(ctx, "Telegram file download failed", failure)
+			diagnostics.Error(ctx, "telegram file download failed", failure)
 		}
-		diagnostics.Payload(ctx, "Telegram file download outcome", map[string]any{"byte_size": len(data)})
+		diagnostics.Payload(ctx, "telegram file download outcome", map[string]any{"byte_size": len(data)})
 	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/file/bot"+c.Token+"/"+strings.TrimLeft(path, "/"), nil)
 	if err != nil {
@@ -192,11 +192,11 @@ func (c *Client) Download(ctx context.Context, path string, maxBytes int64) (dat
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, errors.New("Telegram file download failed")
+		return nil, errors.New("telegram file download failed")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("Telegram file status %d", resp.StatusCode)
+		return nil, fmt.Errorf("telegram file status %d", resp.StatusCode)
 	}
 	if maxBytes > 0 && resp.ContentLength > maxBytes {
 		return nil, ErrTooLarge
@@ -207,7 +207,7 @@ func (c *Client) Download(ctx context.Context, path string, maxBytes int64) (dat
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return nil, errors.New("Telegram file read failed")
+		return nil, errors.New("telegram file read failed")
 	}
 	if int64(len(b)) > limit {
 		return nil, ErrTooLarge

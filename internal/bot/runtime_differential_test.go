@@ -57,9 +57,10 @@ func (a *tracedAPI) Call(ctx context.Context, method string, payload any, out an
 		text, _ := p["text"].(string)
 		text = telegram.StripHTML(text)
 		user, _ := p["chat_id"].(float64)
-		if user == 42 {
+		switch user {
+		case 42:
 			a.trace.add(map[string]any{"event": "send", "text": text, "user": int64(42)})
-		} else if user == -100 {
+		case -100:
 			_, answer, ok := strings.Cut(text, "\n\n")
 			if ok {
 				a.trace.add(map[string]any{"event": "forward", "text": answer, "user": int64(42), "escalate": strings.HasPrefix(text, "@operator ")})

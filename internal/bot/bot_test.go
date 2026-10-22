@@ -60,7 +60,6 @@ type memoryStore struct {
 	topics  map[int64]domain.Topic
 	maps    []domain.MessageMapping
 	profile []domain.User
-	cleared int
 }
 
 func (s *memoryStore) UpsertUser(_ context.Context, u domain.User) error {

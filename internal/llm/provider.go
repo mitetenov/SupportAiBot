@@ -286,20 +286,22 @@ func (p *Provider) BuildRequest(conversation []Object) (Object, error) {
 		}
 	case "openrouter":
 		body["stream"] = false
-		if model == "z-ai/glm-4.7" || model == "z-ai/glm-5.3-flash" {
+		switch model {
+		case "z-ai/glm-4.7", "z-ai/glm-5.3-flash":
 			body["reasoning"] = Object{"enabled": effort != "none"}
-		} else if model == "z-ai/glm-5.3" {
+		case "z-ai/glm-5.3":
 			body["reasoning"] = Object{"effort": glmEffort(effort)}
 		}
 	case "zai":
 		body["stream"] = false
-		if model == "glm-4.7" {
+		switch model {
+		case "glm-4.7":
 			typ := "disabled"
 			if effort != "none" {
 				typ = "enabled"
 			}
 			body["thinking"] = Object{"type": typ}
-		} else if model == "glm-5.3" || model == "glm-5.3-flash" || model == "glm-5.3-flashx" {
+		case "glm-5.3", "glm-5.3-flash", "glm-5.3-flashx":
 			thinking := Object{"type": "enabled"}
 			if p.SupportsImages() {
 				thinking["clear_thinking"] = false

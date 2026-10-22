@@ -84,7 +84,7 @@ func italic(s string, mark byte) string {
 		for end < len(r) && r[end] != rune(mark) && r[end] != '\n' {
 			end++
 		}
-		if end > i+1 && end < len(r) && r[end] == rune(mark) && (end+1 == len(r) || !(unicode.IsLetter(r[end+1]) || unicode.IsDigit(r[end+1]) || r[end+1] == '_')) {
+		if end > i+1 && end < len(r) && r[end] == rune(mark) && (end+1 == len(r) || (!unicode.IsLetter(r[end+1]) && !unicode.IsDigit(r[end+1]) && r[end+1] != '_')) {
 			out.WriteString("<i>")
 			out.WriteString(string(r[i+1 : end]))
 			out.WriteString("</i>")

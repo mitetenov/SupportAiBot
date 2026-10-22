@@ -84,9 +84,10 @@ func Setup(s config.Settings) *Redactor {
 		}
 	}
 	level := slog.LevelInfo
-	if s.BotLogLevel == "ERROR" {
+	switch s.BotLogLevel {
+	case "ERROR":
 		level = slog.LevelError
-	} else if s.BotLogLevel == "TRACE" {
+	case "TRACE":
 		level = slog.Level(-8)
 	}
 	output := writer{os.Stdout, r}

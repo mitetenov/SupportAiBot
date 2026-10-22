@@ -3,13 +3,14 @@ package config
 
 import (
 	"fmt"
-	"github.com/joho/godotenv"
 	"math"
 	"net/url"
 	"os"
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 type ProviderTarget struct {
@@ -356,7 +357,7 @@ func (s Settings) Validate() error {
 	}
 	if s.BedolagaEnabled {
 		if s.BedolagaAPIURL == "" || s.BedolagaAPIKey == "" || s.BedolagaWebhookSecret == "" {
-			return fmt.Errorf("Bedolaga API URL, key and webhook secret required")
+			return fmt.Errorf("bedolaga API URL, key and webhook secret required")
 		}
 		if !strings.HasPrefix(s.BedolagaWebhookPath, "/") || s.BedolagaPollIntervalSeconds < 1 || s.BedolagaMaxConcurrentTickets < 1 {
 			return fmt.Errorf("invalid Bedolaga webhook path, poll interval or concurrency")

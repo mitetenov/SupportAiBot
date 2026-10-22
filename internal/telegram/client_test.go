@@ -90,7 +90,7 @@ func TestMediaRedirectDoesNotLeakKeyToOtherOrigin(t *testing.T) {
 		if r.Header.Get("X-API-Key") != "sentinel" {
 			t.Error("missing original key")
 		}
-		http.Redirect(w, r, target.URL, 302)
+		http.Redirect(w, r, target.URL, http.StatusFound)
 	}))
 	defer source.Close()
 	body, e := OpenMedia(context.Background(), source.Client(), source.URL, map[string]string{"X-API-Key": "sentinel"})

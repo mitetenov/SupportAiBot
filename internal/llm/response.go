@@ -104,7 +104,7 @@ func (p *Provider) parseChat(payload Object) (Response, error) {
 				e.Fallback = p.Config.Name == "zai"
 				return Response{}, e
 			}
-			if !(finish == "stop" && len(calls) == 0 || finish == "tool_calls" && len(calls) > 0) {
+			if (finish != "stop" || len(calls) != 0) && (finish != "tool_calls" || len(calls) <= 0) {
 				return Response{}, friendlyError("Invalid finish_reason", "Не удалось получить завершённый ответ от модели. Попробуйте позже.")
 			}
 		}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +12,8 @@ import (
 	"supportbot/internal/diagnostics"
 	"sync"
 	"time"
+
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type NotifyFunc func(context.Context, string, error)
