@@ -191,6 +191,89 @@
           }
         }
       ]
+    },
+    {
+      "id": 39859275528,
+      "url": "https://github.com/mitetenov/SupportAiBot/actions/runs/39859275528",
+      "head_sha": "c77761f0c79511da0acc2e402e97b4238cba30bd",
+      "status": "completed",
+      "conclusion": "success",
+      "elapsed_seconds": 63,
+      "total_job_seconds": 112,
+      "phase": "Warm Go/image caches; initial mypy cache population",
+      "jobs": [
+        {
+          "name": "changes",
+          "elapsed_seconds": 6,
+          "steps": {
+            "Set up job": 0,
+            "Checkout tested revision and diff history": 2,
+            "Select required checks": 0,
+            "Post Checkout tested revision and diff history": 0,
+            "Complete job": 0
+          }
+        },
+        {
+          "name": "go-test",
+          "elapsed_seconds": 44,
+          "steps": {
+            "Set up job": 2,
+            "Initialize containers": 19,
+            "Checkout": 1,
+            "Set up Go (same compiler as Dockerfile)": 9,
+            "Check Go formatting": 0,
+            "Vet Go": 0,
+            "Test Go with race detector and real PostgreSQL": 5,
+            "Post Set up Go (same compiler as Dockerfile)": 1,
+            "Post Checkout": 0,
+            "Stop containers": 5,
+            "Complete job": 0
+          }
+        },
+        {
+          "name": "image-check (amd64)",
+          "elapsed_seconds": 19,
+          "steps": {
+            "Set up job": 1,
+            "Checkout": 1,
+            "Set up Docker Buildx": 6,
+            "Validate Linux AMD64 image without publication": 5,
+            "Post Validate Linux AMD64 image without publication": 1,
+            "Post Set up Docker Buildx": 1,
+            "Post Checkout": 0,
+            "Complete job": 0
+          }
+        },
+        {
+          "name": "python-test",
+          "elapsed_seconds": 40,
+          "steps": {
+            "Set up job": 1,
+            "Checkout": 2,
+            "Install uv and Python 3.14": 3,
+            "Verify lock file is current": 1,
+            "Install dependencies": 0,
+            "Run linter": 0,
+            "Check formatting": 0,
+            "Restore incremental mypy cache": 1,
+            "Check types": 9,
+            "Run tests with the existing coverage floor": 18,
+            "Post Restore incremental mypy cache": 1,
+            "Post Install uv and Python 3.14": 1,
+            "Post Checkout": 0,
+            "Complete job": 0
+          }
+        },
+        {
+          "name": "test",
+          "elapsed_seconds": 3,
+          "steps": {
+            "Set up job": 0,
+            "Require every selected check to pass": 1,
+            "Complete job": 0
+          }
+        }
+      ]
     }
   ]
 }
