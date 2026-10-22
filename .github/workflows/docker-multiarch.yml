@@ -1,4 +1,4 @@
-name: Docker Build & Push
+name: Go CI & Docker
 
 on:
   push:
@@ -8,15 +8,21 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
+
+# New commits replace obsolete PR runs; publication runs keep their own group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GOTOOLCHAIN: local
 
 jobs:
-  # The merge gate. Runs on every pull request; `build` below does not, so this
-  # is the job branch protection should require.
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:pg17
@@ -31,38 +37,66 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
-
       - name: Set up Go
+        id: go
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: true
-
+          cache: false
+      - name: Restore Go modules and compilation cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-${{ github.job }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ hashFiles('cmd/**', 'internal/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-${{ github.job }}-${{ hashFiles('go.mod', 'go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-${{ github.job }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-
       - name: Verify module manifests
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
           go mod verify
-
       - name: Check Go formatting
         run: test -z "$(gofmt -l cmd internal)"
-
       - name: Vet Go
         run: go vet ./...
-
       - name: Test Go with race detector
         env:
           TEST_DATABASE_URL: postgres://parity:local-parity-only@localhost:5432/supportbot_parity?sslmode=disable
-        run: go run ./cmd/check
+        # Vet already ran for every package. Always execute the DB/race tests.
+        run: go run ./cmd/check -vet=off
 
   image-check:
     name: image-check (amd64)
-    needs: test
+    # Independent of the race suite: both remain required before merging.
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
+      - name: Set up Go
+        id: go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Restore Go modules and compilation cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-${{ github.job }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ hashFiles('cmd/**', 'internal/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-${{ github.job }}-${{ hashFiles('go.mod', 'go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-${{ github.job }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-
+      - name: Build native container verifier once
+        run: go build -trimpath -o "$RUNNER_TEMP/supportbot-verify" ./cmd/verify
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.3.0
       - name: Validate Linux AMD64 image without publication
@@ -75,63 +109,59 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha,scope=supportbot-go
           cache-to: type=gha,scope=supportbot-go,mode=max
-      - name: Set up Go for native container checks
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-          cache: true
       - name: Verify read-only container, fixtures, persistence and shutdown
-        run: go run ./cmd/verify smoke --image supportbot:ci
+        run: '"$RUNNER_TEMP/supportbot-verify" smoke --image supportbot:ci'
       - name: Verify static runtime, certificates, DNS and TLS
-        run: go run ./cmd/verify runtime --image supportbot:ci
+        run: '"$RUNNER_TEMP/supportbot-verify" runtime --image supportbot:ci'
 
   build:
     name: build
     needs: test
-    # Nothing to publish from a pull request; the image is built and pushed
-    # only once the change is on master.
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # Keep registry version allocation and push in the same serialized job.
+    concurrency:
+      group: supportbot-dockerhub-publication
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
-
       - name: Set up Go
+        id: go
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: true
-
-      # VERSION declares the major line. Registry tags supply the next free minor.
+          cache: false
+      - name: Restore Go modules and compilation cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-${{ github.job }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ hashFiles('cmd/**', 'internal/**') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-${{ github.job }}-${{ hashFiles('go.mod', 'go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-${{ github.job }}-
+            ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go.outputs.go-version }}-
       - name: Pick the version to publish
         id: version
         run: go run ./cmd/nextversion mitetenov/supportbot >> "$GITHUB_OUTPUT"
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.3.0
-
       - name: Login to Docker Hub
         uses: docker/login-action@v4.6.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
-
-      # :latest and the commit sha are always safe to move. The version tag is
-      # not: replacing the image a version tag points at leaves nothing to roll
-      # back to. The step above is what keeps that from happening; this one is
-      # the second pair of eyes, and it asks the registry the way the push will.
-      # Runs after the login so a repository that is not public fails the check
-      # loudly instead of reading "cannot see it" as "free".
       - name: Refuse to overwrite a published version
         run: |
           TAG="mitetenov/supportbot:${{ steps.version.outputs.version }}"
           if docker manifest inspect "$TAG" > /dev/null 2>&1; then
             echo "::error::$TAG is already published, but the version picker chose it."
-            echo "::error::That means the tag listing was incomplete — do not retry blindly."
             exit 1
           fi
           echo "$TAG is free"
-
       - name: Build and push
         uses: docker/build-push-action@v7.3.0
         with:
