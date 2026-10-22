@@ -156,12 +156,14 @@ func SyntheticRouter(custom map[string]any, trace *[]Call) *mcp.Router {
 		if owner.Owner == "remnawave" {
 			for _, name := range []string{"nodes_list", "nodes_get"} {
 				if _, ok := custom[name]; ok {
+					description := "List all Remnawave nodes"
 					schema := map[string]any{"type": "object", "properties": map[string]any{}}
 					if name == "nodes_get" {
+						description = "Get a specific node by UUID"
 						schema["properties"] = map[string]any{"uuid": map[string]any{"type": "string"}}
 						schema["required"] = []string{"uuid"}
 					}
-					owner.Tools = append(owner.Tools, mcp.Tool{Name: name, Description: "Synthetic node diagnostic fixture", InputSchema: schema})
+					owner.Tools = append(owner.Tools, mcp.Tool{Name: name, Description: description, InputSchema: schema})
 				}
 			}
 		}
