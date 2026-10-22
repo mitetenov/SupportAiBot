@@ -17,7 +17,8 @@ runs once; unit and race tests use `-vet=off -count=1` and execute on cache hits
 Tests requiring real PostgreSQL/pgvector, separate MCP binaries, child processes
 and Docker runtime smoke were removed by request. In-process HTTP fakes, mock
 stores and frozen JSON behavior fixtures remain. Production DB/migration code,
-health commands and manual operational diagnostics remain available.
+production health commands and the build-cache diagnostic remain available.
+DB/check wrappers and manual Docker runtime/smoke harnesses were also removed.
 
 On master, `build` waits for `test`. A dedicated serialized job covers registry
 version allocation, overwrite refusal and Docker Hub publication. `VERSION` and

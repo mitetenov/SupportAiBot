@@ -4,11 +4,9 @@ Tool declarations captured from the current local sibling repositories on 2026-1
   `tools.json` with the `support-hwid.json` overrides, 17 declarations.
 * Bedolaga `c3ddbf2fae9fa87e9b5f9c6dff1f6a2dfd684c75`, 8 declarations.
 
-`TestExternalMCPBinaryContracts` starts actual MCP binaries with isolated local
-backend fixtures, compares every tool description/input schema, and checks a
-real routed call with backend authentication. Set `TEST_REMNAWAVE_MCP_BIN` and
-`TEST_BEDOLAGA_MCP_BIN` to enable this acceptance test. It skips explicitly when
-these binaries are unavailable. No production configuration is inherited.
+The optional external-MCP-binary acceptance test was removed. Frozen tool
+schemas remain for isolated router/identity unit tests; no sibling executable
+or real backend is required.
 
 The bot's owner profile exposes 10 Remnawave tools (9 in read-only mode) and 8
 Bedolaga tools. Foreign internal Remnawave user IDs require a fresh lookup by

@@ -472,59 +472,16 @@ FAQ находится в `faq/faq.json`. Запись может содержа
 Если для ответа указана иллюстрация, бот отправляет её пользователю после
 текста и показывает оператору в топике поддержки.
 
-### Проверка контракта агента и поведенческий benchmark
+### Изолированные проверки контрактов
 
-Детерминированные Go-проверки в `internal/eval`, `internal/llm`,
-`internal/mcp` и `internal/rag` проверяют сборку контекста, историю,
-схемы инструментов, системную идентичность, порядок вызовов, продуктовые
-условия FAQ и оценщик ответов. 146 сохранённых сценариев фиксируют также
-причины отказа оценщика, включая отрицания и границы русских слов.
+Go unit-тесты в `internal/eval`, `internal/llm`, `internal/mcp` и `internal/rag`
+проверяют контекст, mock-историю/инструменты, продуктовые правила FAQ и чистый
+оценщик ответов по сохранённым JSON-сценариям. Реальные provider API и БД не нужны.
+Живой opt-in benchmark CLI и его внешние integration-сценарии удалены.
 
 ```bash
 go test ./internal/eval ./internal/llm ./internal/mcp ./internal/rag
 ```
-
-#### Структура синтетических сценариев и envelopes
-
-Сценарии описываются в `benchmarks/agent_behavior_cases.json`. Каждый сценарий может задавать:
-- `user_message` — входящее сообщение пользователя;
-- `expected_tools` / `forbidden_tools` — обязательные и запрещённые для вызова инструменты;
-- `expect_no_tools` — явное требование отсутствия любых вызовов инструментов;
-- `expected_tool_order` — относительный порядок вызова инструментов (например, `["bedolaga_billing_get", "users_get_by_telegram_id"]`);
-- `must_contain_any` / `must_not_contain` — обязательные ключевые фрагменты и запрещённые формулировки;
-- `expect_escalation` — ожидание маркера `/operator [ESCALATE]`;
-- `scenario_history` (`history`) — предварительно заполненная история диалога;
-- `faq_candidates` — список кандидатов из `faq/faq.json`, передаваемых в контекст;
-- `custom_tool_results` — переопределение ответов синтетических инструментов;
-- `require_clarification` и `max_questions` — требование задать 1–2 релевантных уточняющих вопроса при неясной жалобе;
-- `reject_premature_advice` — отклонение преждевременных советов до выяснения проблемы;
-- `require_two_step_payment` — требование описать оба шага (пополнение + покупка периода);
-- `require_scoped_user_not_found` — точные формулировки поиска по Telegram ID и запрет каузальной диагностики интерфейса;
-- `reject_absent_payment_on_error` — запрет утверждений об отсутствии платежа при сетевом сбое биллинга.
-
-Синтетические ответы Bedolaga MCP формируются по стандарту:
-- Успешный ответ: `{"ok": True, "source": "bedolaga-mcp", "tool": "...", "data": {...}, "meta": "..."}` с нормализованными полями (`balance_kopeks`, `balance_rubles`, `transactions`, `latest_completed_deposit`, `latest_completed_subscription_purchase`, `purchased_after_latest_deposit`, `bot_subscriptions`, `meta`).
-- Ответ с ошибкой: `{"ok": False, "source": "bedolaga-mcp", "tool": "...", "error": {"code": "...", "message": "...", "retryable": bool}}`.
-
-#### Живой eval и ограничения
-
-Живой eval `go run ./cmd/benchmarks behavior` прогоняет выбранную в `.env`
-модель через production LLM-клиент и `McpRouter`, подставляя синтетические MCP-данные.
-Поддерживаются все шесть провайдеров: `openai`, `gemini`, `deepseek`, `groq`, `openrouter`, `zai`.
-
-Почему требуется явный opt-in (`--confirm-external-api`):
-Eval отправляет system prompt и синтетические пользовательские запросы внешнему API выбранного провайдера (OpenAI, Gemini, DeepSeek, Groq, OpenRouter, Z.AI). Это приводит к реальным сетевым запросам, расходу платных токенов и передаче контекста во внешний API. Запуск без явного флага блокируется. Автоматическая внешняя проверка ключей при старте приложения или в CI отсутствует.
-
-```bash
-go run ./cmd/benchmarks behavior --runs 3 --threshold 0.8 \
-  --report /tmp/behavior.json --confirm-external-api
-```
-
-Известные ограничения:
-- Детерминированные offline-тесты с локальным HTTP-транспортом подтверждают корректность контракта адаптера, сборку контекста, вызовы инструментов и логику fallback без внешних запросов, но не гарантируют доступность конкретной модели или положительный баланс для реального пользовательского аккаунта у провайдера.
-- Offline-тесты проверяют контрактные рамки, изоляцию и работу scorer, но не являются доказательством того, что реальная стохастическая LLM всегда ответит ожидаемым образом.
-- Эвристический scorer оценивает наличие/отсутствие ключевых подстрок, факт вопроса и последовательность вызовов инструментов, но не проводит полной семантической оценки ответа.
-- Окончательная верификация изменений требует как прогона живого benchmark с многократными повторами (`--runs >= 3`), так и мониторинга реальных диалогов в продакшене.
 
 При использовании готового Docker-образа FAQ уже включён в него. После
 изменения FAQ или иллюстраций пересоберите образ и перезапустите бота:
@@ -709,10 +666,11 @@ go test -race ./...
 [docs/ci.md](docs/ci.md). Настройки запуска и отката — в
 [operations.md](docs/go-migration/operations.md).
 
-Оценка стоимости ответов и сравнение FAQ доступны через `go run ./cmd/benchmarks`.
-Команды и ограничения описаны в [benchmarks/PROMPT_QUALITY.md](benchmarks/PROMPT_QUALITY.md).
-`go run ./cmd/verify smoke|runtime|cache` сохранён как ручной операционный инструмент;
-CI его не запускает. Dockerfile проверяется сборкой без runtime smoke.
+Живой evaluator с provider API/pgvector удалён; чистый scorer и изолированные
+mock/JSON unit-контракты сохранены.
+`go run ./cmd/verify cache` сохраняет измерение Docker build-cache без запуска
+приложения. DB-обёртка cmd/check, runtimeprobe и ручные smoke/runtime test harnesses
+удалены; Dockerfile проверяется сборкой.
 Версия для публикации выбирается из `VERSION` и тегов Docker Hub командой
 `go run ./cmd/nextversion mitetenov/supportbot`.
 

@@ -1,4 +1,4 @@
-// Package verify validates Docker delivery using isolated local fixtures.
+// Package verify inspects Docker build-cache behavior without application runtime tests.
 package verify
 
 import (
@@ -64,38 +64,7 @@ func inspect(ctx context.Context, name string, image bool) (Image, error) {
 	}
 	return items[0], nil
 }
-func archive(ctx context.Context, image string) (map[string][]byte, error) {
-	raw, e := docker(ctx, "create", image)
-	if e != nil {
-		return nil, e
-	}
-	id := strings.TrimSpace(string(raw))
-	defer cleanup("rm", "-v", id)
-	raw, e = docker(ctx, "export", id)
-	if e != nil {
-		return nil, e
-	}
-	r := tar.NewReader(bytes.NewReader(raw))
-	out := map[string][]byte{}
-	for {
-		h, e := r.Next()
-		if e == io.EOF {
-			break
-		}
-		if e != nil {
-			return nil, e
-		}
-		name := strings.TrimPrefix(h.Name, "./")
-		out[name] = nil
-		if name == "etc/ssl/certs/ca-certificates.crt" || name == "app/supportbot" {
-			out[name], e = io.ReadAll(r)
-			if e != nil {
-				return nil, e
-			}
-		}
-	}
-	return out, nil
-}
+
 func goBinary() string {
 	if p := os.Getenv("GO_BINARY"); p != "" {
 		return p
