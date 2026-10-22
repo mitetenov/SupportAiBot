@@ -26,5 +26,5 @@ release-version, commit-SHA and `latest` tags. PRs never publish. BuildKit cache
 preserve dependency/runtime layers and compiler mounts; build records retain one day.
 
 Deployment is a separate manual workflow. Its Docker tag is validated against
-the tag grammar locally and remotely, and transferred through `BOT_TAG` instead
+the tag grammar before SSH execution, and transferred through `BOT_TAG` instead
 of interpolation into the remote shell. Validation never starts deployment.

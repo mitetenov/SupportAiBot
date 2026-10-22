@@ -32,7 +32,6 @@ jobs:
             set -e
             echo "🚀 Deploying supportbot:$BOT_TAG..."
             cd /root/supportBot
-            [[ "$BOT_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]
             export BOT_TAG
             docker compose pull support-bot
             docker compose up -d --wait support-bot
