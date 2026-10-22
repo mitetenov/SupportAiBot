@@ -1,53 +1,68 @@
-# Prompt and FAQ quality checks
+# Prompt, behavior and FAQ quality checks
 
-Run local tests first. Live runs send the system prompt, FAQ and synthetic
-conversations/tool results to Z.AI and consume tokens. Obtain approval for the
-scope and run count before using `--confirm-external-api`. No production MCP
-server is contacted. The evaluator explicitly selects `glm-5.3-flash` and
-disables fallback, regardless of the default provider in the env file.
+All evaluators use the production Go LLM clients, trusted MCP router and FAQ
+formatter. MCP owners and conversation identities are synthetic. Local tests
+never contact providers. Live commands require `--confirm-external-api` and send
+synthetic conversation/FAQ content to the configured provider, consuming tokens.
 
 ```sh
-python -m benchmarks.prompt_quality --env-file /path/to/.env \
+go test ./internal/eval ./internal/llm ./internal/rag ./internal/mcp
+
+go run ./cmd/benchmarks behavior --env-file /path/to/.env \
+  --runs 3 --threshold 0.8 --report /tmp/behavior.json --confirm-external-api
+
+go run ./cmd/benchmarks quality --env-file /path/to/.env \
   --label candidate-core --report /tmp/candidate-core.json --runs 3 \
   --confirm-external-api
-python -m benchmarks.prompt_quality --env-file /path/to/.env \
+
+go run ./cmd/benchmarks quality --env-file /path/to/.env \
   --cases-file benchmarks/policy_behavior_cases.json \
   --label candidate-policies --report /tmp/candidate-policies.json --runs 3 \
   --confirm-external-api
 ```
 
-The report retains each synthetic answer, tool sequence, violations and usage
-for all API calls. It saves progress after each scenario and refuses to overwrite
-an existing report. Missing usage/cache values remain null. A nonzero exit code
-means at least one scenario failed, not that the report is lost. Read the actual
-answers and tool sequences; wording-based assertions can produce false positives.
+`behavior` uses the configured provider and fallback chain. `quality` explicitly
+selects Z.AI `glm-5.3-flash` and disables fallback, preserving the original
+comparison settings. All six providers are supported. `--case NAME` is repeatable;
+`--concurrency` accepts 1..4. Diagnosis scenarios are in
+`benchmarks/diagnosis_behavior_cases.json` and use the same `--cases-file` flag.
 
-`benchmarks/diagnosis_behavior_cases.json` covers the subscription-first flow:
-refresh/ping with VPN off, conditional Happ update for a refresh error or all
-servers showing n/a, the Incy bypass, known completed steps, and Google/Yandex
-checks. Pass this file with `--cases-file` for an approved live diagnosis run;
-these scenarios do not run automatically in the offline suite.
+Reports reserve a new path before evaluation and refuse to overwrite files.
+Each completed case saves its synthetic answer, tool sequence, violations,
+latency, request sizes and token usage. Missing usage/cache values remain null.
+Observer records contain no authorization headers, URLs, request text or raw
+errors. Provider failures remain failed cases in the report. The behavior
+command fails below the per-case threshold; quality fails if any case fails.
+Relative dates are resolved in UTC and saved with the resolved case fixtures.
+Use the same resolved fixtures, model and settings for comparisons. Read answers
+and tool sequences: the heuristic scorer is not a semantic judge.
 
-For a baseline, run the same evaluator and resolved case fixture against the
-baseline checkout on `PYTHONPATH`. Use the exact same scenarios and model
-settings. Relative date fixtures must be resolved on the same date. Preserve
-both reports and re-score both with the same corrected scorer if a scorer bug
-is found. Do not change expected outcomes solely to improve a score.
+## Retrieval comparison
 
-Retrieval is a separate check and sends FAQ/query text to OpenAI embeddings.
-Create a disposable local pgvector database named `prompt_opt*`. The command
-replaces its FAQ rows; never point it at an application database. The env file's
-database setting is not used.
+Use a disposable loopback PostgreSQL/pgvector database named `prompt_opt*`.
+The env file's application database is never used. Comparison rebuilds its FAQ
+index and reuses identical embeddings across both revisions for fairness.
 
 ```sh
-python -m benchmarks.prompt_retrieval_eval --env-file /path/to/.env \
+go run ./cmd/benchmarks compare --env-file /path/to/.env \
   --baseline-faq /tmp/baseline-faq.json \
-  --database-url postgresql+asyncpg://local:synthetic@127.0.0.1:55493/prompt_opt \
+  --database-url 'postgres://local:synthetic@127.0.0.1:55493/prompt_opt' \
   --report /tmp/retrieval-comparison.json --confirm-external-api
+
+go run ./cmd/benchmarks retrieval --env-file /path/to/.env \
+  --database-url 'postgres://local:synthetic@127.0.0.1:55493/prompt_opt' \
+  --reindex --detail-at 0.45 --detail-mode append \
+  --report /tmp/retrieval-grid.json --confirm-external-api
 ```
 
-The shipped set has 32 positive queries and 3 unrelated controls. `correct`
-includes controls that return nothing; `top1` counts only positive queries.
-Compare recall, rank, new regressions and context length independently. Direct
-catalog additions are distinguishable from raw search hits in each report.
-Delete the disposable database/container when finished.
+`compare` uses OpenAI `text-embedding-3-small` and
+`benchmarks/prompt_retrieval_cases.json` by default, and keeps raw search results
+separate from candidate catalog additions. `retrieval` uses the configured
+embedding provider, `benchmarks/retrieval_queries.json`, all twelve similarity /
+limit pairs and three independent fallback modes: `append`, `compete`, `off`.
+It records held-out scores separately from keyword-tuned queries and controls.
+Its default row uses production similarity 0.45 and limit 3; real pgvector tests
+compare the evaluator's results with the production retrieval path.
+`--cases` and `--faq` select other fixtures. Without `--reindex`, the grid uses
+existing vectors in the disposable database. Remove the fixture database after
+measurement. Compare recall, rank, regressions and context length independently.

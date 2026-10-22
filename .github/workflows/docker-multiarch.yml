@@ -38,6 +38,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Verify module manifests
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+          go mod verify
+
       - name: Check Go formatting
         run: test -z "$(gofmt -l cmd internal)"
 
@@ -47,41 +53,7 @@ jobs:
       - name: Test Go with race detector
         env:
           TEST_DATABASE_URL: postgres://parity:local-parity-only@localhost:5432/supportbot_parity?sslmode=disable
-        run: ./scripts/parity/test_go.sh
-
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v7
-        with:
-          python-version: '3.14'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
-        with:
-          enable-cache: true
-
-      # Fails if pyproject.toml and uv.lock have drifted apart, so the image is
-      # never built from dependencies CI did not test.
-      - name: Verify lock file is current
-        run: uv lock --check
-
-      - name: Install dependencies
-        run: uv sync --frozen --extra dev --no-install-project
-
-      - name: Run linter
-        run: uv run --no-sync ruff check .
-
-      - name: Check formatting
-        run: uv run --no-sync ruff format --check .
-
-      # The codebase is annotated throughout; without this the annotations are
-      # documentation that nothing checks.
-      - name: Check types
-        run: uv run --no-sync mypy
-
-      # Coverage settings (including the floor that fails the job) live in
-      # pyproject.toml, so a local run gates on exactly what CI gates on.
-      - name: Run tests
-        run: uv run --no-sync pytest -v
+        run: go run ./cmd/check
 
   image-check:
     name: image-check (amd64)
@@ -98,9 +70,20 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: supportbot:ci
           platforms: linux/amd64
           cache-from: type=gha,scope=supportbot-go
           cache-to: type=gha,scope=supportbot-go,mode=max
+      - name: Set up Go for native container checks
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify read-only container, fixtures, persistence and shutdown
+        run: go run ./cmd/verify smoke --image supportbot:ci
+      - name: Verify static runtime, certificates, DNS and TLS
+        run: go run ./cmd/verify runtime --image supportbot:ci
 
   build:
     name: build
@@ -113,19 +96,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
 
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v7
+      - name: Set up Go
+        uses: actions/setup-go@v6
         with:
-          python-version: '3.14'
+          go-version-file: go.mod
+          cache: true
 
-      # The major line is declared by hand in pyproject.toml; the minor is taken
-      # from what is already on Docker Hub. So an ordinary merge to master never
-      # touches the version and never lands on a tag that exists, and two merges
-      # arriving together cannot pick the same number — unlike a scheme that
-      # commits the bump back to master.
+      # VERSION declares the major line. Registry tags supply the next free minor.
       - name: Pick the version to publish
         id: version
-        run: python3 .github/scripts/next_version.py mitetenov/supportbot >> "$GITHUB_OUTPUT"
+        run: go run ./cmd/nextversion mitetenov/supportbot >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.3.0

@@ -9,7 +9,7 @@ The Go binary remains statically linked, stripped and built with `-trimpath`. Th
 - `go.mod`/`go.sum` precede source compilation. `go mod download` writes into a regular dependency layer, so imported external caches retain the modules even on a fresh runner. BuildKit cache mounts are [not exported to the GitHub Actions cache by default](https://docs.docker.com/build/ci/github-actions/cache/#cache-mounts).
 - Go source is bound read-only for compilation; FAQ changes do not invalidate compilation. The compiler cache mount is separated by Go version, target OS, architecture and variant. The Actions cache uses the image-specific `supportbot-go` scope.
 - CA/identity files, FAQ and binary use separate `COPY --link` layers. The binary is copied as an explicit `/out/app/supportbot` tree with epoch timestamps on both file and parent directory. This avoids a wall-clock timestamp on a synthetic `/app` directory changing the binary layer after FAQ-only edits.
-- The build context is an allowlist of module manifests, `cmd`, `internal` (including embedded prompts) and FAQ assets; tests, fixtures, Python code, documentation and all `.env` files are excluded. Warm incremental transfer bytes are not presented as total context size.
+- The build context is an allowlist of module manifests, `cmd`, `internal` (including embedded prompts) and FAQ assets; tests, fixtures, host tools, documentation and all `.env` files are excluded. Warm incremental transfer bytes are not presented as total context size.
 
 ## Measured cache behavior
 
@@ -34,9 +34,16 @@ Native Linux/arm64 startup passed with a read-only root filesystem, isolated rea
 ```sh
 docker buildx build --load -t supportbot-go:optimized .
 docker buildx build --load --platform linux/amd64 -t supportbot-go:optimized-amd64 .
-python3 scripts/parity/docker_cache.py
-python3 scripts/parity/docker_runtime.py
-SUPPORTBOT_TEST_IMAGE=supportbot-go:optimized python3 scripts/parity/docker_smoke.py
+go run ./cmd/verify cache --image supportbot-go:optimized
+go run ./cmd/verify runtime --image supportbot-go:optimized --baseline-image supportbot-go:parity
+go run ./cmd/verify smoke --image supportbot-go:optimized
 ```
 
-Host prerequisites are Docker with Buildx, Go and Python 3; the TLS probe also uses OpenSSL. The smoke harness additionally expects the disposable PostgreSQL fixture described in [the native operations guide](go-migration/operations.md), on `127.0.0.1:64641` with database `supportbot_parity` and synthetic `parity` credentials. See the harness for fixture-only connection settings; never substitute production credentials. Cache probes create and remove only their own temporary builders/images; smoke/probe helpers remove their own bot containers and servers. The task-created PostgreSQL fixture and retained diagnostic builder were removed after validation. Baseline and optimized image tags remain available locally. No commit, publication or deployment was performed.
+Host prerequisites are Go and Docker with Buildx. TLS certificates and the probe
+are generated with Go; no additional scripting runtime or OpenSSL is required.
+The smoke command creates and removes its own isolated PostgreSQL container,
+network, bot container and local fake APIs. The cache command creates temporary
+contexts/builders/images, validates layer reuse and cleans them up. It retains
+the selected image and writes per-build logs and JSON measurements to its results
+directory (`--results /tmp/cache-results`). The optional baseline image checks
+byte-for-byte public CA equivalence. No production configuration is read.

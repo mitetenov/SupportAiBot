@@ -1,0 +1,223 @@
+[
+  {
+    "owner": "bedolaga",
+    "tools": [
+      {
+        "name": "bedolaga_user_get",
+        "description": "Read the current user's Bedolaga account and balance.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "telegram_id": {
+              "type": "integer",
+              "description": "System-pinned Telegram identity"
+            },
+            "user_id": {
+              "type": "integer",
+              "description": "System-pinned cabinet identity"
+            }
+          }
+        }
+      },
+      {
+        "name": "bedolaga_billing_get",
+        "description": "Read deposits and subscription purchases for personal payment and balance verification.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "telegram_id": {
+              "type": "integer",
+              "description": "System-pinned Telegram identity"
+            },
+            "user_id": {
+              "type": "integer",
+              "description": "System-pinned cabinet identity"
+            },
+            "limit": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "name": "bedolaga_subscription_get",
+        "description": "Read Bedolaga-side subscription records; not panel state.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "telegram_id": {
+              "type": "integer",
+              "description": "System-pinned Telegram identity"
+            },
+            "user_id": {
+              "type": "integer",
+              "description": "System-pinned cabinet identity"
+            }
+          }
+        }
+      }
+    ],
+    "results": {
+      "bedolaga_user_get": {
+        "ok": true,
+        "source": "bedolaga-mcp",
+        "tool": "bedolaga_user_get",
+        "data": {
+          "found": true,
+          "telegram_id": 424242,
+          "display_name": "Synthetic User",
+          "status": "active",
+          "balance_kopeks": 50000,
+          "balance_rubles": 500.0,
+          "has_made_first_topup": true,
+          "has_had_paid_subscription": false,
+          "referral_code": "SYNTH123",
+          "was_referred": false,
+          "promo_group": null,
+          "created_at": "2026-08-01T00:00:00Z",
+          "last_activity": "2026-09-03T12:00:00Z"
+        },
+        "meta": null
+      },
+      "bedolaga_billing_get": {
+        "ok": true,
+        "source": "bedolaga-mcp",
+        "tool": "bedolaga_billing_get",
+        "data": {
+          "balance_kopeks": 50000,
+          "balance_rubles": 500.0,
+          "transactions": [
+            {
+              "id": 101,
+              "category": "deposit",
+              "direction": "credit",
+              "raw_type": "deposit",
+              "amount_kopeks": 50000,
+              "amount_rubles": 500.0,
+              "payment_method": "card",
+              "is_completed": true,
+              "description": "Пополнение баланса",
+              "created_at": "2026-09-01T10:00:00Z",
+              "completed_at": "2026-09-01T10:01:00Z"
+            }
+          ],
+          "latest_completed_deposit": {
+            "amount_kopeks": 50000,
+            "amount_rubles": 500.0,
+            "category": "deposit",
+            "created_at": "2026-09-01T10:00:00Z",
+            "completed_at": "2026-09-01T10:01:00Z"
+          },
+          "latest_completed_subscription_purchase": null,
+          "purchased_after_latest_deposit": false,
+          "bot_subscriptions": [],
+          "meta": "deposit = a balance credit (money added to the balance), not a purchase. Only a completed subscription_payment confirms a purchase. bot_record_status is the bot-side purchase record, not the VPN panel status; verify the actual panel state via the separate Remnawave MCP."
+        },
+        "meta": "deposit = a balance credit (money added to the balance), not a purchase. Only a completed subscription_payment confirms a purchase. bot_record_status is the bot-side purchase record, not the VPN panel status; verify the actual panel state via the separate Remnawave MCP."
+      },
+      "bedolaga_subscription_get": {
+        "ok": true,
+        "source": "bedolaga-mcp",
+        "tool": "bedolaga_subscription_get",
+        "data": {
+          "has_subscription_records": true,
+          "active_record_count": 1,
+          "subscriptions": [
+            {
+              "id": 1,
+              "bot_record_status": "active",
+              "bot_record_effective_status": "active",
+              "is_trial": false,
+              "tariff_id": 1,
+              "tariff_name": "1 месяц",
+              "created_at": "2026-08-01T00:00:00Z",
+              "start_date": "2026-08-01T00:00:00Z",
+              "end_date": "2026-12-31T00:00:00Z",
+              "autopay_enabled": false,
+              "autopay_days_before": null,
+              "note": "This is the bot-side Bedolaga purchase record, not the VPN panel status. Verify the actual panel state via the separate Remnawave MCP."
+            }
+          ],
+          "meta": "Bedolaga subscription records are not the VPN panel status."
+        },
+        "meta": "Bedolaga subscription records are not the VPN panel status."
+      }
+    }
+  },
+  {
+    "owner": "remnawave",
+    "tools": [
+      {
+        "name": "users_get_by_telegram_id",
+        "description": "Find the current user's factual VPN-panel accounts by Telegram ID.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "telegramId": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "telegramId"
+          ]
+        }
+      },
+      {
+        "name": "users_get_subscription_url_by_telegram_id",
+        "description": "Return the current Telegram user's only unambiguous VPN subscription URL.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "telegramId": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "telegramId"
+          ]
+        }
+      },
+      {
+        "name": "subscriptions_get_by_user_id",
+        "description": "Read factual VPN-panel subscription status by panel userId.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "userId": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "userId"
+          ]
+        }
+      }
+    ],
+    "results": {
+      "users_get_by_telegram_id": {
+        "ok": true,
+        "response": {
+          "users": [
+            {
+              "id": 77,
+              "username": "synthetic-eval-user",
+              "status": "EXPIRED",
+              "expireAt": "2026-08-01T00:00:00Z"
+            }
+          ]
+        }
+      },
+      "users_get_subscription_url_by_telegram_id": {
+        "status": "found",
+        "subscriptionUrl": "https://sub.example.test/synthetic"
+      },
+      "subscriptions_get_by_user_id": {
+        "ok": true,
+        "response": {
+          "status": "EXPIRED",
+          "expireAt": "2026-08-01T00:00:00Z"
+        }
+      }
+    }
+  }
+]
