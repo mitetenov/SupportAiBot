@@ -143,7 +143,7 @@ func Smoke(ctx context.Context, image string) (map[string]any, error) {
 	defer cleanup("rm", "-f", "-v", pg)
 	ready := false
 	for range 60 {
-		if _, e := docker(ctx, "exec", pg, "pg_isready", "-U", "parity", "-d", "smoke"); e == nil {
+		if _, e := docker(ctx, "exec", pg, "pg_isready", "-h", "127.0.0.1", "-U", "parity", "-d", "smoke"); e == nil {
 			ready = true
 			break
 		}
@@ -173,15 +173,29 @@ func Smoke(ctx context.Context, image string) (map[string]any, error) {
 		return nil, e
 	}
 	defer cleanup("rm", "-f", "-v", bot)
-	config, e := inspect(ctx, bot, false)
-	if e != nil {
-		return nil, e
+	config := Image{}
+	port := ""
+	for range 100 {
+		config, e = inspect(ctx, bot, false)
+		if e != nil {
+			return nil, e
+		}
+		if !config.State.Running {
+			raw, _ := docker(ctx, "logs", "--tail", "30", bot)
+			return nil, fmt.Errorf("smoke bot exited before health port (exit %d): %s", config.State.ExitCode, strings.TrimSpace(string(raw)))
+		}
+		if ports := config.NetworkSettings.Ports["8080/tcp"]; len(ports) > 0 {
+			port = ports[0].HostPort
+			break
+		}
+		if e = pause(ctx, 100*time.Millisecond); e != nil {
+			return nil, e
+		}
 	}
-	ports := config.NetworkSettings.Ports["8080/tcp"]
-	if len(ports) == 0 {
-		return nil, fmt.Errorf("health port missing")
+	if port == "" {
+		return nil, fmt.Errorf("health port was not published")
 	}
-	healthURL := "http://127.0.0.1:" + ports[0].HostPort + "/health"
+	healthURL := "http://127.0.0.1:" + port + "/health"
 	healthy := false
 	client := &http.Client{Timeout: time.Second}
 	for range 225 {

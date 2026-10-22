@@ -39,7 +39,10 @@ type Image struct {
 		User       string
 		Entrypoint []string
 	}
-	State           struct{ ExitCode int }
+	State struct {
+		ExitCode int
+		Running  bool
+	}
 	HostConfig      struct{ ReadonlyRootfs bool }
 	NetworkSettings struct {
 		Ports map[string][]struct{ HostPort string }

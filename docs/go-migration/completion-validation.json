@@ -223,5 +223,40 @@
     }
   },
   "paid_provider_calls": false,
-  "production_changed": false
+  "production_changed": false,
+  "docker_smoke_amd64": {
+    "external_api_fixtures": {
+      "answer": true,
+      "commands": true,
+      "help": true,
+      "mcp": true
+    },
+    "graceful_exit": 0,
+    "health": true,
+    "image": "supportbot-go:complete-amd64",
+    "native_image": "passed",
+    "persisted_history": 2,
+    "readonly_rootfs": true,
+    "restart_persistence": true
+  },
+  "docker_runtime_amd64": {
+    "ca_roots": 118,
+    "ca_sha256": "5961c0a3c65459931c023e0075c09733f09aea4ca439cb85bc4a08bb4f3f568b",
+    "cwd": "/app",
+    "default_ca_bytes": 178791,
+    "default_ca_matches_baseline": false,
+    "dns": true,
+    "faq_json": true,
+    "faq_png": true,
+    "gid": 101,
+    "home": "/app",
+    "https": true,
+    "image": "supportbot-go:complete-amd64",
+    "image_bytes": 19828404,
+    "machine": "EM_X86_64",
+    "readonly_rootfs": true,
+    "runtime_layers": 4,
+    "static_elf": true,
+    "uid": 100
+  }
 }
