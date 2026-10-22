@@ -21,18 +21,7 @@ data/
 DataExport_*/
 api-1.json
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.mypy_cache/
-.coverage
-coverage.xml
-htmlcov/
-.ruff_cache/
-.venv/
-.venv
-dist/
-build/
-*.egg-info/
+# Go development outputs
+/supportbot
+/nextversion
+/coverage.out

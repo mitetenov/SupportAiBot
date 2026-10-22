@@ -1,5 +1,5 @@
 # Only runtime Go sources, embedded prompt and read-only FAQ assets enter builds.
-# In particular, never send .env, Python baseline, Git state, docs or local caches.
+# In particular, never send .env, Git state, docs or local caches.
 **
 !go.mod
 !go.sum
@@ -10,14 +10,23 @@
 !faq/
 !faq/**
 
-# Tests and their Python-generated reference payloads are not Go runtime inputs.
+# Tests and their immutable reference payloads are not Go runtime inputs.
 **/*_test.go
 **/testdata/
 **/testdata/**
-**/__pycache__/
-**/*.pyc
 faq/images/README.md
 
 # Defense in depth for accidentally nested local credentials.
 **/.env
 **/.env.*
+
+# Host-side validation/release tools are not runtime build inputs.
+cmd/benchmarks/
+cmd/check/
+cmd/nextversion/
+cmd/runtimeprobe/
+cmd/verify/
+internal/eval/
+internal/release/
+internal/verify/
+internal/repopolicy/
