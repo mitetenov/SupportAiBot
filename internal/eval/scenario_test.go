@@ -98,9 +98,6 @@ func LoadCases(path string, now time.Time) ([]BehaviorCase, error) {
 	return result.Cases, nil
 }
 
-// Settings does not validate or use bot/MCP/database credentials. Only the selected
-// provider is called; synthetic MCP owners below never open network connections.
-
 type syntheticOwner struct {
 	Owner   string         `json:"owner"`
 	Tools   []mcp.Tool     `json:"tools"`
