@@ -93,6 +93,13 @@ jobs:
         run: uv run --no-sync ruff check .
       - name: Check formatting
         run: uv run --no-sync ruff format --check .
+      - name: Restore incremental mypy cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .mypy_cache
+          key: ${{ runner.os }}-mypy-3.14-${{ hashFiles('uv.lock', 'pyproject.toml') }}-${{ hashFiles('app/**/*.py') }}
+          restore-keys: |
+            ${{ runner.os }}-mypy-3.14-${{ hashFiles('uv.lock', 'pyproject.toml') }}-
       - name: Check types
         run: uv run --no-sync mypy
       - name: Run tests with the existing coverage floor
