@@ -16,6 +16,26 @@ import (
 	"time"
 )
 
+// certificateCount matches CertPool deduplication without deprecated Subjects.
+func certificateCount(ca []byte) int {
+	certificates := map[[28]byte]bool{}
+	for rest := ca; len(rest) > 0; {
+		block, next := pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		rest = next
+		if block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err == nil {
+			certificates[sha256.Sum224(cert.Raw)] = true
+		}
+	}
+	return len(certificates)
+}
+
 func probe() error {
 	ca, e := os.ReadFile("/etc/ssl/certs/ca-certificates.crt")
 	if e != nil {
@@ -24,21 +44,6 @@ func probe() error {
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(ca) {
 		return fmt.Errorf("no system roots")
-	}
-	subjects := map[string]bool{}
-	for rest := ca; len(rest) > 0; {
-		block, next := pem.Decode(rest)
-		if block == nil {
-			break
-		}
-		rest = next
-		if block.Type != "CERTIFICATE" {
-			continue
-		}
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err == nil {
-			subjects[string(cert.RawSubject)] = true
-		}
 	}
 	binary, e := elf.Open("/app/supportbot")
 	if e != nil {
@@ -85,7 +90,7 @@ func probe() error {
 		return fmt.Errorf("identity/cwd/home drift")
 	}
 	sum := sha256.Sum256(ca)
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"static_elf": true, "machine": binary.Machine.String(), "ca_roots": len(subjects), "ca_sha256": hex.EncodeToString(sum[:]), "dns": true, "https": true, "uid": os.Getuid(), "gid": os.Getgid(), "home": home, "cwd": cwd, "faq_json": true, "faq_png": true})
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"static_elf": true, "machine": binary.Machine.String(), "ca_roots": certificateCount(ca), "ca_sha256": hex.EncodeToString(sum[:]), "dns": true, "https": true, "uid": os.Getuid(), "gid": os.Getgid(), "home": home, "cwd": cwd, "faq_json": true, "faq_png": true})
 }
 func main() {
 	if e := probe(); e != nil {

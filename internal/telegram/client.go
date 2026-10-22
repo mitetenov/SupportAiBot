@@ -179,12 +179,12 @@ func (c *Client) Upload(ctx context.Context, method string, fields map[string]st
 }
 func (c *Client) Download(ctx context.Context, path string, maxBytes int64) (data []byte, failure error) {
 	ctx = diagnostics.WithRequest(diagnostics.WithOperation(ctx, "telegram", "download"), diagnostics.NewID())
-	diagnostics.Payload(ctx, "telegram file download metadata", map[string]any{"file_path": path, "max_bytes": maxBytes})
+	diagnostics.Payload(ctx, "Telegram file download metadata", map[string]any{"file_path": path, "max_bytes": maxBytes})
 	defer func() {
 		if failure != nil {
-			diagnostics.Error(ctx, "telegram file download failed", failure)
+			diagnostics.Error(ctx, "Telegram file download failed", failure)
 		}
-		diagnostics.Payload(ctx, "telegram file download outcome", map[string]any{"byte_size": len(data)})
+		diagnostics.Payload(ctx, "Telegram file download outcome", map[string]any{"byte_size": len(data)})
 	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/file/bot"+c.Token+"/"+strings.TrimLeft(path, "/"), nil)
 	if err != nil {
