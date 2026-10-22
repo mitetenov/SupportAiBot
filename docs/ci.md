@@ -12,9 +12,9 @@ wait for the Go suite; merging still requires both to pass. Obsolete PR runs
 are canceled when a newer commit arrives. Master runs are not canceled by the
 PR concurrency group. Jobs have bounded 20-minute timeouts.
 
-The recommended toolchain is pinned to Go 1.27.3 in `go.mod`, matching the image's
-Dockerfile default; CI uses that directive via setup-go. The minimum module
-language version stays 1.26. Runners are pinned to Ubuntu 24.04 so automatic OS
+CI explicitly selects Go 1.27.3 through the workflow GO_VERSION/go-version
+input, matching both the recommendation in `go.mod` and the Dockerfile default.
+The minimum module language version stays 1.26. Runners are pinned to Ubuntu 24.04 so automatic OS
 rollouts do not invalidate caches or silently change the verification environment.
 
 Go module/compilation caches are keyed by OS, architecture, exact toolchain,

@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  GO_VERSION: '1.27.3'
   GOTOOLCHAIN: local
 
 jobs:
@@ -41,7 +42,7 @@ jobs:
         id: go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: ${{ env.GO_VERSION }}
           cache: false
       - name: Restore Go modules and compilation cache
         uses: actions/cache@v6
@@ -82,7 +83,7 @@ jobs:
         id: go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: ${{ env.GO_VERSION }}
           cache: false
       - name: Restore Go modules and compilation cache
         uses: actions/cache@v6
@@ -131,7 +132,7 @@ jobs:
         id: go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: ${{ env.GO_VERSION }}
           cache: false
       - name: Restore Go modules and compilation cache
         uses: actions/cache@v6
