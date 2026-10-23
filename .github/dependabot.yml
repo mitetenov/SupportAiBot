@@ -35,14 +35,3 @@ updates:
       docker-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
-  - package-ecosystem: docker
-    directory: /worktrees/ci-optimization-20261023
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: "chore(deps)"
-    groups:
-      docker-minor-patch:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
