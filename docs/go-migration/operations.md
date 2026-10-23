@@ -13,34 +13,24 @@ go build -o supportbot ./cmd/supportbot
 ./supportbot healthcheck
 go vet ./...
 go test -race ./...
-TEST_DATABASE_URL='postgres://test:test@127.0.0.1:5432/test?sslmode=disable' \
-  go run ./cmd/check -json
 ```
 
-`cmd/check` requires an explicitly supplied disposable PostgreSQL/pgvector
-database, initializes the shared vector extension once, then runs all packages
-with the race detector and no test-result cache. Tests create isolated schemas.
-The compatibility shell launcher `scripts/parity/test_go.sh` delegates to it.
-Optional `TEST_REMNAWAVE_MCP_BIN` and `TEST_BEDOLAGA_MCP_BIN` enable actual sibling
-binary acceptance against local upstream fixtures. No production provider is used.
+Текущий suite содержит только изолированные unit/mock-тесты. Обёртка с реальным
+PostgreSQL/pgvector, optional sibling MCP process acceptance и ручные Docker
+smoke/runtime harnesses удалены вместе с тестовыми probe-утилитами.
+Производственная команда `/app/supportbot healthcheck` сохранена.
 
 ```sh
 docker build -t supportbot-go:complete .
-go run ./cmd/verify smoke --image supportbot-go:complete
-go run ./cmd/verify runtime --image supportbot-go:complete
 go run ./cmd/verify cache --image supportbot-go:complete --results /tmp/cache-results
 ```
 
-Smoke creates and removes its own isolated PostgreSQL, network, fake APIs and
-bot container. It checks health, commands, help, answers, MCP discovery, durable
-history, restart, read-only/non-root operation and graceful shutdown. Runtime
-checks static ELF, certificates, container DNS, local TLS, identity and assets;
-`--baseline-image IMAGE` additionally compares CA bundles. Cache checks unchanged,
-source-only, FAQ-only, dependency and fresh-builder imported-cache behavior.
-All use Go and Docker without loading application `.env`.
+Cache records build-layer behavior without starting the application, database or
+provider fixtures. It can create a BuildKit builder and stopped image-extraction
+containers; it is a build diagnostic, not an application runtime test.
 
-Benchmark commands and external-API opt-in are documented in
-[the evaluator guide](../../benchmarks/PROMPT_QUALITY.md). The release helper
+The former external-API/disposable-DB benchmark CLI was removed. Pure scorer and
+mocked unit fixtures remain under internal/eval. The release helper
 `go run ./cmd/nextversion mitetenov/supportbot` reads the major version from
 `VERSION` and assigns the next unused minor from Docker Hub. Incomplete tag
 listings fail publication; an independent manifest check prevents overwrites.

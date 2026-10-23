@@ -3,10 +3,11 @@ package rag
 import (
 	"context"
 	"errors"
-	"github.com/jackc/pgx/v5"
 	"strings"
 	"supportbot/internal/domain"
 	"supportbot/internal/storage"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type Gaps struct {

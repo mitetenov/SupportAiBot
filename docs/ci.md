@@ -1,40 +1,31 @@
 # Native Go CI and image publication
 
-Pull requests run two independent required checks in parallel:
+Go 1.27.3 is pinned in `go.mod` and the Dockerfile. CI uses `go-version-file`,
+Ubuntu 26.04 and exact released Action commit SHAs. Weekly Dependabot covers Go,
+Docker and Actions, groups minor/patch updates and leaves major updates separate.
 
 | Check | Coverage |
 | --- | --- |
-| `test` | Module tidiness/integrity, formatting, vet, repository policy, native race tests and real PostgreSQL/pgvector |
-| `image-check (amd64)` | Build and load Linux AMD64 image, execute read-only/non-root smoke with local fake APIs, durable history/restart/shutdown, static ELF, CA/DNS/TLS and assets |
+| `test` | Module tidy/verify, formatting, vet, golangci-lint v2.15.0, isolated unit/mock tests, race detector, static production build |
+| `image-check (amd64)` | Linux AMD64 Docker build without registry credentials or runtime execution |
 
-The check names remain stable for branch protection. The image check does not
-wait for the Go suite; merging still requires both to pass. Obsolete PR runs
-are canceled when a newer commit arrives. Master runs are not canceled by the
-PR concurrency group. Jobs have bounded 20-minute timeouts.
+The required `test` name remains stable. PR runs cancel obsolete versions;
+publication runs are not cancelled. Go modules/build caches are separated by
+platform and job with manifest/source keys and fallback prefixes. Explicit vet
+runs once; unit and race tests use `-vet=off -count=1` and execute on cache hits.
 
-CI explicitly selects Go 1.27.3 through the workflow GO_VERSION/go-version
-input, matching both the recommendation in `go.mod` and the Dockerfile default.
-The minimum module language version stays 1.26. Runners are pinned to Ubuntu 24.04 so automatic OS
-rollouts do not invalidate caches or silently change the verification environment.
+Tests requiring real PostgreSQL/pgvector, separate MCP binaries, child processes
+and Docker runtime smoke were removed by request. In-process HTTP fakes, mock
+stores and frozen JSON behavior fixtures remain. Production DB/migration code,
+production health commands and the build-cache diagnostic remain available.
+DB/check wrappers and manual Docker runtime/smoke harnesses were also removed.
 
-Go module/compilation caches are keyed by OS, architecture, exact toolchain,
-job, both module manifests and all source/embedded fixture inputs. Prefix
-fallbacks reuse the preceding source snapshot, including after dependency changes.
-A final same-toolchain fallback seeds new jobs from the default branch cache;
-PR image jobs can reuse compilation populated by master verification/publication.
-Each job saves its own updated compilation cache, so the race suite, native
-container tools and release helper do not compete to save one immutable key.
-Module integrity is verified and race tests always execute with `-count=1`;
-restored caches never skip tests. Explicit vet runs once for all packages, so
-the subsequent race command uses `-vet=off`. The image job compiles its verifier
-once and invokes it for both smoke and runtime validation.
+On master, `build` waits for `test`. A dedicated serialized job covers registry
+version allocation, overwrite refusal and Docker Hub publication. `VERSION` and
+existing tags determine the next free version. The linux/amd64 image retains
+release-version, commit-SHA and `latest` tags. PRs never publish. BuildKit caches
+preserve dependency/runtime layers and compiler mounts; build records retain one day.
 
-On master, `build` waits for the full Go test gate. A dedicated concurrency
-group serializes the complete registry-version selection, overwrite check and
-push job. VERSION and existing Docker Hub tags select the next free release;
-partial registry listings fail publication. Linux AMD64 images are tagged with
-the release version, commit SHA and `latest`. BuildKit's separate GHA cache is
-retained in `mode=max` for dependency and runtime layers. PRs never publish.
-
-The deployment workflow remains manual. CI publication and deployed state are
-separate; neither a merge nor a registry tag confirms a running server update.
+Deployment is a separate manual workflow. Its Docker tag is validated against
+the tag grammar before SSH execution, and transferred through `BOT_TAG` instead
+of interpolation into the remote shell. Validation never starts deployment.

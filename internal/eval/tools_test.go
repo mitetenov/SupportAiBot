@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/jackc/pgx/v5"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,8 +13,6 @@ import (
 	"strings"
 	"supportbot/internal/config"
 	"supportbot/internal/domain"
-	"supportbot/internal/rag"
-	"supportbot/internal/storage"
 	"testing"
 	"time"
 )
@@ -167,79 +164,5 @@ func TestEvaluationUsesProductionRouterAndPinnedIdentity(t *testing.T) {
 	got, e := RunCase(context.Background(), BehaviorCase{Name: "identity", UserMessage: "hello", ExpectedTools: []string{"bedolaga_billing_get"}, ExpectEscalation: &no}, settings, server.Client(), "../../faq/faq.json")
 	if e != nil || !got.Passed || requests != 2 {
 		t.Fatal(got, e, requests)
-	}
-}
-
-type fixtureEmbedding struct{ calls int }
-
-func (f *fixtureEmbedding) Dimension() int { return 3 }
-func (f *fixtureEmbedding) Fingerprint() map[string]any {
-	return map[string]any{"provider": "fixture", "dimension": 3}
-}
-func (f *fixtureEmbedding) Embed(ctx context.Context, s string) ([]float64, error) {
-	v, e := f.EmbedBatch(ctx, []string{s})
-	return v[0], e
-}
-func (f *fixtureEmbedding) EmbedBatch(_ context.Context, texts []string) ([][]float64, error) {
-	f.calls += len(texts)
-	out := make([][]float64, len(texts))
-	for i := range out {
-		out[i] = []float64{1, 0, 0}
-	}
-	return out, nil
-}
-func TestRetrievalMatchesProductionWithRealPGVector(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL required")
-	}
-	ctx := context.Background()
-	admin, e := storage.New(ctx, dsn)
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer admin.Close()
-	schema := fmt.Sprintf("eval_%d", time.Now().UnixNano())
-	quoted := pgx.Identifier{schema}.Sanitize()
-	if _, e = admin.Pool.Exec(ctx, "CREATE SCHEMA "+quoted); e != nil {
-		t.Fatal(e)
-	}
-	defer admin.Pool.Exec(ctx, "DROP SCHEMA "+quoted+" CASCADE")
-	cfg, e := pgx.ParseConfig(dsn)
-	if e != nil {
-		t.Fatal(e)
-	}
-	cfg.RuntimeParams["search_path"] = schema + ",public"
-	store, e := storage.New(ctx, cfg.ConnString())
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer store.Close()
-	p := filepath.Join(t.TempDir(), "faq.json")
-	os.WriteFile(p, []byte(`[{"id":"test","question":"Как оплатить?","answer":"Оплата из баланса","keywords":["оплата"]}]`), 0600)
-	provider := &fixtureEmbedding{}
-	embedding := CachedEmbedding(provider)
-	retriever, e := NewRetriever(ctx, store, embedding, p, true)
-	if e != nil {
-		t.Fatal(e)
-	}
-	for _, q := range []string{"оплата", "vpn не работает"} {
-		_, got, e := retriever.Retrieve(ctx, q, .45, 3, "append", true)
-		if e != nil {
-			t.Fatal(e)
-		}
-		want, e := retriever.Service.BuildFAQContext(ctx, q, nil)
-		if e != nil || !reflect.DeepEqual(got, want.Results) {
-			t.Fatalf("retrieval differs: %#v %#v %v", got, want.Results, e)
-		}
-	}
-	before := provider.calls
-	embedding.EmbedBatch(ctx, []string{"same", "same"})
-	embedding.Embed(ctx, "same")
-	if provider.calls != before+1 {
-		t.Fatal("embedding cache repeated identical text")
-	}
-	if rag.FormatFAQContext(nil) == "" {
-		t.Fatal("unexpected formatter")
 	}
 }

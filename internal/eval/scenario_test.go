@@ -16,8 +16,6 @@ import (
 	"supportbot/internal/mcp"
 	"supportbot/internal/rag"
 	"time"
-
-	"github.com/joho/godotenv"
 )
 
 //go:embed synthetic.json
@@ -98,28 +96,6 @@ func LoadCases(path string, now time.Time) ([]BehaviorCase, error) {
 		seen[c.Name] = true
 	}
 	return result.Cases, nil
-}
-
-// Settings does not validate or use bot/MCP/database credentials. Only the selected
-// provider is called; synthetic MCP owners below never open network connections.
-func Settings(path string) (config.Settings, error) {
-	values := map[string]string{}
-	if path != "" {
-		loaded, e := godotenv.Read(path)
-		if e != nil && !os.IsNotExist(e) {
-			return config.Settings{}, fmt.Errorf("cannot read evaluation env file")
-		}
-		if e == nil {
-			values = loaded
-		}
-	}
-	for _, item := range os.Environ() {
-		key, value, ok := strings.Cut(item, "=")
-		if ok {
-			values[key] = value
-		}
-	}
-	return config.FromEnv(func(k string) (string, bool) { v, ok := values[k]; return v, ok })
 }
 
 type syntheticOwner struct {

@@ -1,3 +1,6 @@
+> Актуальный стандарт Go CI: [docs/ci.md](docs/ci.md). Ниже историческая
+> документация доставки; внешние DB/process/runtime integration-проверки удалены.
+
 # CI/CD Pipeline — SupportAiBot
 
 Бот и два MCP-сервера собираются и публикуются независимо, как три отдельных
@@ -23,7 +26,7 @@ push → bedolaga-mcp (main)
 
 | Job | Когда | Что делает |
 |-----|-------|------------|
-| `test` | всегда, включая PR | `gofmt`, `go vet`, `go test -race ./...` с PostgreSQL/pgvector; затем эталонные `ruff`, `mypy` и `pytest` на Python 3.14 (`uv`, порог покрытия 85%). Это merge-gate: именно его стоит требовать в branch protection |
+| `test` | всегда, включая PR | Проверка модулей, `gofmt`, `go vet`, golangci-lint, изолированные unit/mock и race-тесты, production build. Это merge-gate: именно его стоит требовать в branch protection |
 | `build` | только не-PR (`master`, ручной запуск) | multi-arch образ (linux/amd64 + linux/arm64), пуш в Docker Hub |
 
 Образ бота содержит нативный Go-бинарник `/app/supportbot`; Python остаётся только в CI для эталонных проверок и выбора версии релиза. Healthcheck выполняет `/app/supportbot healthcheck`.
@@ -165,3 +168,11 @@ docker compose up -d --wait support-bot
 | `DOCKER_USERNAME` | SupportAiBot + mcp-remnawave + bedolaga-mcp | Логин Docker Hub |
 | `DOCKER_TOKEN` | SupportAiBot + mcp-remnawave + bedolaga-mcp | Токен Docker Hub |
 | `SERVER_HOST` / `SERVER_USER` / `SERVER_SSH_KEY` / `SERVER_PORT` | SupportAiBot | Доступ для ручного деплоя по SSH |
+
+Current standard: Go 1.27.3, Ubuntu 26.04, SHA-pinned Actions, module tidy/verify,
+format/vet/golangci-lint v2.15.0, isolated unit/mock and race tests, production and
+Docker builds. Weekly Dependabot covers Go, Docker and Actions; minor/patch groups
+exclude majors. Real database, subprocess/service and FFmpeg integration tests
+and test-only fixtures were removed by request. Production runtime dependencies,
+health commands, persisted formats and operational utilities remain unchanged.
+Historical integration results above describe the earlier test scope.

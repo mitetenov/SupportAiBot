@@ -338,7 +338,7 @@ func (a *Answerer) answer(ctx context.Context, id int64) error {
 	if fresh == nil {
 		return nil
 	}
-	if fresh.Status != t.Status && !(OpenStatus(fresh.Status) && OpenStatus(t.Status)) {
+	if fresh.Status != t.Status && (!OpenStatus(fresh.Status) || !OpenStatus(t.Status)) {
 		a.clear(t.ID)
 		return nil
 	}

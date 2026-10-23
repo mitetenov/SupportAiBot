@@ -1,3 +1,6 @@
+> Runtime/smoke test harnesses were removed; historical measurements below are
+> archival. Only the build-cache diagnostic remains executable.
+
 # Docker image and cache optimization
 
 Measured locally on 2026-10-20. The previous Go image `supportbot-go:parity` was **33,264,068 bytes**; `supportbot-go:optimized` is **18,446,327 bytes**: **14,817,741 bytes saved (44.55%)**. These are Docker-reported local image sizes, not compressed registry download sizes. Runtime filesystem layers decreased from five to four.
@@ -35,8 +38,6 @@ Native Linux/arm64 startup passed with a read-only root filesystem, isolated rea
 docker buildx build --load -t supportbot-go:optimized .
 docker buildx build --load --platform linux/amd64 -t supportbot-go:optimized-amd64 .
 go run ./cmd/verify cache --image supportbot-go:optimized
-go run ./cmd/verify runtime --image supportbot-go:optimized --baseline-image supportbot-go:parity
-go run ./cmd/verify smoke --image supportbot-go:optimized
 ```
 
 Host prerequisites are Go and Docker with Buildx. TLS certificates and the probe

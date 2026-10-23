@@ -1,8 +1,9 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.28.0
 ARG GO_VERSION=1.27.3
-FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS base
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine3.24 AS base
 
 FROM base AS builder
+ENV GOTOOLCHAIN=local
 WORKDIR /src
 COPY go.mod go.sum ./
 # Keep modules in an ordinary layer: external GHA caches do not export cache mounts.
