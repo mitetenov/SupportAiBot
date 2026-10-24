@@ -4,7 +4,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"io"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -212,7 +213,8 @@ func (r *Router) CallTool(ctx context.Context, name string, args map[string]any,
 	return result, err
 }
 func (r *Router) ownsUser(ctx context.Context, c Client, wanted any, key int64) bool {
-	if wanted == nil {
+	wantedID, valid := identifier(wanted)
+	if !valid {
 		return false
 	}
 	result, err := c.CallTool(ctx, "users_get_by_telegram_id", map[string]any{"telegramId": key})
@@ -220,10 +222,39 @@ func (r *Router) ownsUser(ctx context.Context, c Client, wanted any, key int64) 
 		return false
 	}
 	var data any
-	if json.Unmarshal([]byte(result), &data) != nil {
+	decoder := json.NewDecoder(strings.NewReader(result))
+	decoder.UseNumber()
+	if decoder.Decode(&data) != nil {
 		return false
 	}
-	return containsUser(data, fmt.Sprint(wanted), key)
+	var trailing any
+	if decoder.Decode(&trailing) != io.EOF {
+		return false
+	}
+	return containsUser(data, wantedID, key)
+}
+
+// identifier keeps integer IDs in decimal form without rounding lookup results
+// or accepting imprecise/fractional model arguments. UUID strings remain opaque.
+func identifier(value any) (string, bool) {
+	switch id := value.(type) {
+	case string:
+		return id, id != ""
+	case json.Number:
+		n, err := id.Int64()
+		return strconv.FormatInt(n, 10), err == nil
+	case int:
+		return strconv.Itoa(id), true
+	case int64:
+		return strconv.FormatInt(id, 10), true
+	case float64:
+		if math.Abs(id) >= 1<<53 || math.Trunc(id) != id {
+			return "", false
+		}
+		return strconv.FormatFloat(id, 'f', 0, 64), true
+	default:
+		return "", false
+	}
 }
 func containsUser(v any, wanted string, key int64) bool {
 	switch x := v.(type) {
@@ -238,9 +269,12 @@ func containsUser(v any, wanted string, key int64) bool {
 			return false
 		}
 		for _, field := range []string{"id", "userId", "uuid"} {
-			if id, ok := x[field]; ok && fmt.Sprint(id) == wanted {
-				if tg, has := x["telegramId"]; has && fmt.Sprint(tg) != strconv.FormatInt(key, 10) {
-					continue
+			if id, ok := identifier(x[field]); ok && id == wanted {
+				if raw, has := x["telegramId"]; has {
+					tg, valid := identifier(raw)
+					if !valid || tg != strconv.FormatInt(key, 10) {
+						continue
+					}
 				}
 				return true
 			}
