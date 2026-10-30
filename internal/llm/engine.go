@@ -143,9 +143,17 @@ func (e *Engine) respond(ctx context.Context, text string, key int64, data, mime
 		}
 	}
 	completed := map[string]string{}
+	devices := &deviceTurn{}
+	if snapshots := e.deviceHistory(); snapshots != nil {
+		var err error
+		devices.evidence, err = snapshots.GetDeviceSnapshot(ctx, key)
+		if err != nil {
+			return domain.Reply{}, fmt.Errorf("load device snapshot: %w", err)
+		}
+	}
 	for attempt, p := range providers {
 		diagnostics.Info(ctx, "LLM provider attempt", "provider", p.Config.Name, "model", p.Config.Model, "attempt", attempt+1, "effective_effort", p.EffectiveReasoningEffort())
-		reply, err := e.run(ctx, p, text, key, data, mime, history, faq, completed, attempt > 0)
+		reply, err := e.run(ctx, p, text, key, data, mime, history, faq, completed, attempt > 0, devices)
 		if err != nil {
 			if ctx.Err() != nil {
 				return domain.Reply{}, ctx.Err()
@@ -169,6 +177,11 @@ func (e *Engine) respond(ctx context.Context, text string, key int64, data, mime
 			}
 			e.History.RecordFAQContext(key, faq, nil)
 		}
+		if snapshots := e.deviceHistory(); snapshots != nil && devices.pending != "" {
+			if err := snapshots.SetDeviceSnapshot(ctx, key, devices.pending); err != nil {
+				return domain.Reply{}, fmt.Errorf("save device snapshot: %w", err)
+			}
+		}
 		return reply, nil
 	}
 	return domain.Reply{}, &ProcessingError{Message: "All configured LLM providers are temporarily unavailable", Friendly: "Сервис временно недоступен. Попробуйте позже."}
@@ -176,7 +189,7 @@ func (e *Engine) respond(ctx context.Context, text string, key int64, data, mime
 
 const retryNudge = "Ты написал, что сейчас что-то проверишь, но не вызвал ни одного инструмента. Вызови нужный инструмент прямо сейчас и ответь пользователю по существу. Не описывай намерение — либо инструмент, либо готовый ответ."
 
-func (e *Engine) run(ctx context.Context, p *Provider, text string, key int64, data, mime string, history []domain.Message, faq domain.FAQContext, completed map[string]string, replay bool) (domain.Reply, error) {
+func (e *Engine) run(ctx context.Context, p *Provider, text string, key int64, data, mime string, history []domain.Message, faq domain.FAQContext, completed map[string]string, replay bool, devices *deviceTurn) (domain.Reply, error) {
 	if p.Config.Name == "zai" && data != "" {
 		switch mime {
 		case "", "image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf":
@@ -185,6 +198,9 @@ func (e *Engine) run(ctx context.Context, p *Provider, text string, key int64, d
 		}
 	}
 	conversation := p.Initial(text, key, faq.Text, data, mime, history)
+	if devices.evidence != "" {
+		conversation = p.Nudge(conversation, "", deviceSnapshotContext+devices.evidence)
+	}
 	if replay && len(completed) > 0 {
 		records := []any{}
 		keys := []string{}
@@ -226,6 +242,12 @@ func (e *Engine) run(ctx context.Context, p *Provider, text string, key int64, d
 					if e.Router == nil {
 						return domain.Reply{}, processing("Tool router unavailable")
 					}
+					if err := e.invalidateDeviceSnapshot(ctx, key, call.Name); err != nil {
+						return domain.Reply{}, fmt.Errorf("invalidate device snapshot: %w", err)
+					}
+					if call.Name == "hwid_devices_list" || call.Name == "hwid_device_delete" {
+						devices.pending = ""
+					}
 					diagnostics.Info(ctx, "Executing tool", "provider", p.Config.Name, "tool", call.Name)
 					diagnostics.Payload(ctx, "LLM tool call arguments", call.Arguments, "provider", p.Config.Name, "tool", call.Name, "telegram_id", key)
 					result, err = e.Router.CallTool(ctx, call.Name, call.Arguments, key)
@@ -233,6 +255,10 @@ func (e *Engine) run(ctx context.Context, p *Provider, text string, key int64, d
 						return domain.Reply{}, &ProcessingError{Message: "MCP tool failed with unknown outcome", Friendly: defaultUserError, ToolOutcomeUnknown: true, Cause: err}
 					}
 					completed[cacheKey] = result
+					if call.Name == "hwid_devices_list" {
+						devices.evidence = buildDeviceSnapshot(call, result)
+						devices.pending = devices.evidence
+					}
 				}
 				if replay && cached {
 					diagnostics.Info(ctx, "Reusing completed tool result", "tool", call.Name)

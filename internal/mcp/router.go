@@ -96,6 +96,15 @@ func jsonString(v any) string { b, _ := json.Marshal(v); return string(b) }
 func identityUnavailable(name string) string {
 	return jsonString(map[string]any{"ok": false, "source": "mcp", "tool": name, "error": map[string]any{"code": "identity_unavailable", "message": "Идентификация пользователя недоступна: у этого разговора нет Telegram-аккаунта.", "retryable": false}})
 }
+
+func ownershipError(name, code string) string {
+	message := "Не удалось подтвердить принадлежность выбранного аккаунта текущему пользователю. Заново получите список устройств и используйте userId/hwid из него."
+	retryable := code == "ownership_check_unavailable"
+	if retryable {
+		message = "Сервис проверки владельца аккаунта временно недоступен. Повторите проверку позже; это не означает отсутствия Telegram-аккаунта."
+	}
+	return jsonString(map[string]any{"ok": false, "source": "mcp", "tool": name, "error": map[string]any{"code": code, "message": message, "retryable": retryable}})
+}
 func identityName(s string) string { return strings.ToLower(strings.ReplaceAll(s, "_", "")) }
 func property(t Tool, kind string) (string, string) {
 	p, _ := t.InputSchema["properties"].(map[string]any)
@@ -193,9 +202,9 @@ func (r *Router) CallTool(ctx context.Context, name string, args map[string]any,
 		// Narrow safety deviation from Python: every internal user ID is proved by
 		// a fresh system-pinned Telegram lookup, including reads and HWID deletion.
 		if un, _ := property(rt.tool, "userid"); un != "" {
-			if !r.ownsUser(ctx, rt.client, safe[un], key) {
-				diagnostics.Error(ctx, "MCP call blocked", nil, "server", rt.owner, "tool", name, "reason", "ownership_unverified")
-				return identityUnavailable(name), nil
+			if code := r.checkOwnership(ctx, rt.client, safe[un], key); code != "" {
+				diagnostics.Error(ctx, "MCP call blocked", nil, "server", rt.owner, "tool", name, "reason", code)
+				return ownershipError(name, code), nil
 			}
 		}
 	}
@@ -212,26 +221,59 @@ func (r *Router) CallTool(ctx context.Context, name string, args map[string]any,
 	diagnostics.Payload(ctx, "MCP routed tool result", result, "server", rt.owner, "tool", name)
 	return result, err
 }
-func (r *Router) ownsUser(ctx context.Context, c Client, wanted any, key int64) bool {
+func (r *Router) checkOwnership(ctx context.Context, c Client, wanted any, key int64) string {
 	wantedID, valid := identifier(wanted)
 	if !valid {
-		return false
+		return "ownership_unverified"
 	}
 	result, err := c.CallTool(ctx, "users_get_by_telegram_id", map[string]any{"telegramId": key})
 	if err != nil {
-		return false
+		return "ownership_check_unavailable"
 	}
 	var data any
 	decoder := json.NewDecoder(strings.NewReader(result))
 	decoder.UseNumber()
 	if decoder.Decode(&data) != nil {
-		return false
+		return "ownership_check_unavailable"
 	}
 	var trailing any
 	if decoder.Decode(&trailing) != io.EOF {
-		return false
+		return "ownership_check_unavailable"
 	}
-	return containsUser(data, wantedID, key)
+	if !validUserLookup(data) {
+		return "ownership_check_unavailable"
+	}
+	if !containsUser(data, wantedID, key) {
+		return "ownership_unverified"
+	}
+	return ""
+}
+
+func validUserLookup(value any) bool {
+	switch x := value.(type) {
+	case []any:
+		for _, item := range x {
+			if !validUserLookup(item) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		if ok, exists := x["ok"].(bool); exists && !ok || x["error"] != nil {
+			return false
+		}
+		for _, field := range []string{"id", "userId", "uuid"} {
+			if _, ok := identifier(x[field]); ok {
+				return true
+			}
+		}
+		for _, field := range []string{"response", "users", "data", "items", "results"} {
+			if nested, exists := x[field]; exists && validUserLookup(nested) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // identifier keeps integer IDs in decimal form without rounding lookup results

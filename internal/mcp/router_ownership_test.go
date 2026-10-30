@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -88,7 +89,7 @@ func TestForeignOrUnverifiedAccountToolsStayBlocked(t *testing.T) {
 			t.Run(tc.name+"/"+tool, func(t *testing.T) {
 				rem := &mockClient{name: "remnawave", tools: []Tool{{Name: tool, InputSchema: schema(map[string]string{"userId": "number", "telegramId": "number"})}}, results: map[string]string{"users_get_by_telegram_id": tc.lookup}}
 				result, err := NewRouter([]Client{rem}, false).CallTool(context.Background(), tool, map[string]any{"userId": tc.wanted, "telegramId": float64(9000000002), "hwid": "foreign-device"}, tc.key)
-				if err != nil || !contains(result, "identity_unavailable") {
+				if err != nil || !contains(result, "ownership_") || contains(result, "identity_unavailable") {
 					t.Fatalf("unverified %s accepted: %s %v", tool, result, err)
 				}
 				for index, call := range rem.calls {
@@ -98,6 +99,49 @@ func TestForeignOrUnverifiedAccountToolsStayBlocked(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestOwnershipErrorsDescribeActualFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name, lookup, code string
+		err                error
+		retryable          bool
+	}{
+		{name: "foreign account", lookup: `{"response":{"users":[{"id":18,"telegramId":42}]}}`, code: "ownership_unverified"},
+		{name: "empty account list", lookup: `{"response":{"users":[]}}`, code: "ownership_unverified"},
+		{name: "transport failure", err: errors.New("timeout"), code: "ownership_check_unavailable", retryable: true},
+		{name: "tool error", lookup: `{"error":"upstream unavailable"}`, code: "ownership_check_unavailable", retryable: true},
+		{name: "failed envelope", lookup: `{"ok":false,"response":{"users":[{"id":17,"telegramId":42}]}}`, code: "ownership_check_unavailable", retryable: true},
+		{name: "nested error", lookup: `{"response":{"error":"upstream unavailable","users":[]}}`, code: "ownership_check_unavailable", retryable: true},
+		{name: "malformed response", lookup: `{"response":`, code: "ownership_check_unavailable", retryable: true},
+		{name: "unexpected shape", lookup: `{"ok":true}`, code: "ownership_check_unavailable", retryable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rem := &mockClient{name: "remnawave", tools: []Tool{{Name: "hwid_device_delete", InputSchema: schema(map[string]string{"userId": "number", "telegramId": "number"})}}, results: map[string]string{"users_get_by_telegram_id": tc.lookup}, err: tc.err}
+			result, err := NewRouter([]Client{rem}, false).CallTool(context.Background(), "hwid_device_delete", map[string]any{"userId": 17, "hwid": "device"}, 42)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var envelope struct {
+				Error struct {
+					Code, Message string
+					Retryable     bool
+				}
+			}
+			if err := json.Unmarshal([]byte(result), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if envelope.Error.Code != tc.code || envelope.Error.Retryable != tc.retryable || contains(result, "identity_unavailable") {
+				t.Fatalf("incorrect error: %s", result)
+			}
+			if !tc.retryable && !contains(envelope.Error.Message, "список устройств") {
+				t.Fatalf("missing recovery instruction: %s", result)
+			}
+			if len(rem.calls) != 1 || rem.calls[0] != "users_get_by_telegram_id" {
+				t.Fatalf("unverified deletion reached upstream: %v", rem.calls)
+			}
+		})
 	}
 }
 

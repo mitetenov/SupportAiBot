@@ -67,6 +67,13 @@ type History interface {
 	Clear(context.Context, int64) error
 	EvictStaleEntries(context.Context) error
 }
+
+// DeviceSnapshotHistory keeps tool evidence separate from user-visible history.
+// An empty snapshot invalidates the previous list after a refresh or deletion.
+type DeviceSnapshotHistory interface {
+	GetDeviceSnapshot(context.Context, int64) (string, error)
+	SetDeviceSnapshot(context.Context, int64, string) error
+}
 type FAQ interface {
 	BuildFAQContext(context.Context, string, map[string]bool) (FAQContext, error)
 }
