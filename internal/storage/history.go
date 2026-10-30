@@ -2,13 +2,21 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"supportbot/internal/diagnostics"
 	"supportbot/internal/domain"
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/jackc/pgx/v5"
 )
+
+type deviceSnapshot struct {
+	text string
+	at   time.Time
+}
 
 type History struct {
 	store    *Store
@@ -19,13 +27,61 @@ type History struct {
 	activity map[int64]time.Time
 	rejected map[int64]map[string]bool
 	used     map[int64]map[string]bool
+	devices  map[int64]deviceSnapshot
 }
 
 func NewHistory(s *Store, maxMessages, ttlDays int) *History {
 	if maxMessages < 1 {
 		maxMessages = 20
 	}
-	return &History{s, maxMessages, time.Duration(ttlDays) * 24 * time.Hour, sync.Mutex{}, map[int64][]domain.Message{}, map[int64]time.Time{}, map[int64]map[string]bool{}, map[int64]map[string]bool{}}
+	return &History{store: s, max: maxMessages, ttl: time.Duration(ttlDays) * 24 * time.Hour, messages: map[int64][]domain.Message{}, activity: map[int64]time.Time{}, rejected: map[int64]map[string]bool{}, used: map[int64]map[string]bool{}, devices: map[int64]deviceSnapshot{}}
+}
+
+func (h *History) GetDeviceSnapshot(ctx context.Context, id int64) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	cutoff := time.Now().Add(-h.ttl)
+	if snapshot, ok := h.devices[id]; ok {
+		if snapshot.at.After(cutoff) {
+			return snapshot.text, nil
+		}
+		delete(h.devices, id)
+	}
+	if h.store == nil {
+		return "", nil
+	}
+	var snapshot deviceSnapshot
+	err := h.store.Pool.QueryRow(ctx, "SELECT snapshot,updated_at FROM device_snapshots WHERE telegram_id=$1 AND updated_at>$2", id, cutoff).Scan(&snapshot.text, &snapshot.at)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	h.devices[id] = snapshot
+	return snapshot.text, nil
+}
+
+func (h *History) SetDeviceSnapshot(ctx context.Context, id int64, text string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// Invalidate memory first: a failed database write must not retain old IDs.
+	delete(h.devices, id)
+	if h.store != nil {
+		var err error
+		if text == "" {
+			_, err = h.store.Pool.Exec(ctx, "DELETE FROM device_snapshots WHERE telegram_id=$1", id)
+		} else {
+			_, err = h.store.Pool.Exec(ctx, "INSERT INTO device_snapshots(telegram_id,snapshot,updated_at) VALUES($1,$2,now()) ON CONFLICT(telegram_id) DO UPDATE SET snapshot=excluded.snapshot,updated_at=excluded.updated_at", id, text)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if text != "" {
+		h.devices[id] = deviceSnapshot{text: text, at: time.Now()}
+	}
+	return nil
 }
 func (h *History) GetHistory(ctx context.Context, id int64) ([]domain.Message, error) {
 	h.mu.Lock()
@@ -139,9 +195,10 @@ func (h *History) Clear(ctx context.Context, id int64) error {
 	delete(h.activity, id)
 	delete(h.rejected, id)
 	delete(h.used, id)
+	delete(h.devices, id)
 	h.mu.Unlock()
 	if h.store != nil {
-		_, e := h.store.Pool.Exec(ctx, "DELETE FROM chat_messages WHERE telegram_id=$1", id)
+		_, e := h.store.Pool.Exec(ctx, "WITH removed AS (DELETE FROM device_snapshots WHERE telegram_id=$1) DELETE FROM chat_messages WHERE telegram_id=$1", id)
 		if e != nil {
 			diagnostics.Error(ctx, "Chat history database write failed", e)
 		}
@@ -159,9 +216,14 @@ func (h *History) EvictStaleEntries(ctx context.Context) error {
 			delete(h.used, id)
 		}
 	}
+	for id, snapshot := range h.devices {
+		if snapshot.at.Before(cutoff) {
+			delete(h.devices, id)
+		}
+	}
 	h.mu.Unlock()
 	if h.store != nil {
-		_, e := h.store.Pool.Exec(ctx, "DELETE FROM chat_messages WHERE created_at<$1", cutoff)
+		_, e := h.store.Pool.Exec(ctx, "WITH removed AS (DELETE FROM device_snapshots WHERE updated_at<$1) DELETE FROM chat_messages WHERE created_at<$1", cutoff)
 		if e != nil {
 			diagnostics.Error(ctx, "Chat history database write failed", e)
 		}

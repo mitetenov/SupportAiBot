@@ -14,6 +14,7 @@ type mockClient struct {
 	calls   []string
 	args    []map[string]any
 	results map[string]string
+	err     error
 }
 
 func (c *mockClient) ServerName() string { return c.name }
@@ -23,6 +24,9 @@ func (c *mockClient) CallTool(_ context.Context, n string, a map[string]any) (st
 	defer c.mu.Unlock()
 	c.calls = append(c.calls, n)
 	c.args = append(c.args, a)
+	if c.err != nil {
+		return "", c.err
+	}
 	if s, ok := c.results[n]; ok {
 		return s, nil
 	}
@@ -96,7 +100,7 @@ func TestRouterCollisionReconnectAndInternalOwnership(t *testing.T) {
 		t.Fatal("reconnected route cache stale")
 	}
 	result, _ := r.CallTool(ctx, "users_get", map[string]any{"userId": "foreign-uuid"}, 42)
-	if !contains(result, "identity_unavailable") {
+	if !contains(result, "ownership_unverified") {
 		t.Fatal(result)
 	}
 	if len(rem.calls) != 1 || rem.calls[0] != "users_get_by_telegram_id" {

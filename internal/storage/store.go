@@ -37,6 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_message_mappings_user_message ON message_mappings
 CREATE TABLE IF NOT EXISTS chat_messages(id BIGSERIAL PRIMARY KEY,telegram_id BIGINT NOT NULL,role VARCHAR(10) NOT NULL,content TEXT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS idx_chat_messages_telegram_id ON chat_messages(telegram_id,created_at);
 CREATE INDEX IF NOT EXISTS ix_chat_messages_created_at ON chat_messages(created_at);
+CREATE TABLE IF NOT EXISTS device_snapshots(telegram_id BIGINT PRIMARY KEY,snapshot TEXT NOT NULL,updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS llm_token_usage(id BIGSERIAL PRIMARY KEY,telegram_id BIGINT,prompt_tokens BIGINT,completion_tokens BIGINT,total_tokens BIGINT,created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS ix_llm_token_usage_telegram_id ON llm_token_usage(telegram_id);
 CREATE TABLE IF NOT EXISTS knowledge_gaps(id BIGSERIAL PRIMARY KEY,user_query VARCHAR(2000) NOT NULL,embedding vector,best_faq_question VARCHAR(2000),max_similarity DOUBLE PRECISION,faq_count INTEGER DEFAULT 0,trigger_reason VARCHAR(20),bot_response VARCHAR(500),gap_count INTEGER NOT NULL DEFAULT 1,first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),telegram_id BIGINT);
