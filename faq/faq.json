@@ -176,10 +176,13 @@
   },
   {
     "question": "Какое приложение используется? Через что подключаться?",
-    "answer": "На Android, Windows и Android TV используйте Happ, на iOS, iPadOS и macOS — Incy. Linux тоже поддерживается: откройте инструкцию для Linux на странице своей подписки. Готовая инструкция доступна в @PeipivoSalesBot → «Подключиться» или в кабинете https://lk.peipivo.top → «Подключить устройство».",
+    "answer": "На Android, Windows и Android TV используйте Happ, на iOS, iPadOS и macOS — Incy или SmProxy. Linux тоже поддерживается: откройте инструкцию для Linux на странице своей подписки. Готовая инструкция доступна в @PeipivoSalesBot → «Подключиться» или в кабинете https://lk.peipivo.top → «Подключить устройство».",
     "keywords": [
       "happ",
       "incy",
+      "smproxy",
+      "sm proxy",
+      "смпрокси",
       "какой софт",
       "где скачать клиент"
     ]
