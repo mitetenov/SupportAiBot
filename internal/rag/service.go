@@ -437,7 +437,7 @@ func RequiredIDs(q string) []string {
 		giving && (matches(`можно`) || recipient) || connectRecipient || permissionUse) {
 		ids = append(ids, "subscription_sharing")
 	}
-	if matches(`установить|скачать|подключить|установк`) && matches(`vpn|впн|happ|incy|устройств|телефон|планшет|ноутбук|компьютер|linux|линукс`) {
+	if matches(`установить|скачать|подключить|установк`) && matches(`vpn|впн|happ|incy|sm\s*proxy|смпрокси|устройств|телефон|планшет|ноутбук|компьютер|linux|линукс`) {
 		ids = append(ids, "device_setup")
 	}
 	if matches(`n[/\\]a|не пингу|нет пинга|серверы.*не отвечают`) {
