@@ -221,7 +221,7 @@
   },
   {
     "question": "Как подключить прокси для Telegram?",
-    "answer": "Откройте ссылку, чтобы добавить наш прокси в Telegram:\n\ntg://webproxy?server=tg.peipivo.top&secret=dd78ae385722cc95ce63b074c73e208493\n\nПрокси нужен для работы Telegram с выключенным VPN. Если вы пользуетесь Telegram с включённым VPN, дополнительно добавлять прокси необязательно.",
+    "answer": "Откройте ссылку, чтобы добавить наш прокси в Telegram:\n\ntg://webproxy?server=puppep.peipivo.top&secret=dd78ae385722cc95ce63b074c73e208493\n\nПрокси нужен для работы Telegram с выключенным VPN. Если вы пользуетесь Telegram с включённым VPN, дополнительно добавлять прокси необязательно.",
     "keywords": [
       "телеграм прокси",
       "тг прокси",
