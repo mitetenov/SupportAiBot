@@ -38,7 +38,7 @@ type Router struct {
 	collisions map[string]bool
 }
 
-var remReads = set("users_get_by_telegram_id", "users_get_subscription_url_by_telegram_id", "users_get", "subscriptions_get_by_user_id", "users_accessible_nodes", "bandwidth_user_usage", "hwid_devices_list", "nodes_list", "nodes_get")
+var remReads = set("users_get_by_telegram_id", "users_get_subscription_url_by_telegram_id", "users_get_torrent_block_by_telegram_id", "users_get", "subscriptions_get_by_user_id", "users_accessible_nodes", "bandwidth_user_usage", "hwid_devices_list", "nodes_list", "nodes_get")
 var bedReads = set("bedolaga_user_get", "bedolaga_billing_get", "bedolaga_referrals_get", "bedolaga_subscription_get", "bedolaga_tickets_get", "bedolaga_payment_status_get", "bedolaga_promocode_check", "bedolaga_gifts_get")
 
 func set(names ...string) map[string]bool {

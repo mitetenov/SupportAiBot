@@ -76,6 +76,39 @@ func TestRouterIdentityOwnersAndReadOnly(t *testing.T) {
 		t.Fatal(result)
 	}
 }
+
+func TestTorrentBlockLookupUsesTrustedTelegramIdentity(t *testing.T) {
+	const toolName = "users_get_torrent_block_by_telegram_id"
+	rem := &mockClient{name: "remnawave", tools: []Tool{
+		{Name: toolName, InputSchema: schema(map[string]string{"telegramId": "number"})},
+		{Name: "node_plugins_torrent_reports"},
+	}}
+	r := NewRouter([]Client{rem}, true)
+	if tools := r.ListTools(); len(tools) != 1 || tools[0].Name != toolName {
+		t.Fatalf("wrong set of tools: %v", tools)
+	}
+	ctx := context.Background()
+	for _, args := range []map[string]any{nil, {"telegramId": float64(999)}} {
+		if _, err := r.CallTool(ctx, toolName, args, 9000000001); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, key := range []int64{0, -91} {
+		result, err := r.CallTool(ctx, toolName, map[string]any{"telegramId": float64(999)}, key)
+		if err != nil || !contains(result, "identity_unavailable") {
+			t.Fatalf("got %s, error %v", result, err)
+		}
+	}
+	if len(rem.calls) != 2 {
+		t.Fatalf("wrong calls: %v", rem.calls)
+	}
+	for _, args := range rem.args {
+		if args["telegramId"] != int64(9000000001) {
+			t.Fatalf("wrong forwarded Telegram ID: %v", args)
+		}
+	}
+}
+
 func contains(s, q string) bool { return len(s) >= len(q) && stringsContains(s, q) }
 func stringsContains(s, q string) bool {
 	for i := 0; i+len(q) <= len(s); i++ {
